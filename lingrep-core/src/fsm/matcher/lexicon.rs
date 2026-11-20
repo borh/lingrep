@@ -165,6 +165,7 @@ impl CompiledLexicons {
                 end,
                 captures: Box::default(),
                 graph_bindings: Box::default(),
+                interpretations: Box::default(),
                 lexical: Some(Box::new(LexicalMatch {
                     term: definition.members[term_id as usize].clone(),
                     matched_by,

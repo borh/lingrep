@@ -230,6 +230,11 @@ impl CompileLimits {
         self.values.generated_owned_bytes
     }
 
+    pub(super) fn after_bundle_copies(mut self, bytes: usize) -> Self {
+        self.values.generated_owned_bytes = self.values.generated_owned_bytes.saturating_sub(bytes);
+        self
+    }
+
     /// Returns the maximum allowed expression nesting depth.
     pub(crate) fn max_nesting_depth(&self) -> usize {
         self.values.nesting_depth

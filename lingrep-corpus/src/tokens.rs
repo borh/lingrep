@@ -27,8 +27,8 @@ use lingrep_core::{
     spill::TempBudget,
     token_match::{
         AttributeKind, AttributeOrdinal, AttributeProvider, AttributeValueRef, BoundProjection,
-        BoundTokenSentence, CharSpan, ProjectedAttributeValue, SchemaAttribute,
-        TokenAttributeIndex, TokenInfo, TokenSchema, TokenSequence,
+        BoundTokenSentence, CharSpan, ProjectedAttributeValue, SchemaAttribute, SentenceSpan,
+        TokenAttributeIndex, TokenInfo, TokenInfoSentence, TokenSchema, TokenSequence,
     },
 };
 use memmap2::{Mmap, MmapOptions};
@@ -41,6 +41,7 @@ use crate::{
 const COMPONENT: &str = "tokens.v1.zst";
 const MAGIC: &[u8; 8] = b"LINGTOK1";
 const BLOCK_MAGIC: &[u8; 8] = b"LGTBLK02";
+const SPAN_BLOCK_MAGIC: &[u8; 8] = b"LGTBLK03";
 const FOOTER_MAGIC: &[u8; 8] = b"LGTEND01";
 pub(crate) const FORMAT_VERSION: u32 = 2;
 const HEADER_LEN: u64 = 128;
@@ -745,7 +746,7 @@ impl TokenReader {
             .bind_projection(self.schema.keys().iter().cloned())
             .map_err(|error| invalid(error.to_string()))?;
         Ok(self
-            .decode_bound_ordinals(&[ordinal], &projection, false)?
+            .decode_bound_ordinals(&[ordinal], &projection, true)?
             .pop())
     }
 
@@ -811,7 +812,7 @@ impl TokenReader {
         &self,
         sentence_indices: &[u64],
         attributes: &[TokenAttributeIndex],
-    ) -> Result<Vec<Option<Vec<TokenInfo>>>, CorpusError> {
+    ) -> Result<Vec<Option<TokenInfoSentence>>, CorpusError> {
         let projection = self.projection_for_physical(attributes)?;
         let mut ordinals = sentence_indices
             .iter()
@@ -820,12 +821,17 @@ impl TokenReader {
             .collect::<Vec<_>>();
         ordinals.sort_unstable();
         ordinals.dedup();
-        let decoded = self.decode_bound_ordinals(&ordinals, &projection, false)?;
+        let decoded = self.decode_bound_ordinals(&ordinals, &projection, true)?;
         let projected = ordinals
             .into_iter()
             .zip(decoded)
             .map(|(ordinal, sentence)| {
-                bound_to_physical(&sentence, &projection).map(|sentence| (ordinal, sentence))
+                let offsets = (0..sentence.len())
+                    .map(|token| sentence.char_span(token))
+                    .collect::<Option<Vec<_>>>()
+                    .map(Arc::new);
+                bound_to_physical(&sentence, &projection)
+                    .map(|tokens| (ordinal, TokenInfoSentence::new(tokens, offsets)))
             })
             .collect::<Result<HashMap<_, _>, _>>()?;
         Ok(sentence_indices
@@ -1147,7 +1153,7 @@ impl PreparedSentenceSource {
         _pool: &rayon::ThreadPool,
         sentence_indices: &[u64],
         attributes: &[TokenAttributeIndex],
-    ) -> Result<Vec<Option<Vec<TokenInfo>>>, CorpusError> {
+    ) -> Result<Vec<Option<TokenInfoSentence>>, CorpusError> {
         self.reader
             .decode_sentences_with_attributes(sentence_indices, attributes)
     }
@@ -1156,7 +1162,7 @@ impl PreparedSentenceSource {
         &self,
         pool: &rayon::ThreadPool,
         sentence_indices: &[u64],
-    ) -> Result<Vec<Option<Vec<TokenInfo>>>, CorpusError> {
+    ) -> Result<Vec<Option<TokenInfoSentence>>, CorpusError> {
         let attributes = TokenAttributeIndex::ALL
             .into_iter()
             .filter(|attribute| self.reader.schema.keys().contains(&(*attribute).into()))
@@ -1195,7 +1201,7 @@ impl PreparedSentenceSource {
             &self.reader.schema,
             &projection,
             &[local],
-            false,
+            true,
             Some(limit),
         )?
         .pop();
@@ -1212,8 +1218,10 @@ impl PreparedSentenceSource {
         }
     }
 
-    /// Reads only written word forms: each token's `surface` where it has one,
-    /// else its `text`. Returns `None` before token projection
+    /// Reads a sentence's words as text that joins into the sentence: each
+    /// token's `surface` where it has one, else its `text`, preceded by a
+    /// space where [`lingrep_core::token_match::display_space_before`] reports
+    /// one. Returns `None` before token projection
     /// when recorded residency exceeds `limit`, or when the joined text exceeds
     /// it, or when written forms are unavailable. Token-block decompression
     /// retains its existing fixed scratch bound.
@@ -1236,7 +1244,7 @@ impl PreparedSentenceSource {
             .map_err(|error| invalid(error.to_string()))?;
         let sentences = self
             .reader
-            .decode_bound_ordinals(&[ordinal], &projection, false)?;
+            .decode_bound_ordinals(&[ordinal], &projection, true)?;
         let Some(sentence) = sentences.first() else {
             return Err(invalid("sentence is missing"));
         };
@@ -1246,11 +1254,16 @@ impl PreparedSentenceSource {
             let Some(text) = lingrep_core::token_match::display_surface(sentence, index) else {
                 return Ok(None);
             };
-            bytes = bytes.saturating_add(text.len());
+            let space = lingrep_core::token_match::display_space_before(sentence, index);
+            bytes = bytes.saturating_add(text.len() + usize::from(space));
             if bytes > limit {
                 return Ok(None);
             }
-            words.push(text.to_owned());
+            words.push(if space {
+                format!(" {text}")
+            } else {
+                text.to_owned()
+            });
         }
         Ok(Some(words))
     }
@@ -1772,7 +1785,9 @@ fn merge_graph_projection(
             invalid(format!(
                 "enhanced projection reconstruction failed: {error}"
             ))
-        })
+        })?
+        .with_spans(physical.spans().to_vec())
+        .map_err(invalid)
 }
 
 fn bound_to_physical(
@@ -1938,7 +1953,11 @@ fn encode_block(
         string_bytes.extend_from_slice(value.as_bytes());
     }
     let mut bytes = Vec::new();
-    bytes.extend_from_slice(BLOCK_MAGIC);
+    bytes.extend_from_slice(if sentences.iter().any(|s| !s.spans().is_empty()) {
+        SPAN_BLOCK_MAGIC
+    } else {
+        BLOCK_MAGIC
+    });
     bytes.extend_from_slice(&(projection.len() as u32).to_le_bytes());
     bytes.extend_from_slice(&(sentences.len() as u32).to_le_bytes());
     bytes.extend_from_slice(&(token_count as u64).to_le_bytes());
@@ -1952,7 +1971,9 @@ fn encode_block(
     }
     for sentence in sentences {
         let present = sentence.char_span(0).is_some();
-        bytes.extend_from_slice(&u32::from(present).to_le_bytes());
+        let has_spans = !sentence.spans().is_empty();
+        let flags = u32::from(present) | (u32::from(has_spans) << 1);
+        bytes.extend_from_slice(&flags.to_le_bytes());
         if present {
             let mut previous = None;
             for token in 0..sentence.len() {
@@ -1963,6 +1984,25 @@ fn encode_block(
                 bytes.extend_from_slice(&span.start.to_le_bytes());
                 bytes.extend_from_slice(&span.end.to_le_bytes());
                 previous = Some(span);
+            }
+        }
+        if has_spans {
+            bytes.extend_from_slice(&(sentence.spans().len() as u32).to_le_bytes());
+            for span in sentence.spans() {
+                for field in [
+                    span.start as u32,
+                    span.end as u32,
+                    span.head.map_or(u32::MAX, |i| i as u32),
+                    span.governor.map_or(u32::MAX, |i| i as u32),
+                    span.kind.len() as u32,
+                    span.label.as_ref().map_or(u32::MAX, |s| s.len() as u32),
+                ] {
+                    bytes.extend_from_slice(&field.to_le_bytes());
+                }
+                bytes.extend_from_slice(span.kind.as_bytes());
+                if let Some(label) = &span.label {
+                    bytes.extend_from_slice(label.as_bytes());
+                }
             }
         }
     }
@@ -1992,9 +2032,11 @@ fn decode_block(
     char_offsets: bool,
     max_selected_bytes: Option<usize>,
 ) -> Result<Vec<BoundTokenSentence>, CorpusError> {
-    if slice(raw, 0, 8)? != BLOCK_MAGIC {
-        return Err(invalid("wrong V1 block magic"));
-    }
+    let supports_spans = match slice(raw, 0, 8)? {
+        magic if magic == BLOCK_MAGIC => false,
+        magic if magic == SPAN_BLOCK_MAGIC => true,
+        _ => return Err(invalid("wrong V1 block magic")),
+    };
     let width = read_u32(raw, 8)? as usize;
     let sentence_count = read_u32(raw, 12)? as usize;
     let token_count = read_u64(raw, 16)? as usize;
@@ -2084,13 +2126,14 @@ fn decode_block(
     }
     let mut cursor = cells_offset as usize;
     let mut offsets = Vec::with_capacity(locals.len());
+    let mut annotations = Vec::with_capacity(locals.len());
     let mut selected_sentence = 0;
     for (local, range) in ranges.iter().enumerate() {
-        let present = match read_u32_at(raw, &mut cursor)? {
-            0 => false,
-            1 => true,
-            _ => return Err(invalid("invalid offset availability")),
-        };
+        let flags = read_u32_at(raw, &mut cursor)?;
+        if flags > 3 || (!supports_spans && flags > 1) {
+            return Err(invalid("invalid sentence annotation flags"));
+        }
+        let present = flags & 1 != 0;
         let selected = locals.get(selected_sentence) == Some(&local);
         let span_bytes = if present {
             let bytes = slice(raw, cursor as u64, range.len() as u64 * 8)?;
@@ -2118,7 +2161,55 @@ fn decode_block(
                 previous = Some(span);
             }
         }
+        let mut annotation = Vec::new();
+        if flags & 2 != 0 {
+            let count = read_u32_at(raw, &mut cursor)? as usize;
+            if count == 0 || count > (raw.len() - cursor) / 24 {
+                return Err(invalid("invalid span table length"));
+            }
+            if selected {
+                selected_bytes = selected_bytes
+                    .saturating_add(count.saturating_mul(std::mem::size_of::<SentenceSpan>()));
+                if max_selected_bytes.is_some_and(|limit| selected_bytes > limit) {
+                    return Ok(Vec::new());
+                }
+                annotation.reserve_exact(count);
+            }
+            for _ in 0..count {
+                let start = read_u32_at(raw, &mut cursor)? as usize;
+                let end = read_u32_at(raw, &mut cursor)? as usize;
+                let head = read_u32_at(raw, &mut cursor)?;
+                let governor = read_u32_at(raw, &mut cursor)?;
+                let kind_len = read_u32_at(raw, &mut cursor)?;
+                let label_len = read_u32_at(raw, &mut cursor)?;
+                let mut string = |len: u32| -> Result<&str, CorpusError> {
+                    let bytes = slice(raw, cursor as u64, u64::from(len))?;
+                    cursor += bytes.len();
+                    std::str::from_utf8(bytes).map_err(|_| invalid("invalid span string"))
+                };
+                let kind = string(kind_len)?;
+                let label = (label_len != u32::MAX)
+                    .then(|| string(label_len))
+                    .transpose()?;
+                if selected {
+                    selected_bytes =
+                        selected_bytes.saturating_add(kind.len() + label.map_or(0, str::len));
+                    if max_selected_bytes.is_some_and(|limit| selected_bytes > limit) {
+                        return Ok(Vec::new());
+                    }
+                    annotation.push(SentenceSpan {
+                        kind: kind.to_owned(),
+                        start,
+                        end,
+                        head: (head != u32::MAX).then_some(head as usize),
+                        label: label.map(str::to_owned),
+                        governor: (governor != u32::MAX).then_some(governor as usize),
+                    });
+                }
+            }
+        }
         if selected {
+            annotations.push(annotation);
             offsets.push((present && char_offsets).then(|| Arc::new(spans)));
             selected_sentence += 1;
         }
@@ -2203,10 +2294,13 @@ fn decode_block(
     selected
         .into_iter()
         .zip(offsets)
-        .map(|((range, values), offsets)| {
+        .zip(annotations)
+        .map(|(((range, values), offsets), annotations)| {
             BoundTokenSentence::from_projected_attribute_values(projection, range.len(), values)
                 .map(|sentence| sentence.with_char_offsets(offsets))
-                .map_err(|_| invalid("decoded values disagree with projection"))
+                .map_err(|_| invalid("decoded values disagree with projection"))?
+                .with_spans(annotations)
+                .map_err(invalid)
         })
         .collect()
 }
@@ -2262,6 +2356,16 @@ fn encoded_sentence_upper_bound(
     projection: &BoundProjection,
 ) -> Result<u64, CorpusError> {
     let mut bytes = SENTENCE_ENTRY_LEN + 4;
+    if !sentence.spans().is_empty() {
+        bytes += 4;
+        for span in sentence.spans() {
+            bytes = bytes
+                .checked_add(
+                    24 + span.kind.len() as u64 + span.label.as_ref().map_or(0, |s| s.len() as u64),
+                )
+                .ok_or_else(|| invalid("span table size overflow"))?;
+        }
+    }
     if sentence.char_span(0).is_some() {
         bytes = bytes
             .checked_add(
@@ -2857,6 +2961,16 @@ mod tests {
             CharSpan::new(1, 3),
             CharSpan::new(5, 6),
         ];
+        let words = words
+            .with_spans(vec![lingrep_core::token_match::SentenceSpan {
+                kind: "bunsetsu".into(),
+                start: 0,
+                end: 2,
+                head: Some(1),
+                label: Some("NP".into()),
+                governor: None,
+            }])
+            .unwrap();
         let sentences = vec![
             words
                 .clone()
@@ -2890,6 +3004,7 @@ mod tests {
                 )
                 .unwrap();
                 for (sentence, local) in decoded.iter().zip(locals) {
+                    assert_eq!(sentence.spans(), sentences[local].spans());
                     for token in 0..3 {
                         assert_eq!(
                             sentence.char_span(token),
@@ -2906,8 +3021,13 @@ mod tests {
         let offset_start = (BLOCK_HEADER_LEN
             + read_u64(&raw, 24).unwrap()
             + entry.sentence_count * SENTENCE_ENTRY_LEN) as usize;
+        // The first row carries three code-point intervals followed by its span table.
+        let governor = offset_start + 4 + 3 * 8 + 4 + 3 * 4;
+        let mut cyclic = raw.clone();
+        cyclic[governor..governor + 4].copy_from_slice(&0u32.to_le_bytes());
+        assert!(validate_block(&cyclic, entry, &schema).is_err());
         for (position, value) in [
-            (offset_start, 2u32),
+            (offset_start, 4u32),
             (offset_start + 8, 0),
             (offset_start + 12, 2),
             (offset_start + 20, 0),

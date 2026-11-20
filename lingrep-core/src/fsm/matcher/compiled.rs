@@ -187,7 +187,9 @@ pub struct WindowKeyField {
 }
 
 fn window_captures(definition: &ExecutionDefinition) -> Option<Box<[Option<CompactString>]>> {
-    if !(definition.relations.is_empty()
+    if !(definition.interpretation.is_none()
+        && definition.span_constraints.is_empty()
+        && definition.relations.is_empty()
         && definition.enhanced_relations.is_empty()
         && definition.orders.is_empty()
         && definition.graph_bindings.is_empty())
@@ -929,15 +931,7 @@ impl CompiledCatalog {
                 Matcher::try_find_matches_dense(&budget.output, &self.dense, &predicates, tokens)?;
             for matched in &mut matches {
                 if let Some(plan) = self.capture_plans.get(&matched.pattern) {
-                    matched.captures = plan
-                        .extract_without_assertions(
-                            &budget.output,
-                            &predicates,
-                            tokens,
-                            matched.start,
-                            matched.end,
-                        )?
-                        .expect("NFA-accepted capture span must have a prioritized extraction");
+                    plan.extract_without_assertions(&mut budget, &predicates, tokens, matched)?;
                 }
             }
             for plan in &self.evaluated_plans {
@@ -960,16 +954,7 @@ impl CompiledCatalog {
         )?;
         for matched in &mut matches {
             if let Some(plan) = self.capture_plans.get(&matched.pattern) {
-                matched.captures = plan
-                    .extract(
-                        &budget.output,
-                        &predicates,
-                        tokens,
-                        matched.start,
-                        matched.end,
-                        &mut session,
-                    )?
-                    .expect("NFA-accepted capture span must have a prioritized extraction");
+                plan.extract(&mut budget, &predicates, tokens, matched, &mut session)?;
             }
         }
         for plan in &self.evaluated_plans {
@@ -1055,15 +1040,7 @@ impl CompiledCatalog {
                 Matcher::try_find_matches_dense(&budget.output, &self.dense, &predicates, tokens)?;
             for matched in &mut matches {
                 if let Some(plan) = self.capture_plans.get(&matched.pattern) {
-                    matched.captures = plan
-                        .extract_without_assertions(
-                            &budget.output,
-                            &predicates,
-                            tokens,
-                            matched.start,
-                            matched.end,
-                        )?
-                        .expect("NFA-accepted capture span must have a prioritized extraction");
+                    plan.extract_without_assertions(&mut budget, &predicates, tokens, matched)?;
                 }
             }
             for plan in &self.evaluated_plans {
@@ -1090,16 +1067,7 @@ impl CompiledCatalog {
         )?;
         for matched in &mut matches {
             if let Some(plan) = self.capture_plans.get(&matched.pattern) {
-                matched.captures = plan
-                    .extract(
-                        &budget.output,
-                        &predicates,
-                        tokens,
-                        matched.start,
-                        matched.end,
-                        &mut session,
-                    )?
-                    .expect("NFA-accepted capture span must have a prioritized extraction");
+                plan.extract(&mut budget, &predicates, tokens, matched, &mut session)?;
             }
         }
         for plan in &self.evaluated_plans {
@@ -1145,17 +1113,8 @@ impl CompiledCatalog {
         .expect("matching exceeded its resource budget");
         for matched in &mut matches {
             if let Some(plan) = self.capture_plans.get(&matched.pattern) {
-                matched.captures = plan
-                    .extract(
-                        &budget.output,
-                        &predicates,
-                        tokens,
-                        matched.start,
-                        matched.end,
-                        &mut session,
-                    )
-                    .expect("matching exceeded its resource budget")
-                    .expect("NFA-accepted capture span must have a prioritized extraction");
+                plan.extract(&mut budget, &predicates, tokens, matched, &mut session)
+                    .expect("matching exceeded its resource budget");
             }
         }
         for plan in &self.evaluated_plans {
@@ -1236,22 +1195,14 @@ impl CompiledCatalog {
             for matched in &mut matches {
                 if let Some(plan) = self.capture_plans.get(&matched.pattern) {
                     metrics.capture_plan_invocations += 1;
-                    let captures = plan
-                        .extract_without_assertions(
-                            &budget.output,
-                            &predicates,
-                            tokens,
-                            matched.start,
-                            matched.end,
-                        )
-                        .expect("matching exceeded its resource budget")
-                        .expect("NFA-accepted capture span must have a prioritized extraction");
-                    metrics.extracted_captures += captures.len();
-                    metrics.extracted_capture_tokens += captures
+                    plan.extract_without_assertions(&mut budget, &predicates, tokens, matched)
+                        .expect("matching exceeded its resource budget");
+                    metrics.extracted_captures += matched.captures.len();
+                    metrics.extracted_capture_tokens += matched
+                        .captures
                         .iter()
                         .map(|capture| capture.end.saturating_sub(capture.start))
                         .sum::<usize>();
-                    matched.captures = captures;
                 }
             }
             metrics.capture_duration = capture_started.elapsed();
@@ -1298,23 +1249,14 @@ impl CompiledCatalog {
         for matched in &mut matches {
             if let Some(plan) = self.capture_plans.get(&matched.pattern) {
                 metrics.capture_plan_invocations += 1;
-                let captures = plan
-                    .extract(
-                        &budget.output,
-                        &predicates,
-                        tokens,
-                        matched.start,
-                        matched.end,
-                        &mut session,
-                    )
-                    .expect("matching exceeded its resource budget")
-                    .expect("NFA-accepted capture span must have a prioritized extraction");
-                metrics.extracted_captures += captures.len();
-                metrics.extracted_capture_tokens += captures
+                plan.extract(&mut budget, &predicates, tokens, matched, &mut session)
+                    .expect("matching exceeded its resource budget");
+                metrics.extracted_captures += matched.captures.len();
+                metrics.extracted_capture_tokens += matched
+                    .captures
                     .iter()
                     .map(|capture| capture.end.saturating_sub(capture.start))
                     .sum::<usize>();
-                matched.captures = captures;
             }
         }
         metrics.capture_duration = capture_started.elapsed();
@@ -1369,16 +1311,7 @@ impl CompiledCatalog {
             )?;
             for matched in &mut trace.matches {
                 if let Some(plan) = self.capture_plans.get(&matched.pattern) {
-                    matched.captures = plan
-                        .extract(
-                            &budget.output,
-                            &predicates,
-                            tokens,
-                            matched.start,
-                            matched.end,
-                            &mut session,
-                        )?
-                        .expect("NFA-accepted capture span must have a prioritized extraction");
+                    plan.extract(&mut budget, &predicates, tokens, matched, &mut session)?;
                 }
             }
             for plan in &self.evaluated_plans {
@@ -1716,6 +1649,42 @@ mod tests {
     }
 
     #[test]
+    fn interpreted_records_observe_cancellation_and_charge_roles_before_publication() {
+        use crate::execution::CancellationFlag;
+        let body = "key: [$x.text]\np := (?<x> []).";
+        let build = |source: &str| {
+            compile_catalog(
+                PatternSource::named("role.lx", source),
+                CompileLimits::default(),
+            )
+            .unwrap()
+            .matcher
+        };
+        let plain = build(body);
+        let interpreted = build(&format!("interpret $x as part {{flag: true}}\n{body}"));
+        assert!(plain.token_windows().is_some());
+        assert!(interpreted.token_windows().is_none());
+        let input = [TokenInfo::default()];
+        let output = std::sync::Arc::new(super::OutputBudget::new(1_000_000));
+        plain
+            .try_find_matches_with_context_and_output(&input, None, &output)
+            .unwrap();
+        let small = std::sync::Arc::new(super::OutputBudget::new(output.allocated_bytes()));
+        assert!(matches!(
+            interpreted.try_find_matches_with_context_and_output(&input, None, &small),
+            Err(super::MatchResourceError::BatchOutput { .. })
+        ));
+        let cancel = CancellationFlag::new();
+        let cancellable =
+            std::sync::Arc::new(super::OutputBudget::default().with_cancellation(Some(&cancel)));
+        cancel.cancel();
+        assert_eq!(
+            interpreted.try_find_matches_with_context_and_output(&input, None, &cancellable),
+            Err(super::MatchResourceError::Cancelled)
+        );
+    }
+
+    #[test]
     fn captured_payloads_consume_output_quota_beyond_dense_spans() {
         let mut token = TokenInfo::default();
         token.set(TokenAttributeIndex::Orth, "a".into());
@@ -2037,6 +2006,7 @@ mod tests {
             end: span.1,
             captures: Box::default(),
             graph_bindings: Box::default(),
+            interpretations: Box::default(),
             lexical: None,
         }
     }

@@ -61,6 +61,19 @@ export function dependencyUnits(tokens, starts) {
         return { first, last, head: head === null ? null : unitOf.get(head) ?? null, rel: scalar(tokens[headWord], 'dep.rel') ?? '' };
     });
 }
+export function annotatedBunsetsu(spans, tokens) {
+    const chunks = spans.map((span, id) => ({ span, id })).filter(({ span }) => span.kind === 'bunsetsu')
+        .sort((a, b) => a.span.start - b.span.start);
+    const unitById = new Map(chunks.map(({ id }, unit) => [id, unit]));
+    return chunks.map(({ span }) => {
+        const word = span.head == null ? undefined : tokens[span.head];
+        const target = word ? headIndex(word) : null;
+        const governor = span.governor == null ? undefined : spans[span.governor];
+        const sameEdge = target !== null && governor && governor.start <= target && target < governor.end;
+        return { first: span.start, last: span.end - 1, head: span.governor == null ? null : unitById.get(span.governor) ?? null,
+            rel: word && sameEdge ? scalar(word, 'dep.rel') ?? '' : '' };
+    });
+}
 /** Arc levels by nesting: an arc rises one level above the highest arc it encloses. Input arcs must be sorted shortest first. */
 function nest(arcs) {
     const placed = [];

@@ -1,8 +1,8 @@
 use super::assertion::AssertionSession;
 use super::predicate::PredicateSession;
 use super::program::Program;
-use super::resource::{MatchResourceError, OutputBudget};
-use crate::fsm::Capture;
+use super::resource::{MatchBudget, MatchResourceError};
+use crate::fsm::Match;
 use crate::token_match::TokenSequence;
 
 #[derive(Clone)]
@@ -11,26 +11,57 @@ pub(crate) struct CapturePlan(pub(crate) Program);
 impl CapturePlan {
     pub(crate) fn extract_without_assertions<S: TokenSequence + ?Sized>(
         &self,
-        output: &OutputBudget,
+        budget: &mut MatchBudget,
         predicates: &PredicateSession<'_>,
         tokens: &S,
-        start: usize,
-        end: usize,
-    ) -> Result<Option<Box<[Capture]>>, MatchResourceError> {
-        self.0
-            .extract_without_assertions(output, predicates, tokens, start, end)
+        matched: &mut Match,
+    ) -> Result<(), MatchResourceError> {
+        if let Some(recipe) = &self.0.definition().interpretation {
+            (matched.captures, matched.interpretations) = self.0.interpreted_captures(
+                recipe,
+                budget,
+                predicates,
+                tokens,
+                matched.start,
+                matched.end,
+            )?;
+        } else {
+            matched.captures = self
+                .0
+                .extract_without_assertions(
+                    &budget.output,
+                    predicates,
+                    tokens,
+                    matched.start,
+                    matched.end,
+                )?
+                .expect("NFA-accepted capture span must have a prioritized extraction");
+        }
+        Ok(())
     }
 
     pub(crate) fn extract<S: TokenSequence + ?Sized>(
         &self,
-        output: &OutputBudget,
+        budget: &mut MatchBudget,
         predicates: &PredicateSession<'_>,
         tokens: &S,
-        start: usize,
-        end: usize,
+        matched: &mut Match,
         session: &mut AssertionSession<'_, '_, S>,
-    ) -> Result<Option<Box<[Capture]>>, MatchResourceError> {
-        self.0
-            .extract(output, predicates, tokens, start, end, session)
+    ) -> Result<(), MatchResourceError> {
+        if self.0.definition().interpretation.is_some() {
+            return self.extract_without_assertions(budget, predicates, tokens, matched);
+        }
+        matched.captures = self
+            .0
+            .extract(
+                &budget.output,
+                predicates,
+                tokens,
+                matched.start,
+                matched.end,
+                session,
+            )?
+            .expect("NFA-accepted capture span must have a prioritized extraction");
+        Ok(())
     }
 }

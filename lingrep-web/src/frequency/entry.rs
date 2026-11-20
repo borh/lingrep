@@ -212,23 +212,22 @@ fn record_group<'r>(
     policy: &CatalogPolicy,
     record: &RecordView<'r>,
     sentence: &dyn TokenSequence,
-) -> Option<RecordGroup<'r>> {
-    match record.group_by(policy)? {
+    location: &SentenceLocation,
+) -> Result<Option<RecordGroup<'r>>, ExecutionError> {
+    let Some(group_by) = record.group_by(policy) else {
+        return Ok(None);
+    };
+    Ok(match group_by {
         GroupBy::Key => record.key.map(RecordGroup::Key),
         GroupBy::LexicalKey => record.lexical_key.map(RecordGroup::LexicalKey),
         GroupBy::Unit => record.unit.map(RecordGroup::Unit),
         GroupBy::Term => record
             .lexical
             .map(|lexical| RecordGroup::Term(lexical.term.as_str())),
-        GroupBy::Surface => {
-            let end = record.end.min(sentence.len());
-            let mut surface = String::new();
-            for index in record.start.min(end)..end {
-                surface.push_str(lingrep_core::token_match::display_surface(sentence, index)?);
-            }
-            Some(RecordGroup::Surface(surface))
-        }
-    }
+        GroupBy::Surface => Some(RecordGroup::Surface(
+            lingrep_core::execution::surface_group(sentence, record.start..record.end, location)?,
+        )),
+    })
 }
 
 fn same_group(record: &RecordGroup<'_>, entry: &Group<'_>) -> bool {
@@ -334,8 +333,13 @@ pub enum Side {
     Right,
 }
 
-/// A line's text around the span `start..end` of `texts`, the sentence's
-/// token surfaces, cut to [`CONTEXT_CHARS`] on each side.
+/// A line's text around the span `start..end` of `sentence`, cut to
+/// [`CONTEXT_CHARS`] on each side.
+///
+/// The three texts concatenate to the sentence as
+/// [`lingrep_core::token_match::display_text`] shows it: a space between the
+/// left context and the node ends `left`, and one between the node and the
+/// right context begins `right`.
 struct LineContext {
     left: String,
     node: String,
@@ -344,20 +348,40 @@ struct LineContext {
 }
 
 impl LineContext {
-    fn new(texts: &[&str], start: usize, end: usize, roles: &[crate::occurrence::Role]) -> Self {
-        let joined = |texts: &[&str]| {
+    fn new<S: TokenSequence + ?Sized>(
+        sentence: &S,
+        start: usize,
+        end: usize,
+        roles: &[crate::occurrence::Role],
+    ) -> Self {
+        use lingrep_core::token_match::{display_space_before, display_surface};
+        let tokens = sentence.len();
+        // The text of `span`, each token's scalar range in it, and its length
+        // in scalars. `leading` admits the space before the span's first token.
+        let joined = |span: std::ops::Range<usize>, leading: bool| {
             let mut text = String::new();
-            let mut ranges = Vec::with_capacity(texts.len());
-            for token in texts {
-                lingrep_core::utils::join_orth_into(&mut text, [*token]);
-                let to = text.chars().count();
-                ranges.push(to - token.chars().count()..to);
+            let mut chars = 0;
+            let mut ranges = Vec::with_capacity(span.len());
+            for index in span.clone() {
+                if (leading || index > span.start) && display_space_before(sentence, index) {
+                    text.push(' ');
+                    chars += 1;
+                }
+                let token = display_surface(sentence, index).unwrap_or("");
+                text.push_str(token);
+                let from = chars;
+                chars += token.chars().count();
+                ranges.push(from..chars);
             }
-            (text, ranges)
+            (text, ranges, chars)
         };
-        let (left, left_ranges) = joined(&texts[..start]);
-        let (right, right_ranges) = joined(&texts[end..]);
-        let skip = left.chars().count().saturating_sub(CONTEXT_CHARS);
+        let (mut left, left_ranges, mut left_chars) = joined(0..start, false);
+        if 0 < start && start < end && display_space_before(sentence, start) {
+            left.push(' ');
+            left_chars += 1;
+        }
+        let (right, right_ranges, _) = joined(end..tokens, start < end);
+        let skip = left_chars.saturating_sub(CONTEXT_CHARS);
         let mut bound = Vec::new();
         for role in roles {
             let (side, first, last) = if role.end <= start && role.start < role.end {
@@ -366,7 +390,7 @@ impl LineContext {
                     &left_ranges[role.start],
                     &left_ranges[role.end - 1],
                 )
-            } else if role.start >= end && role.start < role.end && role.end <= texts.len() {
+            } else if role.start >= end && role.start < role.end && role.end <= tokens {
                 (
                     Side::Right,
                     &right_ranges[role.start - end],
@@ -393,7 +417,7 @@ impl LineContext {
         }
         Self {
             left: left.chars().skip(skip).collect(),
-            node: lingrep_core::utils::join_orth(texts[start..end].iter().copied()),
+            node: lingrep_core::token_match::display_text(sentence, start..end),
             right: right.chars().take(CONTEXT_CHARS).collect(),
             bound,
         }
@@ -413,17 +437,14 @@ impl EntrySink<'_> {
         location: &SentenceLocation,
         sentence: &dyn TokenSequence,
         record: &RecordView<'_>,
-    ) {
+    ) -> Result<(), ExecutionError> {
         if record.pattern != self.pattern
-            || !record_group(self.policy, record, sentence)
+            || !record_group(self.policy, record, sentence, location)?
                 .is_some_and(|group| same_group(&group, self.entry))
         {
-            return;
+            return Ok(());
         }
-        let texts = (0..sentence.len())
-            .map(|index| lingrep_core::token_match::display_surface(sentence, index).unwrap_or(""))
-            .collect::<Vec<_>>();
-        let end = record.end.min(texts.len());
+        let end = record.end.min(sentence.len());
         let start = record.start.min(end);
         let roles = crate::occurrence::roles(
             record
@@ -432,7 +453,7 @@ impl EntrySink<'_> {
                 .map(|capture| (capture.name.as_str(), capture.start..capture.end)),
             record.graph_bindings,
         );
-        let context = LineContext::new(&texts, start, end, &roles);
+        let context = LineContext::new(sentence, start, end, &roles);
         self.lines.push(Line {
             document: location.document_id.get(),
             source_name: location.source_name.to_string(),
@@ -445,6 +466,7 @@ impl EntrySink<'_> {
             roles,
             bound: context.bound,
         });
+        Ok(())
     }
 }
 
@@ -456,7 +478,7 @@ impl MatchSink for EntrySink<'_> {
         matches: &[Match],
     ) -> Result<SinkControl, ExecutionError> {
         for matched in matches {
-            self.take(location, sentence, &RecordView::raw(matched));
+            self.take(location, sentence, &RecordView::raw(matched))?;
         }
         Ok(SinkControl::Continue { records_emitted: 0 })
     }
@@ -468,7 +490,7 @@ impl MatchSink for EntrySink<'_> {
         records: Vec<PublishedRecord>,
     ) -> Result<SinkControl, ExecutionError> {
         for record in &records {
-            self.take(location, sentence, &RecordView::published(record));
+            self.take(location, sentence, &RecordView::published(record))?;
         }
         Ok(SinkControl::Continue { records_emitted: 0 })
     }
@@ -1067,7 +1089,8 @@ mod tests {
             role("v", 6, 7),
             role("x", 7, 9),
         ];
-        let context = LineContext::new(&texts, 3, 5, &roles);
+        let tokens = texts.map(lingrep_core::testing::helpers::token);
+        let context = LineContext::new(&tokens[..], 3, 5, &roles);
         assert_eq!(context.node, "坂を");
         assert_eq!(context.right, "ゆっくり上るBig Ben");
         assert_eq!(context.left.chars().count(), CONTEXT_CHARS);
@@ -1093,6 +1116,72 @@ mod tests {
                     end: 13
                 },
             ]
+        );
+    }
+
+    #[test]
+    fn a_line_keeps_the_spaces_the_source_has_between_tokens() {
+        use lingrep_core::testing::helpers::placed_tokens;
+        let line = |source: &str, words: &[&str], start, end, roles: &[crate::occurrence::Role]| {
+            let context = LineContext::new(&placed_tokens(source, words), start, end, roles);
+            (context.left, context.node, context.right, context.bound)
+        };
+        let located = |name: &str, side, start, end| BoundText {
+            name: name.into(),
+            side,
+            start,
+            end,
+        };
+        assert_eq!(
+            line(
+                "I saw NHK news today",
+                &["I", "saw", "NHK", "news", "today"],
+                2,
+                4,
+                &[role("v", 1, 2), role("t", 4, 5)],
+            ),
+            (
+                "I saw ".into(),
+                "NHK news".into(),
+                " today".into(),
+                vec![
+                    located("v", Side::Left, 2, 5),
+                    located("t", Side::Right, 1, 6)
+                ],
+            )
+        );
+        // UniDic splits a half-width Latin word into letters.
+        assert_eq!(
+            line(
+                "昨日 NHK news を見た。",
+                &[
+                    "昨日", "N", "H", "K", "n", "e", "w", "s", "を", "見", "た", "。"
+                ],
+                1,
+                4,
+                &[role("o", 4, 8)],
+            ),
+            (
+                "昨日 ".into(),
+                "NHK".into(),
+                " news を見た。".into(),
+                vec![located("o", Side::Right, 1, 5)],
+            )
+        );
+        assert_eq!(
+            line(
+                "昨日はニュースを見た。",
+                &["昨日", "は", "ニュース", "を", "見", "た", "。"],
+                2,
+                4,
+                &[],
+            ),
+            (
+                "昨日は".into(),
+                "ニュースを".into(),
+                "見た。".into(),
+                vec![]
+            )
         );
     }
 

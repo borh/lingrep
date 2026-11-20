@@ -7550,7 +7550,7 @@ expression: repository_catalog_fingerprints()
     },
     CatalogFingerprint {
         source: "patterns/wo-predicate-dep.lx",
-        definitions: 6,
+        definitions: 7,
         catalog: [
             (
                 "wo_predicate_linear",
@@ -7626,6 +7626,43 @@ expression: repository_catalog_fingerprints()
                     ),
                 ],
             ),
+            (
+                "wo_predicate_bunsetsu",
+                [
+                    (
+                        "category",
+                        "ヲ格共起\n",
+                    ),
+                    (
+                        "collocate",
+                        "accusative\n",
+                    ),
+                    (
+                        "head",
+                        "predicate\n",
+                    ),
+                    (
+                        "key",
+                        "$head.lemma,$collocate.lemma",
+                    ),
+                    (
+                        "relation",
+                        "noun_wo+V\n",
+                    ),
+                    (
+                        "role",
+                        "research\n",
+                    ),
+                    (
+                        "source",
+                        "research query, ヲ格名詞句と述語の共起 dependency criterion\n",
+                    ),
+                    (
+                        "status",
+                        "experimental\n",
+                    ),
+                ],
+            ),
         ],
         policy: [],
         required_attributes: [
@@ -7640,9 +7677,9 @@ expression: repository_catalog_fingerprints()
             "6ea3fdf0bd2f56c3ef18e8d2e58fc18ab9fa70ff1ca9c735c8bf0f7bccc0364f",
         ),
         compiler_stats: CompilerStatsFingerprint {
-            definitions: 6,
-            expression_nodes: 31,
-            max_depth: 4,
+            definitions: 7,
+            expression_nodes: 42,
+            max_depth: 5,
             reference_edges: 4,
             nfa_states: 18,
             transitions: 24,

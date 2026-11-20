@@ -1,3 +1,4 @@
+use super::diagnostic::Diagnostic;
 use crate::fsm::{AttrValueType, KeyProjection, PositionAssertion, SymbolicAttrValue};
 use crate::token_match::AttributeKey;
 use compact_str::CompactString;
@@ -186,6 +187,9 @@ pub(crate) struct ParsedSet {
     pub(crate) members: Vec<CompactString>,
     /// The members as written, as `surface` compares them.
     pub(crate) exact_members: Vec<CompactString>,
+    /// One `NormalizedLiteral` warning for each member that is not NFC,
+    /// reported unless every reference compares the set with `surface`.
+    pub(crate) normalized_literals: Vec<Diagnostic>,
     pub(crate) span: SourceSpan,
 }
 
@@ -449,9 +453,23 @@ pub(crate) struct ParsedAnalyzerConstraint {
     pub(crate) segmentation: Box<[CompactString]>,
 }
 
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub(crate) struct ParsedInterpretation {
+    pub(crate) captures: BTreeMap<CompactString, ParsedRole>,
+    pub(crate) classify_by: Option<(CompactString, SourceSpan)>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) struct ParsedRole {
+    pub(crate) role: CompactString,
+    pub(crate) labels: BTreeMap<CompactString, crate::fsm::AnalyticalValue>,
+    pub(crate) span: SourceSpan,
+}
+
 /// One named lingrep patterns definition and its source-level annotation.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) struct ParsedDefinition {
+    pub(crate) interpretation: Option<ParsedInterpretation>,
     pub(crate) name: CompactString,
     pub(crate) body: ParsedDefinitionBody,
     pub(crate) metadata: Metadata,
@@ -468,6 +486,7 @@ pub(crate) enum ParsedDefinitionBody {
         relations: Box<[ParsedRelation]>,
         enhanced_relations: Box<[ParsedEnhancedRelation]>,
         orders: Box<[OrderConstraint]>,
+        span_paths: Box<[ParsedSpanPath]>,
     },
     Lexicon {
         by: Box<[AttributeKey]>,
@@ -907,6 +926,7 @@ pub(crate) struct BoundProgram {
 /// A validated definition with stable identity and no source-buffer borrow.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) struct BoundDefinition {
+    pub(crate) interpretation: Option<ParsedInterpretation>,
     pub(crate) id: DefinitionId,
     pub(crate) source: SourceId,
     pub(crate) name: CompactString,
@@ -927,6 +947,7 @@ pub(crate) enum BoundDefinitionBody {
         relations: Box<[BoundRelation]>,
         enhanced_relations: Box<[BoundEnhancedRelation]>,
         orders: Box<[OrderConstraint]>,
+        span_paths: Box<[ParsedSpanPath]>,
     },
     Lexicon {
         by: Box<[AttributeKey]>,
@@ -961,6 +982,13 @@ impl BoundDefinition {
             BoundDefinitionBody::Pattern {
                 enhanced_relations, ..
             } => enhanced_relations,
+            BoundDefinitionBody::Lexicon { .. } => &[],
+        }
+    }
+
+    pub(crate) fn span_paths(&self) -> &[ParsedSpanPath] {
+        match &self.body {
+            BoundDefinitionBody::Pattern { span_paths, .. } => span_paths,
             BoundDefinitionBody::Lexicon { .. } => &[],
         }
     }
@@ -1144,7 +1172,57 @@ impl ExecutionCapability {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) struct ParsedSpanPath {
+    pub(crate) kind: String,
+    pub(crate) operands: Vec<ParsedSpanOperand>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) struct ParsedSpanOperand {
+    pub(crate) capture: CompactString,
+    pub(crate) source: SourceSpan,
+    pub(crate) position: SpanPosition,
+    pub(crate) label: Option<String>,
+}
+
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, PartialOrd, Ord, serde::Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub(crate) enum SpanPosition {
+    #[default]
+    Inside,
+    Whole,
+    Head,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) struct SpanConstraint {
+    pub(crate) kind: String,
+    /// Ordered from dependent to governor so evaluation follows stored links.
+    pub(crate) nodes: Box<[SpanOperand]>,
+}
+
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub(crate) struct SpanOperand {
+    pub(crate) source: Option<SourceSpan>,
+    pub(crate) capture: Option<CaptureId>,
+    pub(crate) position: SpanPosition,
+    pub(crate) label: Option<String>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) struct InterpretationRecipe {
+    pub(crate) captures: BTreeMap<CaptureId, usize>,
+    pub(crate) roles: Vec<(
+        CompactString,
+        BTreeMap<CompactString, crate::fsm::AnalyticalValue>,
+    )>,
+    pub(crate) classify_by: Option<CompactString>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) struct ExecutionDefinition {
+    pub(crate) interpretation: Option<Box<InterpretationRecipe>>,
+    pub(crate) span_constraints: Box<[SpanConstraint]>,
     pub(crate) name: CompactString,
     pub(crate) expr: ExecutionExpr,
     pub(crate) capability: ExecutionCapability,

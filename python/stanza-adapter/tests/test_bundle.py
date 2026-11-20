@@ -49,6 +49,7 @@ class FakePipeline:
 
     def __init__(self, **kwargs: object) -> None:
         self.calls.append(kwargs)
+        self.processors = dict.fromkeys(str(kwargs["processors"]).split(","))
 
     def __call__(self, text: str) -> object:
         token = FakeToken(text, 0, len(text))
@@ -56,9 +57,17 @@ class FakePipeline:
         return types.SimpleNamespace(sentences=[sentence])
 
 
-def fake_stanza() -> types.ModuleType:
+class MwtAddingPipeline(FakePipeline):
+    """Loads mwt after tokenize, as Stanza does when resources.json pairs them."""
+
+    def __init__(self, **kwargs: object) -> None:
+        super().__init__(**kwargs)
+        self.processors = dict.fromkeys(["tokenize", "mwt", *self.processors])
+
+
+def fake_stanza(pipeline: type[FakePipeline] = FakePipeline) -> types.ModuleType:
     module = types.ModuleType("stanza")
-    module.Pipeline = FakePipeline
+    module.Pipeline = pipeline
     module.__version__ = "1.14.0"
     return module
 
@@ -124,6 +133,104 @@ class BundleTests(unittest.TestCase):
                 all(call["download_method"] is None for call in FakePipeline.calls)
             )
             self.assertEqual(load_profile(root), profile)
+            self.assertEqual(
+                profile["selection_digests"],
+                {
+                    "tokenize/input": "91b87823e5c5013c08562271836ac1f8"
+                    "672d854fa5aeb34b2b48a65328b64346",
+                    "tokenize/analyzer": "f843a59cd043940588da769be6c07069"
+                    "10b2106bba75faa76ca80ad05166fd14",
+                    "morphology/input": "af2e6f05a2bba8e143aa6a91e0921dcb"
+                    "9f61ef37bd7d73ce2c522dc7ed044084",
+                    "morphology/analyzer": "261c2aed7c442a43704fb5a023615b0c"
+                    "91f9db8d8f0bdbc68f16186cd5b4710d",
+                },
+            )
+
+    def test_morphology_without_mwt_declares_identity_alignment(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            write_resources(root)
+            with patch.dict(sys.modules, {"stanza": fake_stanza()}):
+                profile = prepare_model_bundle(
+                    root,
+                    language="ja",
+                    probe_text="猫",
+                    packages={
+                        "tokenize": "gsd",
+                        "pos": "gsd_nocharlm",
+                        "lemma": "gsd_nocharlm",
+                    },
+                )
+
+            self.assertEqual(
+                set(profile["selections"]),
+                {
+                    "tokenize/input",
+                    "tokenize/analyzer",
+                    "morphology/input",
+                    "morphology/analyzer",
+                },
+            )
+            for name, selection in profile["selections"].items():
+                with self.subTest(selection=name):
+                    expected = (
+                        ["tokenize"]
+                        if name.startswith("tokenize/")
+                        else ["tokenize", "pos", "lemma"]
+                    )
+                    self.assertEqual(selection["processors"], expected)
+                    self.assertEqual(list(selection["packages"]), expected)
+                    self.assertEqual(selection["alignment_policy"], "identity-v1")
+            self.assertEqual(
+                [call["processors"] for call in FakePipeline.calls],
+                ["tokenize", "tokenize", "tokenize,pos,lemma", "tokenize,pos,lemma"],
+            )
+            self.assertEqual(load_profile(root), profile)
+
+    def test_loaded_profile_alignment_must_match_its_mwt_processor(self) -> None:
+        packages = {"tokenize": "gsd", "pos": "gsd_nocharlm", "lemma": "gsd_nocharlm"}
+        for mwt, claimed in ((False, "stanza-mwt/v1"), (True, "identity-v1")):
+            with (
+                self.subTest(mwt=mwt),
+                tempfile.TemporaryDirectory() as directory,
+            ):
+                root = Path(directory)
+                write_resources(root)
+                with patch.dict(sys.modules, {"stanza": fake_stanza()}):
+                    profile = prepare_model_bundle(
+                        root,
+                        language="fr",
+                        probe_text="Chats",
+                        packages=packages | ({"mwt": "gsd"} if mwt else {}),
+                    )
+                for name in ("morphology/input", "morphology/analyzer"):
+                    selection = profile["selections"][name]
+                    selection["alignment_policy"] = claimed
+                    profile["selection_digests"][name] = selection_digest(selection)
+                (root / PROFILE_FILE).write_text(json.dumps(profile), encoding="utf-8")
+                with self.assertRaisesRegex(ValueError, "alignment policy"):
+                    load_profile(root)
+
+    def test_prepare_rejects_packages_that_omit_the_mwt_stanza_loads(self) -> None:
+        for packages in (
+            {"tokenize": "gsd"},
+            {"tokenize": "gsd", "pos": "gsd_nocharlm", "lemma": "gsd_nocharlm"},
+        ):
+            with (
+                self.subTest(packages=sorted(packages)),
+                tempfile.TemporaryDirectory() as directory,
+            ):
+                root = Path(directory)
+                write_resources(root)
+                with (
+                    patch.dict(sys.modules, {"stanza": fake_stanza(MwtAddingPipeline)}),
+                    self.assertRaisesRegex(ValueError, "--package mwt="),
+                ):
+                    prepare_model_bundle(
+                        root, language="fr", probe_text="Chats", packages=packages
+                    )
+                self.assertFalse((root / PROFILE_FILE).exists())
 
     def test_profile_has_distinct_input_and_analyzer_selections(self) -> None:
         with tempfile.TemporaryDirectory() as directory:

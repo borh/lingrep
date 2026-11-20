@@ -17,15 +17,19 @@ pub use projector::{
 pub use snapshot::{InspectionError, SnapshotInspector};
 pub const WHOLE_SENTENCE_CONTEXT: usize = usize::MAX;
 
-/// Split a projected match into orth-joined left / key / right text. Shared by
-/// the pattern-detail view and the results export so their KWIC text is
-/// identical by construction. All consumers route through
-/// [`lingrep_core::utils::join_orth`].
+/// Split a projected match into left / key / right text. Shared by the
+/// pattern-detail view and the results export so their KWIC text is identical
+/// by construction.
 ///
-/// Missing-orth tokens (`summary.orth == None`) are filtered before joining —
-/// the contract is that they are transparent (boundaries become adjacent).
-/// Projected tokens normally carry `orth = Some`; `None` indicates a degenerate
-/// record.
+/// Each token contributes its `summary.orth`, preceded by a space where its
+/// `space_before` is set, so the three fields concatenate to the window's
+/// text: a space between the left context and the key ends `left`, and one
+/// between the key and the right context begins `right`. `key` carries
+/// neither, which keeps it equal to the surface
+/// `SnapshotSink::stage_surface` counts for the same span.
+///
+/// Missing-orth tokens (`summary.orth == None`) are transparent. Projected
+/// tokens normally carry `orth = Some`; `None` indicates a degenerate record.
 pub(crate) fn kwic_orth_split(inspection: &MatchInspection) -> (String, String, String) {
     let first_match = inspection
         .tokens
@@ -37,13 +41,27 @@ pub(crate) fn kwic_orth_split(inspection: &MatchInspection) -> (String, String, 
         .iter()
         .rposition(|token| token.role == TokenRole::Match)
         .map_or(first_match, |index| index + 1);
-    fn orths(tokens: &[InspectedToken]) -> impl Iterator<Item = &str> {
-        tokens.iter().filter_map(|t| t.summary.orth.as_deref())
+    let field = |tokens: &[InspectedToken], leading: bool| {
+        let mut text = String::new();
+        for (index, token) in tokens.iter().enumerate() {
+            if token.space_before && (index > 0 || leading) {
+                text.push(' ');
+            }
+            if let Some(orth) = token.summary.orth.as_deref() {
+                text.push_str(orth);
+            }
+        }
+        text
+    };
+    let mut left = field(&inspection.tokens[..first_match], false);
+    let key = &inspection.tokens[first_match..last_match];
+    if first_match > 0 && key.first().is_some_and(|token| token.space_before) {
+        left.push(' ');
     }
     (
-        lingrep_core::utils::join_orth(orths(&inspection.tokens[..first_match])),
-        lingrep_core::utils::join_orth(orths(&inspection.tokens[first_match..last_match])),
-        lingrep_core::utils::join_orth(orths(&inspection.tokens[last_match..])),
+        left,
+        field(key, false),
+        field(&inspection.tokens[last_match..], true),
     )
 }
 
@@ -71,15 +89,51 @@ mod kwic_split_tests {
     }
 
     #[test]
-    fn kwic_orth_split_spaces_spaced_script_inside_each_field() {
-        // F6: boundaries inside pre, key, and post.
-        // tokens (idx 0..7): 前 DNA machine learning 解析 model 評価
-        // match span 2..5 → key = [machine, learning, 解析]
-        //   pre  = [前, DNA]          → 前→DNA CJK→spaced → concat → "前DNA"
-        //   key  = [machine, learning, 解析] → machine→learning spaced→spaced → SPACE;
-        //                                          learning→解析 spaced→CJK → concat
-        //                                     → "machine learning解析"
-        //   post = [model, 評価]      → model→評価 spaced→CJK → concat → "model評価"
+    fn kwic_orth_split_keeps_the_spaces_the_source_has_between_tokens() {
+        use lingrep_core::testing::helpers::placed_tokens;
+        let split = |source: &str, words: &[&str], span| {
+            kwic_orth_split(
+                &crate::inspection::projector::InspectionProjector::project_window(
+                    &placed_tokens(source, words),
+                    span,
+                    WHOLE_SENTENCE_CONTEXT,
+                ),
+            )
+        };
+        assert_eq!(
+            split(
+                "I saw NHK news today",
+                &["I", "saw", "NHK", "news", "today"],
+                2..4
+            ),
+            ("I saw ".into(), "NHK news".into(), " today".into())
+        );
+        // UniDic splits a half-width Latin word into letters.
+        assert_eq!(
+            split(
+                "昨日 NHK news を見た。",
+                &[
+                    "昨日", "N", "H", "K", "n", "e", "w", "s", "を", "見", "た", "。"
+                ],
+                1..4
+            ),
+            ("昨日 ".into(), "NHK".into(), " news を見た。".into())
+        );
+        assert_eq!(
+            split(
+                "昨日はニュースを見た。",
+                &["昨日", "は", "ニュース", "を", "見", "た", "。"],
+                2..4
+            ),
+            ("昨日は".into(), "ニュースを".into(), "見た。".into())
+        );
+    }
+
+    #[test]
+    fn kwic_orth_split_without_spans_spaces_adjacent_spaced_script_tokens() {
+        // tokens (idx 0..7): 前 DNA machine learning 解析 model 評価, match 2..5.
+        // Without source spans a space is guessed between two letters of a
+        // spaced script: DNA→machine, which ends `left`, and machine→learning.
         let tokens = vec![
             tok("前"),
             tok("DNA"),
@@ -95,76 +149,45 @@ mod kwic_split_tests {
             WHOLE_SENTENCE_CONTEXT,
         );
         let (left, key, right) = kwic_orth_split(&inspection);
-        assert_eq!(left, "前DNA");
+        assert_eq!(left, "前DNA ");
         assert_eq!(key, "machine learning解析");
         assert_eq!(right, "model評価");
     }
 
     #[test]
     fn kwic_orth_split_missing_orth_is_transparent_within_a_field() {
-        // F5: a token whose summary.orth is None is filtered out before
-        // join_orth; the surrounding present orths in the SAME field become
-        // adjacent (transparent contract). The None sits between two Context
-        // tokens in the pre field, so alpha and beta become adjacent and
-        // (both spaced-script) get a joining space.
+        // A token whose summary.orth is None contributes no text; the space
+        // each token records before itself is still written.
         use crate::inspection::projector::{
             InspectedToken, MatchInspection, TokenRole, TokenSummary,
         };
         use compact_str::CompactString;
-        let mk = |orth: Option<&str>, role: TokenRole, idx: usize| InspectedToken {
-            sentence_index: idx,
-            role,
-            summary: TokenSummary {
-                orth: orth.map(CompactString::from),
-                ..Default::default()
-            },
-            capture_membership: Box::default(),
-        };
-        // pre field (Context): alpha, None, beta ; key field (Match): key
+        let mk =
+            |orth: Option<&str>, role: TokenRole, idx: usize, space_before: bool| InspectedToken {
+                sentence_index: idx,
+                role,
+                space_before,
+                summary: TokenSummary {
+                    orth: orth.map(CompactString::from),
+                    ..Default::default()
+                },
+                capture_membership: Box::default(),
+            };
         let inspection = MatchInspection {
             tokens: Box::from(vec![
-                mk(Some("alpha"), TokenRole::Context, 0),
-                mk(None, TokenRole::Context, 1),
-                mk(Some("beta"), TokenRole::Context, 2),
-                mk(Some("key"), TokenRole::Match, 3),
+                mk(Some("alpha"), TokenRole::Context, 0, false),
+                mk(None, TokenRole::Context, 1, false),
+                mk(Some("beta"), TokenRole::Context, 2, true),
+                mk(Some("key"), TokenRole::Match, 3, false),
             ]),
             visible_range: 0..4,
             captures: Box::default(),
             capture_lanes: Box::default(),
         };
-        // None filtered → pre = [alpha, beta] → join_orth spaces them.
         let (left, key, right) = kwic_orth_split(&inspection);
-        assert_eq!(
-            left, "alpha beta",
-            "missing orth transparent within a field"
-        );
+        assert_eq!(left, "alpha beta");
         assert_eq!(key, "key");
         assert_eq!(right, "");
-    }
-
-    #[test]
-    fn kwic_orth_split_preserves_the_shared_join_policy() {
-        let tokens = vec![
-            tok("前"),
-            tok("DNA"),
-            tok("machine"),
-            tok("learning"),
-            tok("解析"),
-            tok("model"),
-            tok("評価"),
-        ];
-        let match_span = 2..5;
-        let inspection = crate::inspection::projector::InspectionProjector::project_window(
-            &tokens,
-            match_span,
-            WHOLE_SENTENCE_CONTEXT,
-        );
-        let (left, key, right) = kwic_orth_split(&inspection);
-
-        assert_eq!(
-            (left.as_str(), key.as_str(), right.as_str()),
-            ("前DNA", "machine learning解析", "model評価")
-        );
     }
 
     #[test]
@@ -208,8 +231,8 @@ mod kwic_split_tests {
 
     #[test]
     fn degenerate_mixed_none_in_key_is_transparent() {
-        // [Some("a"), None, Some("b")] in the key field — empty-transparent
-        // (core, orth()="") ≡ filter-None (web). Both yield "a b".
+        // [Some("a"), None, Some("b")] in the key field: the token without a
+        // text contributes nothing, and no space is guessed beside it.
         let t1 = TokenInfo::default().with_orth("a");
         let t2 = TokenInfo::default(); // None
         let t3 = TokenInfo::default().with_orth("b");
@@ -221,7 +244,7 @@ mod kwic_split_tests {
             WHOLE_SENTENCE_CONTEXT,
         );
         let (left, key, right) = kwic_orth_split(&inspection);
-        assert_eq!(key, "a b", "web: filter-None → same spaced boundary");
+        assert_eq!(key, "ab");
         assert_eq!((left.as_str(), right.as_str()), ("", ""));
     }
 }

@@ -44,6 +44,7 @@ HUB_REVISIONS = {
     ),
 }
 HUB_SOURCES_FILE = "lingrep-hub-sources.json"
+BUNSETU_PHRASE_KEY = "spacy.ginza.bunsetuphrase"
 BUNSETU_KEY = "spacy.ginza.bunsetu"
 SUDACHITRA_TOKENIZER = "modeling.ElectraSudachipyTokenizer"
 
@@ -388,7 +389,9 @@ def _selection(
         pipeline.config["components"][name].get("factory") == "bunsetu_recognizer"
         for name in components
     ):
-        schema.append({"key": BUNSETU_KEY, "kind": "scalar"})
+        schema.extend(
+            {"key": key, "kind": "scalar"} for key in (BUNSETU_KEY, BUNSETU_PHRASE_KEY)
+        )
     from .adapter import _projection_order
 
     schema.sort(key=lambda attribute: _projection_order(attribute["key"]))

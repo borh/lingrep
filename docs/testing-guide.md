@@ -122,6 +122,23 @@ artifacts. Existing Markdown and synthetic tests retain their format-specific
 and boundary coverage. For a UI change, also check the changed view in a browser
 using that Soranoha corpus.
 
+The check uses Vibrato unless analyzer options follow `--`. The script passes
+them unchanged to the direct `ling matches` run and to `ling corpus build`, so
+both paths use the same analyzer. For Sudachi:
+
+```bash
+python3 scripts/check-soranoha.py target/debug/ling \
+  --archive /path/to/soranoha-Akutagawa_Ryunosuke-000879-plaintext.zip \
+  -- --analyzer sudachi --sudachi-dict "$LINGREP_SUDACHI_DICT_CORE"
+```
+
+For an external analyzer, pass `-- --analyzer-config /path/to/analyzer.toml`.
+The script stops any `ling` command that runs longer than 600 seconds, so use
+an archive that the analyzer can build within that time.
+The validation pattern tests only `text`, which every analyzer supplies.
+Analyzer options are rejected with `--corpus`, because a prepared corpus
+records the analyzer that built it.
+
 Before a new version or release, run the same check against the full Soranoha
 corpus:
 

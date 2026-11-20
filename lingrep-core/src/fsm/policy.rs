@@ -1456,6 +1456,7 @@ impl PublishedRecord {
             end: self.end,
             captures: self.components,
             graph_bindings: self.raw.graph_bindings,
+            interpretations: self.raw.interpretations,
             lexical: self.raw.lexical,
         }
     }
@@ -1489,6 +1490,7 @@ pub struct RecordView<'a> {
     pub captures: &'a [Capture],
     /// Enhanced graph assignments. Span rewrites do not alter graph identity.
     pub graph_bindings: &'a [crate::fsm::GraphBinding],
+    pub interpretations: &'a [crate::fsm::Interpretation],
     /// The rendered unit, present only after a `join` ran.
     pub unit: Option<&'a str>,
     /// The projected key, absent when none was declared and equally
@@ -1516,6 +1518,7 @@ impl<'a> RecordView<'a> {
             unit: None,
             key: None,
             lexical_key: None,
+            interpretations: &matched.interpretations,
             lexical: matched.lexical.as_deref(),
             tags: &[],
         }
@@ -1534,6 +1537,7 @@ impl<'a> RecordView<'a> {
             unit: record.unit.as_deref(),
             key: record.key.as_deref(),
             lexical_key: record.lexical_key.as_deref(),
+            interpretations: &record.raw.interpretations,
             lexical: record.raw.lexical.as_deref(),
             tags: &record.tags,
         }
@@ -2278,7 +2282,11 @@ pub const MAX_NESTING_KEY: &str = "max_nesting";
 /// Returns whether the compiler defines this key's schema, excluding authored example keys.
 #[must_use]
 pub fn compiler_owned_key(key: &str) -> bool {
-    POLICY_KEYS.contains(&key) || matches!(key, ANCHOR_KEY | MAX_NESTING_KEY | "skip")
+    POLICY_KEYS.contains(&key)
+        || matches!(
+            key,
+            ANCHOR_KEY | MAX_NESTING_KEY | "skip" | "within_span" | "span_dependency"
+        )
 }
 
 /// Returns the first match in [`POLICY_KEYS`] order, which is stable, so a key
@@ -2323,6 +2331,7 @@ mod tests {
             matched_by: Box::new([]),
         };
         let record = |definition, key, unit, lexical| RecordView {
+            interpretations: &[],
             pattern: definition,
             definition,
             start: 0,

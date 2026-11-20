@@ -150,7 +150,7 @@ pub fn analyzer_descriptor() -> crate::analysis::AnalyzerDescriptor {
 /// `text` is the folded key of FORM and `surface` is FORM as written.
 fn conllu_projection_digest() -> [u8; 32] {
     let mut hasher = blake3::Hasher::new();
-    hasher.update(b"lingrep.conllu-projection/v2");
+    hasher.update(b"lingrep.conllu-projection/v3");
     hasher.update(crate::analysis::TEXT_KEY_REVISION);
     *hasher.finalize().as_bytes()
 }
@@ -655,6 +655,34 @@ impl Sentence {
         ))
     }
 
+    fn spans(&self) -> Vec<crate::token_match::SentenceSpan> {
+        use super::span_annotations::{bunsetsu_heads, partition};
+
+        let misc = |index: usize, prefix: &str| {
+            self.words[index]
+                .misc
+                .iter()
+                .find_map(|v| v.strip_prefix(prefix))
+        };
+        let mut spans = partition(
+            "bunsetsu",
+            (0..self.words.len()).map(|i| misc(i, "BunsetuBILabel=")),
+        );
+        bunsetsu_heads(&mut spans, |i| {
+            (
+                matches!(misc(i, "BunsetuPositionType="), Some("SEM_HEAD" | "ROOT")),
+                None,
+                self.words[i].head.as_deref().and_then(|v| v.parse().ok()),
+            )
+        });
+        let luw = partition("luw", (0..self.words.len()).map(|i| misc(i, "LUWBILabel=")));
+        spans.extend(luw.into_iter().map(|mut span| {
+            span.label = misc(span.start, "LUWPOS=").map(str::to_owned);
+            span
+        }));
+        spans
+    }
+
     pub fn project(
         &self,
         projection: &BoundProjection,
@@ -709,6 +737,11 @@ impl Sentence {
             }
         }
         BoundTokenSentence::from_projected_attribute_values(projection, self.words.len(), values)
+            .and_then(|words| {
+                words
+                    .with_spans(self.spans())
+                    .map_err(crate::token_match::BoundTokenError::InvalidSpans)
+            })
             // The offsets ride with the words rather than as a separate event
             // field, because that is the path every consumer already takes and
             // because an offset is a fact about a token, not about the run.
@@ -1360,6 +1393,46 @@ mod tests {
             TokenSequence::char_span(&reprojected, 1),
             Some(CharSpan::new(4, 7)),
             "a narrower attribute projection must not drop the offsets"
+        );
+    }
+
+    #[test]
+    fn bunsetsu_and_luw_survive_text_only_projection() {
+        let input = concat!(
+            "1\t先生\t_\tNOUN\t_\t_\t3\tnsubj\t_\tBunsetuBILabel=B|BunsetuPositionType=SEM_HEAD|LUWBILabel=B|LUWPOS=名詞\n",
+            "2\t方\t_\tNOUN\t_\t_\t1\tcompound\t_\tBunsetuBILabel=I|LUWBILabel=I\n",
+            "3\t行く\t_\tVERB\t_\t_\t0\troot\t_\tBunsetuBILabel=B|BunsetuPositionType=ROOT|LUWBILabel=B|LUWPOS=動詞\n\n"
+        );
+        let sentence = Reader::new(input.as_bytes(), "layers.conllu")
+            .next()
+            .unwrap()
+            .unwrap();
+        let projection = token_schema()
+            .bind_projection([AttributeKey::new("text").unwrap()])
+            .unwrap();
+        let words = sentence.project(&projection).unwrap();
+        let spans = words
+            .spans()
+            .iter()
+            .map(|s| {
+                (
+                    s.kind.as_str(),
+                    s.start,
+                    s.end,
+                    s.head,
+                    s.governor,
+                    s.label.as_deref(),
+                )
+            })
+            .collect::<Vec<_>>();
+        assert_eq!(
+            spans,
+            [
+                ("bunsetsu", 0, 2, Some(0), Some(1), None),
+                ("bunsetsu", 2, 3, Some(2), None, None),
+                ("luw", 0, 2, None, None, Some("名詞")),
+                ("luw", 2, 3, None, None, Some("動詞")),
+            ]
         );
     }
 

@@ -1,6 +1,6 @@
 use std::sync::Arc;
 
-use lingrep_core::token_match::TokenInfo;
+use lingrep_core::token_match::TokenInfoSentence;
 use thiserror::Error;
 
 use super::{
@@ -68,7 +68,7 @@ impl SnapshotInspector {
     /// `BoundCorpusReader::decode_sentences`) first. Removes the ordinal re-scan.
     pub fn project_reference(
         &self,
-        tokens: &[TokenInfo],
+        tokens: &TokenInfoSentence,
         reference: &MatchRef,
         context: usize,
     ) -> Result<MatchInspection, InspectionError> {
@@ -133,7 +133,7 @@ impl SnapshotInspector {
         &self,
         pattern: PatternKey,
         reference_ordinal: usize,
-    ) -> Result<(Vec<TokenInfo>, MatchRef, Vec<ResolvedCapture>), InspectionError> {
+    ) -> Result<(TokenInfoSentence, MatchRef, Vec<ResolvedCapture>), InspectionError> {
         self.snapshot
             .pattern(pattern)
             .ok_or(InspectionError::UnknownPattern)?;

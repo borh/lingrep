@@ -312,6 +312,37 @@ async fn artifact_reuse_depends_on_content_not_timestamps() {
     assert_eq!(artifact_directories(directory.path()).len(), 2);
 }
 
+/// A sentence read back from a prepared artifact keeps the source spans of
+/// its tokens, so text joined from it has the spaces the source has.
+#[tokio::test]
+async fn a_stored_sentence_displays_the_spaces_its_source_has_between_tokens() {
+    let directory = tempdir().unwrap();
+    let corpus = directory.path().join("corpus.jsonl");
+    fs::write(&corpus, "{\"sentences\":[\"猫 犬 鳥。\",\"猫犬鳥。\"]}\n").unwrap();
+    let dictionary = MiniDictionary::new();
+    let runtime = CorpusRuntime::new(test_context(dictionary.path()), &corpus).unwrap();
+    runtime.start_or_observe().await;
+    let ready = wait_ready(&runtime).await;
+    let reader = ready.reader().unwrap().bind(&ready.identity).unwrap();
+
+    let mut displayed = Vec::new();
+    for sentence in 0..2 {
+        let tokens = reader.sentence(sentence).await.unwrap().unwrap();
+        displayed.push((
+            lingrep_core::token_match::display_text(&tokens, 0..tokens.len()),
+            reader.sentence_words_bounded(sentence, usize::MAX).unwrap(),
+        ));
+    }
+    let words = |words: &[&str]| Some(words.iter().map(ToString::to_string).collect::<Vec<_>>());
+    assert_eq!(
+        displayed,
+        [
+            ("猫 犬 鳥。".to_string(), words(&["猫", " 犬", " 鳥", "。"])),
+            ("猫犬鳥。".to_string(), words(&["猫", "犬", "鳥", "。"])),
+        ]
+    );
+}
+
 fn record_limit_runtime(corpus: &Path, dictionary: &Path, limit: usize) -> CorpusRuntime {
     CorpusRuntime::new_with_override(
         test_context(dictionary),

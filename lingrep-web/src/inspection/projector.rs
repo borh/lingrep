@@ -113,6 +113,10 @@ pub enum TokenRole {
 pub struct InspectedToken {
     pub sentence_index: usize,
     pub role: TokenRole,
+    /// Whether displayed text has a space between this token and the one
+    /// before it in the sentence
+    /// ([`lingrep_core::token_match::display_space_before`]).
+    pub space_before: bool,
     pub summary: TokenSummary,
     pub capture_membership: Box<[CaptureOrdinal]>,
 }
@@ -235,6 +239,10 @@ impl InspectionProjector {
                 } else {
                     TokenRole::Context
                 },
+                space_before: lingrep_core::token_match::display_space_before(
+                    tokens,
+                    sentence_index,
+                ),
                 summary: TokenSummary::from_sequence(tokens, sentence_index),
                 capture_membership: Box::default(),
             })
@@ -270,11 +278,7 @@ impl InspectionProjector {
                 name: capture.name.clone(),
                 path: capture.path.clone(),
                 span: capture.span.clone(),
-                text: capture
-                    .span
-                    .clone()
-                    .filter_map(|index| lingrep_core::token_match::display_surface(tokens, index))
-                    .collect(),
+                text: lingrep_core::token_match::display_text(tokens, capture.span.clone()),
             })
             .collect::<Vec<_>>()
             .into_boxed_slice();

@@ -94,6 +94,7 @@ fn any_order_matches_every_surface_order_with_minimal_span_and_surface_captures(
                     .collect::<Vec<_>>()
                     .into_boxed_slice(),
                 graph_bindings: Box::default(),
+                interpretations: Box::default(),
                 lexical: None,
             }],
             "surface order {surface:?}",
@@ -109,6 +110,7 @@ fn any_order_matches_every_surface_order_with_minimal_span_and_surface_captures(
             captures: vec![capture("leaf", 1), capture("head", 3), capture("middle", 5)]
                 .into_boxed_slice(),
             graph_bindings: Box::default(),
+            interpretations: Box::default(),
             lexical: None,
         }],
         "implicit gaps are internal; unmatched edges stay outside the span",
@@ -156,6 +158,7 @@ fn any_order_binds_distinct_tokens_and_keeps_preexisting_capture_references() {
             captures: vec![capture("seed", 0), capture("other", 1), capture("same", 2)]
                 .into_boxed_slice(),
             graph_bindings: Box::default(),
+            interpretations: Box::default(),
             lexical: None,
         }],
     );
@@ -180,6 +183,7 @@ fn any_order_preserves_one_longest_candidate_per_surface_permutation() {
                 captures: vec![capture("head", 0), capture("middle", 1), capture("leaf", 2)]
                     .into_boxed_slice(),
                 graph_bindings: Box::default(),
+                interpretations: Box::default(),
                 lexical: None,
             },
             Match {
@@ -189,6 +193,7 @@ fn any_order_preserves_one_longest_candidate_per_surface_permutation() {
                 captures: vec![capture("head", 0), capture("leaf", 2), capture("middle", 3)]
                     .into_boxed_slice(),
                 graph_bindings: Box::default(),
+                interpretations: Box::default(),
                 lexical: None,
             },
         ],
@@ -244,6 +249,7 @@ fn any_order_filters_relations_before_each_permutation_selects_longest() {
             captures: vec![capture("head", 0), capture("middle", 1), capture("leaf", 2)]
                 .into_boxed_slice(),
             graph_bindings: Box::default(),
+            interpretations: Box::default(),
             lexical: None,
         }],
         "a longer failing assignment must not shadow the shorter passing one",

@@ -7,7 +7,7 @@ use std::time::Instant;
 
 use lingrep_core::execution::{
     CancellationFlag, ExecutionError, MatchSink, PolicySelection, Publication, RunOutcome,
-    SentenceAdmission, SinkControl, cached_run_attributes, execute_analyzed,
+    SentenceAdmission, SinkControl, cached_run_attributes, execute_analyzed, surface_group,
 };
 use lingrep_core::fsm::{CatalogPolicy, GroupBy, Match, PublishedRecord, RecordView};
 use rayon::ThreadPoolBuilder;
@@ -26,7 +26,6 @@ use super::query_support::{
 };
 use crate::catalog_input::load_and_compile_with_vectors;
 use crate::cli::{ExecutionCliConfig, SummarizeArgs};
-use crate::direct_source::matched_surface;
 use crate::error::{CliError, FailureCode};
 use crate::output::{SummaryTsvRow, sanitize_terminal, write_summary_tsv};
 use crate::presentation::{OutputMode, ResultDelivery, resolve_summary_top};
@@ -375,6 +374,18 @@ pub fn run(
             "--by-metadata requires a prepared corpus: pass --corpus or --cache".to_owned(),
         ));
     }
+    let single_tokens: BTreeSet<_> = compiled
+        .analysis
+        .single_token_definitions()
+        .iter()
+        .collect();
+    let needs_surface_offsets = args.by_span.is_some()
+        || compiled.matcher.patterns().keys().any(|name| {
+            !single_tokens.contains(name)
+                && catalog_policy
+                    .get(name)
+                    .is_none_or(|entry| entry.key.is_empty())
+        });
     let ResolvedMatchingQuery {
         source,
         source_stats,
@@ -397,7 +408,7 @@ pub fn run(
         config,
         terminal,
         QueryMode::Summarize,
-        false,
+        needs_surface_offsets,
         metadata_projection.clone(),
         sample.filter(|_| args.sample.blocks),
         // A sentence the posting index skips still counts toward its
@@ -472,6 +483,7 @@ pub fn run(
         requested_context: 0,
         requested_limit: None,
         requested_top: top,
+        by_span: args.by_span.clone(),
         execution_limits: protocol_execution_limits(config),
         temporary_storage_limits: TemporaryStorageLimits {
             max_temp_bytes: config.max_temp_bytes,
@@ -566,7 +578,8 @@ pub fn run(
             })
             .transpose()
             .map_err(CliError::Aggregation)?;
-        let windows = if args.grouping_coverage
+        let windows = if args.by_span.is_some()
+            || args.grouping_coverage
             || args.by_document
             || args.write_table.is_some()
             || args.trace_policy.is_some()
@@ -585,6 +598,7 @@ pub fn run(
             None
         };
         let mut sink = SummarySink {
+            span_kind: args.by_span.as_deref(),
             grouping_coverage,
             windows,
             aggregation: Some(aggregation),
@@ -982,6 +996,7 @@ pub fn run(
 }
 
 struct SummarySink<'a> {
+    span_kind: Option<&'a str>,
     grouping_coverage: Option<GroupingTally>,
     windows: Option<WindowTally>,
     aggregation: Option<SummaryAggregator>,
@@ -1370,12 +1385,34 @@ impl SummarySink<'_> {
         Ok(())
     }
 
+    fn span_surface(
+        kind: &str,
+        location: &lingrep_core::execution::SentenceLocation,
+        sentence: &dyn lingrep_core::token_match::TokenSequence,
+        start: usize,
+        end: usize,
+    ) -> Result<Option<String>, ExecutionError> {
+        sentence
+            .spans()
+            .iter()
+            .filter(|span| span.kind == kind && span.start <= start && end <= span.end)
+            .min_by_key(|span| span.end - span.start)
+            .map(|span| surface_group(sentence, span.start..span.end, location))
+            .transpose()
+    }
+
     fn grouping<'r>(
         &self,
         location: &lingrep_core::execution::SentenceLocation,
         sentence: &dyn lingrep_core::token_match::TokenSequence,
         record: RecordView<'r>,
     ) -> Result<Option<AggregationInput<'r>>, ExecutionError> {
+        if let Some(kind) = self.span_kind {
+            return Ok(
+                Self::span_surface(kind, location, sentence, record.start, record.end)?
+                    .map(AggregationInput::Surface),
+            );
+        }
         Ok(match record.group_by(self.policy) {
             None => None,
             Some(GroupBy::Key) => record.key.map(AggregationInput::Key),
@@ -1384,7 +1421,7 @@ impl SummarySink<'_> {
             Some(GroupBy::Term) => record
                 .lexical
                 .map(|lexical| AggregationInput::Term(lexical.term.as_str())),
-            Some(GroupBy::Surface) => Some(AggregationInput::Surface(matched_surface(
+            Some(GroupBy::Surface) => Some(AggregationInput::Surface(surface_group(
                 sentence,
                 record.start..record.end,
                 location,
@@ -1398,6 +1435,12 @@ impl SummarySink<'_> {
         sentence: &dyn lingrep_core::token_match::TokenSequence,
         mut record: PublishedRecord,
     ) -> Result<Option<OwnedAggregationInput>, ExecutionError> {
+        if let Some(kind) = self.span_kind {
+            return Ok(
+                Self::span_surface(kind, location, sentence, record.start, record.end)?
+                    .map(OwnedAggregationInput::Surface),
+            );
+        }
         let group_by = RecordView::published(&record).group_by(self.policy);
         Ok(match group_by {
             None => None,
@@ -1412,7 +1455,7 @@ impl SummarySink<'_> {
                 .lexical
                 .take()
                 .map(|lexical| OwnedAggregationInput::Term(lexical.term)),
-            Some(GroupBy::Surface) => Some(OwnedAggregationInput::Surface(matched_surface(
+            Some(GroupBy::Surface) => Some(OwnedAggregationInput::Surface(surface_group(
                 sentence,
                 record.start..record.end,
                 location,

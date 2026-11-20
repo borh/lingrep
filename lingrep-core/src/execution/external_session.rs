@@ -122,12 +122,17 @@ impl ExternalAnalyzerSession {
         })
     }
 
-    /// The adapter's projection for a published `projection`: every key but
-    /// `surface`, and `text` whenever the adapter produces it.
+    /// Reads the requested adapter cells and the inputs needed to publish
+    /// source surfaces and GiNZA bunsetsu independently of that projection.
     fn adapter_projection(
         &self,
         projection: &BoundProjection,
     ) -> Result<BoundProjection, AnalysisError> {
+        let bunsetsu = self
+            .adapter_schema
+            .keys()
+            .iter()
+            .any(|key| key.as_str() == "spacy.ginza.bunsetu");
         let keys = projection
             .keys()
             .iter()
@@ -137,7 +142,16 @@ impl ExternalAnalyzerSession {
                 self.adapter_schema
                     .keys()
                     .iter()
-                    .filter(|key| key.as_str() == "text")
+                    .filter(|key| {
+                        key.as_str() == "text"
+                            || (bunsetsu
+                                && matches!(
+                                    key.as_str(),
+                                    "spacy.ginza.bunsetu"
+                                        | "spacy.ginza.bunsetuphrase"
+                                        | "dep.head"
+                                ))
+                    })
                     .cloned(),
             );
         self.adapter_schema
@@ -259,8 +273,30 @@ fn publish_words(
             }
         }
     }
-    BoundTokenSentence::from_projected_attribute_values(projection, words.len(), values)
-        .map_err(|_| AnalysisError::ResourceAccounting)
+    let published =
+        BoundTokenSentence::from_projected_attribute_values(projection, words.len(), values)
+            .map_err(|_| AnalysisError::ResourceAccounting)?;
+    let boundary = AttributeKey::new("spacy.ginza.bunsetu").expect("canonical attribute key");
+    if words.scalar_key(0, &boundary).is_none() {
+        return Ok(published);
+    }
+    let phrase = AttributeKey::new("spacy.ginza.bunsetuphrase").expect("canonical attribute key");
+    let head = AttributeKey::new("dep.head").expect("canonical attribute key");
+    let mut spans = crate::corpus::span_annotations::partition(
+        "bunsetsu",
+        (0..words.len()).map(|i| words.scalar_key(i, &boundary)),
+    );
+    crate::corpus::span_annotations::bunsetsu_heads(&mut spans, |i| {
+        let label = words.scalar_key(i, &phrase);
+        (
+            label.is_some(),
+            label,
+            words.scalar_key(i, &head).and_then(|v| v.parse().ok()),
+        )
+    });
+    published
+        .with_spans(spans)
+        .map_err(AnalysisError::ProviderFailure)
 }
 
 impl sealed::Session for ExternalAnalyzerSession {}

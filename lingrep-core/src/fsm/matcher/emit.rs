@@ -54,6 +54,7 @@ impl MatchSink {
             end,
             captures: Box::default(),
             graph_bindings: Box::default(),
+            interpretations: Box::default(),
             lexical: None,
         });
         Ok(())
@@ -197,6 +198,7 @@ mod tests {
             end: 2,
             captures: Box::default(),
             graph_bindings: Box::default(),
+            interpretations: Box::default(),
             lexical: None,
         };
         assert!(

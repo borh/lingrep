@@ -71,6 +71,7 @@ fn fixture(
             pattern_key: key,
             captures: Box::default(),
             graph_bindings: Box::default(),
+            interpretations: Box::default(),
             lexical: None,
             in_chain: false,
         }]
@@ -98,6 +99,7 @@ fn fixture_two_refs(
             pattern_key: key,
             captures: Box::default(),
             graph_bindings: Box::default(),
+            interpretations: Box::default(),
             lexical: None,
             in_chain: false,
         },
@@ -107,6 +109,7 @@ fn fixture_two_refs(
             pattern_key: key,
             captures: Box::default(),
             graph_bindings: Box::default(),
+            interpretations: Box::default(),
             lexical: None,
             in_chain: false,
         },
@@ -193,7 +196,7 @@ fn project_reference_uses_borrowed_ref_without_ordinal_lookup() {
 fn decode_first_sentence(
     snapshot: &CompletedSnapshot,
     inspector: &SnapshotInspector,
-) -> Vec<lingrep_core::token_match::TokenInfo> {
+) -> lingrep_core::token_match::TokenInfoSentence {
     let index = snapshot.match_refs[0].sentence_index;
     inspector
         .reader_clone()

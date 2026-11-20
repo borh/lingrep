@@ -374,6 +374,7 @@ pub struct HitDetailFragment<'a> {
     pub tokens: Vec<KwicTokenData>,
     pub capture_lanes: Vec<KwicCaptureLaneData>,
     pub captures: Vec<KwicCaptureData>,
+    pub interpretations: &'a [lingrep_core::fsm::Interpretation],
     pub graph_bindings: Vec<GraphBindingData>,
     pub provenance: Option<crate::provenance_view::HitProvenance>,
     /// The hit as `sentence.start.end`, its address in the reader's URL.

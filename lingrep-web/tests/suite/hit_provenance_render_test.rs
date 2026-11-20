@@ -21,6 +21,7 @@ use crate::render_security_support::{
 
 fn fragment(provenance: Option<HitProvenance>) -> String {
     HitDetailFragment {
+        interpretations: &[],
         overlaps: Vec::new(),
         reference_ordinal: 0,
         workbench_id: "wb",

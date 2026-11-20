@@ -1417,6 +1417,7 @@ fn query_run() -> QueryEnvelope {
         requested_context: 2,
         requested_limit: Some(10),
         requested_top: None,
+        by_span: None,
         execution_limits: execution_limits(),
         temporary_storage_limits: temp_limits(),
         traversal_limits: traversal_limits(),
@@ -1452,6 +1453,7 @@ fn query_match() -> QueryEnvelope {
     QueryEnvelope::new(QueryEvent::Match(MatchData {
         source_metadata: None,
         sequence: 4,
+        span_ids: Vec::new(),
         pattern: "p".into(),
         span: span(1, 3),
         char_span: None,
@@ -1462,6 +1464,7 @@ fn query_match() -> QueryEnvelope {
             char_span: None,
         }],
         graph_bindings: Vec::new(),
+        interpretations: Vec::new(),
         corpus_sentence_ordinal: 9,
         source_name: "a.md".into(),
         document_ordinal: 3,

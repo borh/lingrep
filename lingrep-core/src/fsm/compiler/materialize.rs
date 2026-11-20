@@ -5,7 +5,8 @@ use super::diagnostic::{CompileError, Diagnostic, DiagnosticCode};
 use super::limits::CompileLimits;
 use super::model::{
     BoundExpr, BoundProgram, CaptureDeclId, CaptureId, DefinitionId, ExecutionCapability,
-    ExecutionDefinition, ExecutionExpr, RelationLabels, RelationTarget, SourceSpan,
+    ExecutionDefinition, ExecutionExpr, RelationLabels, RelationTarget, SourceSpan, SpanConstraint,
+    SpanOperand, SpanPosition,
 };
 use crate::fsm::AssertionOccurrenceId;
 
@@ -16,9 +17,6 @@ pub(crate) fn materialize_program(
 ) -> Result<Box<[ExecutionDefinition]>, CompileError> {
     let mut output = Vec::new();
     for definition in &bound.definitions {
-        if !definition.is_ordinary_pattern() {
-            continue;
-        }
         let mut state = Materializer {
             bound,
             limits,
@@ -28,6 +26,19 @@ pub(crate) fn materialize_program(
             captures: BTreeMap::new(),
             assertion_occurrences,
         };
+        if !definition.is_ordinary_pattern() {
+            if let Some(entry) = ["within_span", "span_dependency"]
+                .iter()
+                .find_map(|key| definition.metadata.get(*key))
+            {
+                return Err(state.at(
+                    entry.span,
+                    DiagnosticCode::InvalidPolicyValue,
+                    "span constraints require an emitting pattern",
+                ));
+            }
+            continue;
+        }
         let path = definition.name.clone();
         let expr = state.expand(
             definition.id,
@@ -43,7 +54,23 @@ pub(crate) fn materialize_program(
             definition.orders(),
             &expr,
         )?;
+        let constrained = !relations.is_empty()
+            || !enhanced_relations.is_empty()
+            || !orders.is_empty()
+            || !definition.span_paths().is_empty()
+            || definition.metadata.contains_key("within_span")
+            || definition.metadata.contains_key("span_dependency");
         output.push(ExecutionDefinition {
+            interpretation: state.interpretation(
+                definition.interpretation.as_ref(),
+                &expr,
+                constrained,
+            )?,
+            span_constraints: state.span_constraints(
+                &definition.metadata,
+                definition.span_paths(),
+                &expr,
+            )?,
             name: definition.name.clone(),
             expr,
             capability: ExecutionCapability::Plain,
@@ -58,6 +85,51 @@ pub(crate) fn materialize_program(
         });
     }
     Ok(output.into_boxed_slice())
+}
+
+fn parse_span_path(
+    path: &str,
+    resolve: &impl Fn(&str) -> Result<CaptureId, CompileError>,
+    invalid: &impl Fn(&str) -> CompileError,
+) -> Result<SpanConstraint, CompileError> {
+    let (kind, chain) = path
+        .split_once(':')
+        .ok_or_else(|| invalid("expected 'kind: $capture -> $capture'"))?;
+    let kind = kind.trim();
+    if kind.is_empty() {
+        return Err(invalid("kind must be nonempty"));
+    }
+    let mut nodes = Vec::new();
+    for operand in chain.split("->") {
+        let operand = operand.trim();
+        let (selector, label) = match operand.split_once('@') {
+            Some((_, "")) => return Err(invalid("expected a label after @")),
+            Some((selector, label)) => (selector, Some(label.to_owned())),
+            None => (operand, None),
+        };
+        let (name, position) = selector.split_once('.').unwrap_or((selector, "inside"));
+        let position = match position {
+            "inside" => SpanPosition::Inside,
+            "whole" => SpanPosition::Whole,
+            "head" => SpanPosition::Head,
+            _ => return Err(invalid("expected .inside, .whole or .head")),
+        };
+        let name = name
+            .strip_prefix('$')
+            .filter(|name| !name.is_empty())
+            .ok_or_else(|| invalid("each path operand must name a $capture"))?;
+        nodes.push(SpanOperand {
+            source: None,
+            capture: Some(resolve(name)?),
+            position,
+            label,
+        });
+    }
+    nodes.reverse();
+    Ok(SpanConstraint {
+        kind: kind.to_owned(),
+        nodes: nodes.into_boxed_slice(),
+    })
 }
 
 struct Materializer<'a> {
@@ -208,6 +280,221 @@ impl Materializer<'_> {
                 )?
             }
         })
+    }
+
+    fn interpretation(
+        &mut self,
+        parsed: Option<&super::model::ParsedInterpretation>,
+        expr: &ExecutionExpr,
+        constrained: bool,
+    ) -> Result<Option<Box<super::model::InterpretationRecipe>>, CompileError> {
+        use super::model::InterpretationRecipe;
+        let Some(parsed) = parsed else {
+            return Ok(None);
+        };
+        if let Some(first) = parsed.captures.values().next()
+            && (constrained || !supports_interpretation(expr))
+        {
+            return Err(self.at(first.span, DiagnosticCode::InvalidInterpretation, "interpret supports consuming tokens, captures, alternatives, sequences and repetitions; remove the unsupported assertion, intersection, comparison, any_order or where constraint"));
+        }
+        let mut names = BTreeMap::new();
+        collect_capture_names(expr, &mut names);
+        let mut captures = BTreeMap::new();
+        // Public role identity survives reordering and helper extraction.
+        let mut templates = BTreeMap::new();
+        for (capture, assignment) in &parsed.captures {
+            let ids = names.get(capture.as_str()).ok_or_else(|| {
+                self.at(
+                    assignment.span,
+                    DiagnosticCode::InvalidInterpretation,
+                    &format!("interpret names unknown capture `${capture}`"),
+                )
+            })?;
+            let mut bytes = ids
+                .len()
+                .saturating_mul(size_of::<(CaptureId, usize)>())
+                .saturating_add(assignment.role.len());
+            for (key, value) in &assignment.labels {
+                bytes = bytes.saturating_add(key.len() + size_of::<crate::fsm::AnalyticalValue>());
+                if let crate::fsm::AnalyticalValue::String(text) = value {
+                    bytes = bytes.saturating_add(text.len());
+                }
+            }
+            self.owned_bytes = self.owned_bytes.saturating_add(bytes);
+            if self.owned_bytes > self.limits.max_generated_owned_bytes() {
+                return Err(self.at(
+                    assignment.span,
+                    DiagnosticCode::LimitExceeded,
+                    "analytical roles exceed the generated owned byte limit",
+                ));
+            }
+            templates
+                .entry((&assignment.role, &assignment.labels))
+                .or_insert_with(Vec::new)
+                .extend_from_slice(ids);
+        }
+        let mut roles = Vec::with_capacity(templates.len());
+        for ((role, labels), ids) in templates {
+            let index = roles.len();
+            roles.push((role.clone(), labels.clone()));
+            for id in ids {
+                captures.insert(id, index);
+            }
+        }
+        let classify_by = parsed
+            .classify_by
+            .as_ref()
+            .map(|(name, span)| {
+                roles
+                    .iter()
+                    .any(|(role, _)| role == name)
+                    .then(|| name.clone())
+                    .ok_or_else(|| {
+                        self.at(
+                            *span,
+                            DiagnosticCode::InvalidInterpretation,
+                            "classify by must name a role declared by interpret",
+                        )
+                    })
+            })
+            .transpose()?;
+        Ok(Some(Box::new(InterpretationRecipe {
+            captures,
+            roles,
+            classify_by,
+        })))
+    }
+
+    fn span_constraints(
+        &self,
+        metadata: &super::model::Metadata,
+        paths: &[super::model::ParsedSpanPath],
+        expr: &ExecutionExpr,
+    ) -> Result<Box<[super::model::SpanConstraint]>, CompileError> {
+        #[derive(serde::Deserialize)]
+        #[serde(deny_unknown_fields)]
+        struct Within {
+            kind: String,
+            label: Option<String>,
+            capture: Option<String>,
+            #[serde(default)]
+            position: SpanPosition,
+        }
+        #[derive(serde::Deserialize)]
+        #[serde(deny_unknown_fields)]
+        struct Dependency {
+            kind: String,
+            governor: String,
+            dependent: String,
+        }
+
+        let mut constraints = Vec::new();
+        for key in ["within_span", "span_dependency"] {
+            let Some(entry) = metadata.get(key) else {
+                continue;
+            };
+            let invalid = |message: &str| {
+                self.at(
+                    entry.span,
+                    DiagnosticCode::InvalidPolicyValue,
+                    &format!("invalid `{key}`: {message}"),
+                )
+            };
+            let mut captures = BTreeMap::new();
+            collect_capture_names(expr, &mut captures);
+            let resolve = |name: &str| self.resolve_relation_operand(&captures, name, entry.span);
+            if key == "span_dependency" && !entry.value.is_object() {
+                let paths = match entry.value.as_array() {
+                    Some(paths) if paths.is_empty() => {
+                        return Err(invalid("expected at least one path"));
+                    }
+                    Some(paths) => paths.as_slice(),
+                    None => std::slice::from_ref(&entry.value),
+                };
+                for path in paths {
+                    let path = path
+                        .as_str()
+                        .ok_or_else(|| invalid("expected a quoted span path"))?;
+                    constraints.push(parse_span_path(path, &resolve, &invalid)?);
+                }
+                continue;
+            }
+            let constraint = if key == "within_span" {
+                let within = if let Some(kind) = entry.value.as_str() {
+                    Within {
+                        kind: kind.into(),
+                        label: None,
+                        capture: None,
+                        position: Default::default(),
+                    }
+                } else {
+                    serde_json::from_value(entry.value.clone())
+                        .map_err(|e| invalid(&e.to_string()))?
+                };
+                if within.kind.is_empty() {
+                    return Err(invalid("kind must be nonempty"));
+                }
+                SpanConstraint {
+                    kind: within.kind,
+                    nodes: Box::new([SpanOperand {
+                        source: None,
+                        label: within.label,
+                        position: within.position,
+                        capture: within.capture.as_deref().map(resolve).transpose()?,
+                    }]),
+                }
+            } else {
+                let edge: Dependency = serde_json::from_value(entry.value.clone())
+                    .map_err(|e| invalid(&e.to_string()))?;
+                if edge.kind.is_empty() || edge.governor == edge.dependent {
+                    return Err(invalid(
+                        "a dependency needs a kind and two distinct captures",
+                    ));
+                }
+                SpanConstraint {
+                    kind: edge.kind,
+                    nodes: Box::new([
+                        SpanOperand {
+                            capture: Some(resolve(&edge.dependent)?),
+                            ..Default::default()
+                        },
+                        SpanOperand {
+                            capture: Some(resolve(&edge.governor)?),
+                            ..Default::default()
+                        },
+                    ]),
+                }
+            };
+            constraints.push(constraint);
+        }
+        if !paths.is_empty() {
+            let mut captures = BTreeMap::new();
+            collect_capture_names(expr, &mut captures);
+            for path in paths {
+                let nodes = path
+                    .operands
+                    .iter()
+                    .rev()
+                    .map(|operand| {
+                        Ok(SpanOperand {
+                            capture: Some(self.resolve_relation_operand(
+                                &captures,
+                                &operand.capture,
+                                operand.source,
+                            )?),
+                            position: operand.position,
+                            label: operand.label.clone(),
+                            source: Some(operand.source),
+                        })
+                    })
+                    .collect::<Result<Box<[_]>, CompileError>>()?;
+                constraints.push(SpanConstraint {
+                    kind: path.kind.clone(),
+                    nodes,
+                });
+            }
+        }
+        Ok(constraints.into_boxed_slice())
     }
 
     fn resolve_relations(
@@ -625,5 +912,21 @@ fn collect_capture_names<'expr>(
             by_name.entry(name.as_str()).or_default().push(*id);
             collect_capture_names(expr, by_name);
         }
+    }
+}
+
+fn supports_interpretation(expr: &ExecutionExpr) -> bool {
+    match expr {
+        ExecutionExpr::Token(_) => true,
+        ExecutionExpr::Sequence(parts) | ExecutionExpr::Alternation(parts) => {
+            parts.iter().all(supports_interpretation)
+        }
+        ExecutionExpr::Capture { expr, .. } | ExecutionExpr::Repeat { expr, .. } => {
+            supports_interpretation(expr)
+        }
+        ExecutionExpr::Assertion(_)
+        | ExecutionExpr::AnyOrder { .. }
+        | ExecutionExpr::SameAs { .. }
+        | ExecutionExpr::Intersection { .. } => false,
     }
 }

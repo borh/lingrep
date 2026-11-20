@@ -7,7 +7,7 @@ use lingrep_core::execution::{
     TokenizedAdmission, explain_in_windows,
 };
 use lingrep_core::fsm::{BoundCatalog, CompiledCatalog, SentenceExplanation};
-use lingrep_core::token_match::TokenInfo;
+use lingrep_core::token_match::TokenInfoSentence;
 
 use crate::{
     corpus_runtime::ReadyCorpus,
@@ -24,7 +24,7 @@ pub(super) async fn inspect(
     snapshot: Arc<CompletedSnapshot>,
     key: PatternKey,
     refs: &[&MatchRef],
-    sentences: HashMap<u64, Option<Vec<TokenInfo>>>,
+    sentences: HashMap<u64, Option<TokenInfoSentence>>,
 ) -> Result<Vec<Vec<OverlapCandidate>>, Response> {
     let Some(pattern) = snapshot.pattern(key) else {
         return Err(super::inspection_response(
@@ -65,18 +65,18 @@ pub(super) async fn inspect(
                     let Some(Some(tokens)) = sentences.get(&sentence_index) else {
                         return Err(super::invalid_provenance_response());
                     };
-                    let explanation = match &windows {
-                        Some(windows) => windows.explain(sentence_index)?,
-                        None => compiled
-                            .matcher
-                            .try_explain_sentence(tokens)
-                            .map_err(|error| match error {
-                                lingrep_core::fsm::MatchPublicationError::Resource(error) => {
-                                    resource_error(error)
-                                }
-                                other => super::server_error(other),
-                            })?,
-                    };
+                    let explanation =
+                        match &windows {
+                            Some(windows) => windows.explain(sentence_index)?,
+                            None => compiled.matcher.try_explain_sentence(&tokens[..]).map_err(
+                                |error| match error {
+                                    lingrep_core::fsm::MatchPublicationError::Resource(error) => {
+                                        resource_error(error)
+                                    }
+                                    other => super::server_error(other),
+                                },
+                            )?,
+                        };
                     entry.insert(explanation);
                 }
                 Ok(crate::inspection::overlapping_candidates(
@@ -187,6 +187,15 @@ impl ScanWindows {
 
 fn resource_error(error: lingrep_core::fsm::MatchResourceError) -> Response {
     let (code, message) = match &error {
+        lingrep_core::fsm::MatchResourceError::InterpretationReplay { .. } => {
+            ("interpretation_replay", error.to_string())
+        }
+        lingrep_core::fsm::MatchResourceError::Cancelled => ("cancelled", error.to_string()),
+        lingrep_core::fsm::MatchResourceError::Sentence { resource, .. }
+            if resource.starts_with("interpretation") =>
+        {
+            ("interpretation_limit", error.to_string())
+        }
         lingrep_core::fsm::MatchResourceError::Sentence { .. } => {
             ("graph_assignment_limit", error.to_string())
         }

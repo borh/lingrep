@@ -634,6 +634,15 @@ async fn load_page(
                         for (index, word) in words.into_iter().enumerate() {
                             if index < span.start {
                                 sentence.left.push_str(&word);
+                            } else if index == span.start {
+                                // The space before the key's first word
+                                // belongs to the text before the key.
+                                if let Some(key) = word.strip_prefix(' ') {
+                                    sentence.left.push(' ');
+                                    sentence.key.push_str(key);
+                                } else {
+                                    sentence.key.push_str(&word);
+                                }
                             } else if index < span.end {
                                 sentence.key.push_str(&word);
                             } else {

@@ -697,19 +697,6 @@ async fn project_occurrences(
                 "The saved match span could not be read. Run this query again.",
             ));
         }
-        let text = |range: std::ops::Range<usize>| {
-            tokens[range]
-                .iter()
-                .map(|token| {
-                    token
-                        .attributes
-                        .get("surface")
-                        .or_else(|| token.attributes.get("text"))
-                        .and_then(Value::as_str)
-                        .unwrap_or_default()
-                })
-                .collect::<String>()
-        };
         let projected_captures = occurrence.reference.captures.iter().enumerate().map(|(index,capture)|{
             let descriptor=captures.get(capture.capture_key.index()).ok_or_else(||invalid("The saved capture could not be read. Run this query again."))?;
             if capture.span.end>tokens.len() || capture.span.start>capture.span.end{return Err(invalid("The saved capture span could not be read. Run this query again."));}
@@ -717,9 +704,12 @@ async fn project_occurrences(
             if let Some(Some(span))=occurrence.capture_char_spans.get(index){value["char_span"]=json!({"start":span.start,"end":span.end});}
             Ok(value)
         }).collect::<Result<Vec<_>>>()?;
-        let mut row = json!({"sequence":occurrence.sequence,"pattern":patterns.get(occurrence.reference.pattern_key.index()).ok_or_else(||invalid("This pattern is not part of the search."))?,"span":{"start":range.start,"end":range.end},"captures":projected_captures,"corpus_sentence_ordinal":sentence,"source_name":if occurrence.source_name.is_empty(){origin.as_ref().map(|p|p.location.source_name.as_ref()).unwrap_or_default()}else{occurrence.source_name.as_ref()},"document_ordinal":occurrence.document_ordinal,"document_sentence_ordinal":occurrence.document_sentence_ordinal,"surface":text(range.clone()),"tokens":&tokens[range.clone()],"left_context":&tokens[range.start.saturating_sub(24)..range.start],"right_context":&tokens[range.end..range.end.saturating_add(24).min(tokens.len())]});
+        let mut row = json!({"sequence":occurrence.sequence,"pattern":patterns.get(occurrence.reference.pattern_key.index()).ok_or_else(||invalid("This pattern is not part of the search."))?,"span":{"start":range.start,"end":range.end},"captures":projected_captures,"corpus_sentence_ordinal":sentence,"source_name":if occurrence.source_name.is_empty(){origin.as_ref().map(|p|p.location.source_name.as_ref()).unwrap_or_default()}else{occurrence.source_name.as_ref()},"document_ordinal":occurrence.document_ordinal,"document_sentence_ordinal":occurrence.document_sentence_ordinal,"surface":lingrep_core::token_match::display_text(&decoded, range.clone()),"tokens":&tokens[range.clone()],"left_context":&tokens[range.start.saturating_sub(24)..range.start],"right_context":&tokens[range.end..range.end.saturating_add(24).min(tokens.len())]});
         if let Some(span) = &occurrence.char_span {
             row["char_span"] = json!({"start":span.start,"end":span.end});
+        }
+        if !occurrence.reference.interpretations.is_empty() {
+            row["interpretations"] = json!(occurrence.reference.interpretations);
         }
         if !occurrence.reference.graph_bindings.is_empty() {
             row["graph_bindings"] = json!(

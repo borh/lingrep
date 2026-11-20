@@ -38,30 +38,43 @@ case "$mode" in
     # same interpreter, immediately after -- coverage is unchanged.
     run_model_free_checks
 
-    model_output=$(nix build "$repo_root#stanza-model-fr-gsd-morphology" \
-        --no-link --print-out-paths)
     model_stage=$(mktemp -d)
-    model_root="$model_stage/model"
-    cp -R "$model_output/share/stanza/fr-gsd-morphology" "$model_root"
-    chmod -R u+w "$model_root"
-    cp "$model_root/lingrep-stanza-model.json" "$model_stage/declared-profile.json"
-    uv run --project "$project" --frozen --extra cpu \
-        "$project/bin/lingrep-stanza-adapter" \
-        --resource-root "$model_root" \
-        --language fr \
-        --backend cpu \
-        --prepare \
-        --probe-text 'Je mange du pain.' \
-        --package tokenize=gsd \
-        --package mwt=gsd \
-        --package pos=gsd_nocharlm \
-        --package lemma=gsd_nocharlm
-    cmp "$model_stage/declared-profile.json" "$model_root/lingrep-stanza-model.json"
+    # Stages the packaged model for a language and checks that preparing it
+    # with the given packages reproduces the packaged profile byte for byte.
+    prepare_packaged_model() {
+        local language=$1 probe_text=$2 model_output package
+        local model_root="$model_stage/$language"
+        shift 2
+        model_output=$(nix build "$repo_root#stanza-model-$language-gsd-morphology" \
+            --no-link --print-out-paths)
+        cp -R "$model_output/share/stanza/$language-gsd-morphology" "$model_root"
+        chmod -R u+w "$model_root"
+        cp "$model_root/lingrep-stanza-model.json" "$model_stage/$language-declared-profile.json"
+        local packages=()
+        for package in "$@"; do
+            packages+=(--package "$package")
+        done
+        uv run --project "$project" --frozen --extra cpu \
+            "$project/bin/lingrep-stanza-adapter" \
+            --resource-root "$model_root" \
+            --language "$language" \
+            --backend cpu \
+            --prepare \
+            --probe-text "$probe_text" \
+            "${packages[@]}"
+        cmp "$model_stage/$language-declared-profile.json" "$model_root/lingrep-stanza-model.json"
+    }
+    prepare_packaged_model fr 'Je mange du pain.' \
+        tokenize=gsd mwt=gsd pos=gsd_nocharlm lemma=gsd_nocharlm
+    # resources_1.14.0.json lists no mwt model for ja.
+    prepare_packaged_model ja '猫が走る。' \
+        tokenize=gsd pos=gsd_nocharlm lemma=gsd_nocharlm
 
     adapter_python=$(uv run --project "$project" --frozen --extra cpu \
         python -c 'import sys; print(sys.executable)')
     LINGREP_STANZA_ADAPTER_PYTHON=$adapter_python \
-      LINGREP_STANZA_MODEL_ROOT=$model_root \
+      LINGREP_STANZA_MODEL_ROOT=$model_stage/fr \
+      LINGREP_STANZA_JA_MODEL_ROOT=$model_stage/ja \
       "$repo_root/scripts/cargo-test-selected.py" -p lingrep-core --test external_process_contract stanza_ \
         -- --ignored --nocapture
     ;;

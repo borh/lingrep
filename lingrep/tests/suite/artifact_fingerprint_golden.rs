@@ -555,6 +555,6 @@ fn conllu_artifact_identity_is_pinned() {
     );
     assert_eq!(
         manifest["analysis_identity"],
-        "714a77b8b89d6d34f9555946ddc39d3e892618e7670ac02574efcdd52de05249"
+        "2fda877783abc92ed19b4d61f98fde7468ac59d37e2a1a997c5d31043986da89"
     );
 }

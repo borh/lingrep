@@ -221,6 +221,7 @@ mod tests {
                 end: 1,
                 captures: Box::new([]),
                 graph_bindings: Box::default(),
+                interpretations: Box::default(),
                 lexical: None,
             },
             Match {
@@ -229,6 +230,7 @@ mod tests {
                 end: 2,
                 captures: Box::new([]),
                 graph_bindings: Box::default(),
+                interpretations: Box::default(),
                 lexical: None,
             },
         ];

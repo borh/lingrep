@@ -31,7 +31,7 @@ const TERMINATION_GRACE: Duration = Duration::from_secs(5);
 /// `ADAPTER_SEMANTICS_REVISION` in `lingrep_spacy_adapter/adapter.py`, which
 /// rejects a run header carrying any other revision. Replace both when the
 /// adapter's token output changes for the same model and runtime.
-const SPACY_ADAPTER_SEMANTICS_REVISION: &str = "lingrep.spacy-adapter/v1";
+const SPACY_ADAPTER_SEMANTICS_REVISION: &str = "lingrep.spacy-adapter/v2";
 /// The Stanza counterpart of [`SPACY_ADAPTER_SEMANTICS_REVISION`].
 const STANZA_ADAPTER_SEMANTICS_REVISION: &str = "lingrep.stanza-adapter/v1";
 

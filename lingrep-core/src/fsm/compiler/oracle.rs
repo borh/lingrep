@@ -36,6 +36,14 @@ fn execution_oracle_matches<T: TokenInfoTrait>(
     definition: &ExecutionDefinition,
     tokens: &[T],
 ) -> Vec<Match> {
+    execution_oracle_with_spans(definition, tokens, &[])
+}
+
+fn execution_oracle_with_spans<T: TokenInfoTrait>(
+    definition: &ExecutionDefinition,
+    tokens: &[T],
+    spans: &[crate::token_match::SentenceSpan],
+) -> Vec<Match> {
     let mut descriptors = Vec::new();
     collect_execution_captures(&definition.expr, &mut descriptors);
     descriptors.sort_by_key(|capture| capture.id);
@@ -51,6 +59,50 @@ fn execution_oracle_matches<T: TokenInfoTrait>(
         let mut paths = evaluate_execution(&definition.expr, tokens, initial);
         paths.retain(|path| path.position > start);
         paths.retain(|path| execution_relations_hold(&definition.relations, path, tokens));
+        paths.retain(|path| {
+            definition.span_constraints.iter().all(|constraint| {
+                use super::model::SpanPosition;
+                let mut governors: Option<BTreeSet<usize>> = None;
+                for operand in constraint.nodes.iter().rev() {
+                    let range = match operand.capture {
+                        Some(id) => path.slots.get(&id).copied(),
+                        None => Some((start, path.position)),
+                    };
+                    let Some((a, b)) = range else {
+                        return false;
+                    };
+                    let witnesses = spans
+                        .iter()
+                        .enumerate()
+                        .filter(|(_, span)| {
+                            span.kind == constraint.kind
+                                && operand
+                                    .label
+                                    .as_ref()
+                                    .is_none_or(|l| span.label.as_ref() == Some(l))
+                                && governors.as_ref().is_none_or(|ids| {
+                                    span.governor.is_some_and(|id| ids.contains(&id))
+                                })
+                                && match operand.position {
+                                    SpanPosition::Head => b == a + 1 && span.head == Some(a),
+                                    SpanPosition::Whole => (span.start, span.end) == (a, b),
+                                    SpanPosition::Inside => {
+                                        a < b
+                                            && (span.start..span.end).contains(&a)
+                                            && b <= span.end
+                                    }
+                                }
+                        })
+                        .map(|(id, _)| id)
+                        .collect::<BTreeSet<_>>();
+                    if witnesses.is_empty() {
+                        return false;
+                    }
+                    governors = Some(witnesses);
+                }
+                true
+            })
+        });
         paths.sort_by(compare_oracle_paths);
         paths.dedup();
         let mut seen_branches = BTreeSet::new();
@@ -79,6 +131,7 @@ fn execution_oracle_matches<T: TokenInfoTrait>(
                 end: selected.position,
                 captures: captures.into_boxed_slice(),
                 graph_bindings: Box::default(),
+                interpretations: Box::default(),
                 lexical: None,
             });
         }
@@ -561,6 +614,7 @@ pub(crate) fn oracle_matches<T: TokenInfoTrait>(
                     end,
                     captures: Box::default(),
                     graph_bindings: Box::default(),
+                    interpretations: Box::default(),
                     lexical: None,
                 });
             }
@@ -1022,6 +1076,59 @@ mod tests {
     }
 
     #[test]
+    fn mixed_span_and_token_edges_match_the_independent_oracle() {
+        use crate::token_match::{BoundTokenSentence, SentenceSpan, TokenSequence};
+        let source =
+            "p := (?<n> []) (?<v> []) where span(chunk, $v.head -> $n.head), $v -[nsubj]-> $n.";
+        let definition = execution_definition(source);
+        let catalog = compile_catalog(
+            PatternSource::named("mixed", source),
+            CompileLimits::default(),
+        )
+        .unwrap()
+        .matcher;
+        let schema = crate::corpus::conllu::token_schema();
+        let bound = catalog.bind(&schema).unwrap();
+        let values = [("2", "nsubj"), ("0", "root")]
+            .into_iter()
+            .flat_map(|(head, rel)| {
+                bound
+                    .projection()
+                    .keys()
+                    .iter()
+                    .map(move |k| match k.as_str() {
+                        "dep.head" => Some(head.into()),
+                        "dep.rel" => Some(rel.into()),
+                        _ => None,
+                    })
+            })
+            .collect();
+        let sentence =
+            BoundTokenSentence::from_projected_values(bound.projection(), 2, values).unwrap();
+        for governor in [Some(1), None] {
+            let spans = [governor, None]
+                .into_iter()
+                .enumerate()
+                .map(|(i, governor)| SentenceSpan {
+                    kind: "chunk".into(),
+                    start: i,
+                    end: i + 1,
+                    head: Some(i),
+                    label: None,
+                    governor,
+                })
+                .collect();
+            let annotated = sentence.clone().with_spans(spans).unwrap();
+            let rows = (0..2)
+                .map(|i| SequenceToken::new(&annotated, i).unwrap())
+                .collect::<Vec<_>>();
+            let expected = execution_oracle_with_spans(&definition, &rows, annotated.spans());
+            assert_eq!(expected.len(), usize::from(governor.is_some()));
+            assert_eq!(bound.find_matches(&annotated).unwrap(), expected);
+        }
+    }
+
+    #[test]
     fn anonymous_relations_match_the_independent_execution_oracle() {
         for source in [
             "pattern p := (?<h> []) where $h -[obj]-> _.",
@@ -1226,6 +1333,7 @@ mod tests {
     fn program(expr: BoundExpr) -> BoundProgram {
         BoundProgram {
             definitions: vec![BoundDefinition {
+                interpretation: None,
                 id: DefinitionId::new(0),
                 source: SourceId::new(0),
                 name: CompactString::from("p"),
@@ -1235,6 +1343,7 @@ mod tests {
                     relations: Box::default(),
                     enhanced_relations: Box::default(),
                     orders: Box::default(),
+                    span_paths: Box::default(),
                 },
                 metadata: Arc::new(HashMap::new()),
                 key: None,
@@ -1291,6 +1400,7 @@ mod tests {
     fn sequence_returns_exclusive_end_and_full_context() {
         let program = BoundProgram {
             definitions: vec![BoundDefinition {
+                interpretation: None,
                 id: DefinitionId::new(0),
                 source: SourceId::new(0),
                 name: CompactString::from("pair"),
@@ -1302,6 +1412,7 @@ mod tests {
                     relations: Box::default(),
                     enhanced_relations: Box::default(),
                     orders: Box::default(),
+                    span_paths: Box::default(),
                 },
                 metadata: Arc::new(HashMap::new()),
                 key: None,
@@ -1324,6 +1435,7 @@ mod tests {
                 end: 2,
                 captures: Box::default(),
                 graph_bindings: Box::default(),
+                interpretations: Box::default(),
                 lexical: None,
             }]
         );
@@ -1423,6 +1535,7 @@ mod tests {
     fn definition_edges_resolve_by_id() {
         let mut program = program(token_expr("a"));
         program.definitions.push(BoundDefinition {
+            interpretation: None,
             id: DefinitionId::new(1),
             source: SourceId::new(0),
             name: CompactString::from("ref"),
@@ -1435,6 +1548,7 @@ mod tests {
                 relations: Box::default(),
                 enhanced_relations: Box::default(),
                 orders: Box::default(),
+                span_paths: Box::default(),
             },
             metadata: Arc::new(HashMap::new()),
             key: None,
@@ -1604,6 +1718,7 @@ mod tests {
                 },
             };
             definitions.push(BoundDefinition {
+                interpretation: None,
                 id: DefinitionId::new(u32::try_from(id).expect("four definitions fit u32")),
                 source: SourceId::new(0),
                 name: CompactString::from(format!("p{id}")),
@@ -1613,6 +1728,7 @@ mod tests {
                     relations: Box::default(),
                     enhanced_relations: Box::default(),
                     orders: Box::default(),
+                    span_paths: Box::default(),
                 },
                 metadata: Arc::new(HashMap::new()),
                 key: None,

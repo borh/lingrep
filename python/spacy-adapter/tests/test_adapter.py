@@ -1319,6 +1319,20 @@ class GiNzaModelTests(unittest.TestCase):
         ]
         self.assertEqual(unit[1], cli[1] + second)
 
+    def test_real_ginza_model_skipped_spaces_preserve_word_ids_and_bunsetsu(
+        self,
+    ) -> None:
+        import spacy
+
+        doc = spacy.load(os.environ["LINGREP_SPACY_GINZA_MODEL"])("猫  が　走る。")
+        keys = ["text", "dep.head", BUNSETU_KEY]
+        rows = analyze_document(
+            doc, [ProjectionAttribute(key, "scalar") for key in keys], "input"
+        )[0]["values"]
+        self.assertEqual(
+            rows, ["猫", "3", "B", "が", "1", "I", "走る", "0", "B", "。", "3", "I"]
+        )
+
     def test_real_ginza_model_produces_source_aligned_portable_morphology(self) -> None:
         """The saved model analyzes offline, from its own files, like the original."""
 

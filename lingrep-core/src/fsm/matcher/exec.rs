@@ -1172,6 +1172,7 @@ mod filter_tests {
                 end: 1,
                 captures: Box::default(),
                 graph_bindings: Box::default(),
+                interpretations: Box::default(),
                 lexical: None,
             }]
         );
@@ -1184,6 +1185,7 @@ mod filter_tests {
             end,
             captures: Box::default(),
             graph_bindings: Box::default(),
+            interpretations: Box::default(),
             lexical: None,
         }
     }

@@ -1,8 +1,7 @@
-# ヲ格名詞句と述語の共起 over GiNZA CoNLL-U (`dep.head`, `dep.rel`), where
-# compounds are single tokens, a サ変 stem is tagged VERB, and する has
-# `lemma=する`. `wo_predicate_linear` restates `sketch_wo_predicate`
-# (`sketch-grammar.lx`) over XPOS so `scripts/wo_predicate_compare.py` can join
-# linear and dependency matches on the を token.
+# ヲ格名詞句と述語の共起 over GiNZA CoNLL-U. The linear rule restates
+# `sketch_wo_predicate` (sketch-grammar.lx) over XPOS. The comparison joins
+# all three rules on the を and predicate tokens. On CoNLL-U without bunsetsu
+# annotations, only the linear and token-dependency rules can contribute.
 
 defaults
   source: "research query, ヲ格名詞句と述語の共起 dependency criterion"
@@ -58,3 +57,15 @@ pattern wo_predicate_dep :=
   []*
   (?<head> [upos=VERB])
   where $collocate -[case]-> $w, $head -[@WO_PHRASE_ROLE]-> $collocate.
+
+role: "research"
+category: "ヲ格共起"
+relation: "noun_wo+V"
+head: "predicate"
+collocate: "accusative"
+key: [$head.lemma, $collocate.lemma]
+pattern wo_predicate_bunsetsu :=
+  (?<marked> (?<collocate> [upos in @WO_DEP_NOMINAL]) (?<w> [text=を & upos=ADP]))
+  []*
+  (?<head> [upos=VERB])
+  where span(bunsetsu, $head.head -> $marked).

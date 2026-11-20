@@ -511,6 +511,10 @@ struct BoundExecutionTokens<'a> {
 }
 
 impl TokenSequence for BoundExecutionTokens<'_> {
+    fn spans(&self) -> &[crate::token_match::SentenceSpan] {
+        self.tokens.spans()
+    }
+
     fn len(&self) -> usize {
         self.tokens.len()
     }

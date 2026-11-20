@@ -4,10 +4,11 @@ import { addCondition, patternSource } from './composer.js';
 import { expectedAnalysis, defaultView, parseView, locationHash, locationURL, savedQuestion, seedParams, catalogParams, resolveCatalog, parseOccurrence, parseEntryLines, frequencyReturn, entryContext } from './location.js';
 import { begin, exportable, receive, receiveUpdate, visible } from './state.mjs';
 import { initQuestion, questionSettings } from './document.js';
-import { boundOutside, dependencyView, evidenceWords, hasDependencies, bunsetsuStarts, dependencyUnits, focusLayout, verticalArcs, headLabel, valueName, tokenDetails as detailsOf } from './dependency.js';
-import { element as $, definitionOffset, errorMessage, runError, runningSnapshot, parseUpdate, parseSnapshot, parseStoredSentence, surfaceOf, attributeMembers, sourceSelection, documentTitle, storedLocale, LOCALE_KEY, overflowingDefinitions, cliCommand, diagnosticText } from './model.js';
+import { boundOutside, dependencyView, evidenceWords, hasDependencies, annotatedBunsetsu, bunsetsuStarts, dependencyUnits, focusLayout, verticalArcs, headLabel, valueName, tokenDetails as detailsOf } from './dependency.js';
+import { element as $, definitionOffset, errorMessage, runError, runningSnapshot, parseUpdate, parseSnapshot, parseStoredSentence, surfaceOf, textOf, textAround, attributeMembers, sourceSelection, documentTitle, storedLocale, LOCALE_KEY, overflowingDefinitions, cliCommand, diagnosticText } from './model.js';
 const escape = (value) => String(value ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c] ?? c));
-const words = (tokens) => (tokens ?? []).map(surfaceOf).join('');
+const words = (tokens) => textOf(tokens ?? []);
+const lineText = (row) => textOf([...(row.left_context ?? []), ...row.tokens, ...(row.right_context ?? [])]);
 const count = (value) => Number(value ?? 0).toLocaleString(locale === 'ja' ? 'ja-JP' : 'en-US');
 let locale = storedLocale(globalThis.localStorage, navigator.language);
 const en = Object.fromEntries([...document.querySelectorAll('[data-t]')].map(element => [element.dataset.t, element.textContent]));
@@ -1028,8 +1029,8 @@ function setContext(element, tokens, bound) {
         setConcordanceText(element, words(tokens));
         return;
     }
-    element.replaceChildren(...tokens.map(token => { const roles = bound.get(token.index); if (!roles)
-        return document.createTextNode(surfaceOf(token)); const mark = document.createElement('mark'); mark.className = 'bound-word'; mark.title = roles.join(', '); mark.textContent = surfaceOf(token); return mark; }));
+    element.replaceChildren(...tokens.flatMap((token, at) => { const space = at && token.space_before ? [document.createTextNode(' ')] : [], roles = bound.get(token.index); if (!roles)
+        return [...space, document.createTextNode(surfaceOf(token))]; const mark = document.createElement('mark'); mark.className = 'bound-word'; mark.title = roles.join(', '); mark.textContent = surfaceOf(token); return [...space, mark]; }));
 }
 function renderLines(panel, run, _force = false) {
     if (!run)
@@ -1049,7 +1050,7 @@ function renderLines(panel, run, _force = false) {
     const prefixVisible = !view.request || view.request.after === -1 && view.request.document == null && view.request.scopeDocument == null;
     const allRows = pageReady ? view.rows : prefixVisible ? (run.rows[pattern] ?? []) : [];
     const filter = filters.get(run.id) ?? '', limit = controls.state.lines, context = controls.state.context;
-    const rows = allRows.filter(row => (words(row.left_context) + row.surface + words(row.right_context)).includes(filter)).slice(0, limit);
+    const rows = allRows.filter(row => lineText(row).includes(filter)).slice(0, limit);
     const shownCounts = new Map(), landmarks = new Map(view.landmarks.map(document => [document.ordinal, document]));
     for (const row of rows)
         shownCounts.set(row.document_ordinal, (shownCounts.get(row.document_ordinal) ?? 0) + 1);
@@ -1125,7 +1126,7 @@ function renderLines(panel, run, _force = false) {
             link.setAttribute('href', href);
         const rowIndex = allRows.indexOf(row, sourceOffset), ordinal = view.start + rowIndex + 1;
         sourceOffset = rowIndex + 1;
-        const label = (documentTitle(row)) + ', ' + ordinal + ': ' + words(row.left_context) + row.surface + words(row.right_context);
+        const label = (documentTitle(row)) + ', ' + ordinal + ': ' + lineText(row);
         if (link.getAttribute('aria-label') !== label)
             link.setAttribute('aria-label', label);
         const expanded = String(inspecting?.run.id === run.id && inspecting.row.sequence === row.sequence && !tokenLab.hidden);
@@ -1234,7 +1235,7 @@ async function readEntryTexts(run) {
                 const sentence = key.slice(key.lastIndexOf(':') + 1);
                 try {
                     const data = tokenCache.get(key) ?? parseStoredSentence(await request(`api/questions/data/${encodeURIComponent(run.dataset)}/tokens?sentence=${sentence}`));
-                    entryTexts.set(key, entryLines && data.analysis_identity !== entryLines.analysis ? { error: t('occurrenceChanged') } : data.tokens.map(surfaceOf));
+                    entryTexts.set(key, entryLines && data.analysis_identity !== entryLines.analysis ? { error: t('occurrenceChanged') } : data.tokens);
                 }
                 catch (error) {
                     entryTexts.set(key, { error: errorMessage(error) });
@@ -1302,7 +1303,7 @@ function renderEntryList(panel, run) {
                 setContext(left, read.left, read.bound);
                 hit.textContent = read.hit;
                 setContext(right, read.right, read.bound);
-                row.setAttribute('aria-label', `${title}, ${index + 1}: ${words(read.left)}${read.hit}${words(read.right)}`);
+                row.setAttribute('aria-label', `${title}, ${index + 1}: ${read.text}`);
             }
             else {
                 right.textContent = failure != null ? (locale === 'ja' ? `文を読み込めませんでした。${failure}` : `Could not load the sentence. ${failure}`) : (locale === 'ja' ? '読み込んでいます…' : 'Loading…');
@@ -1396,7 +1397,8 @@ async function inspect(run, row, button) {
         inspecting = { run, row };
         tokenData = data;
         tokenIndex = row.span.start;
-        focusedSentence.innerHTML = escape(words(data.tokens.slice(0, row.span.start))) + '<mark>' + escape(words(data.tokens.slice(row.span.start, row.span.end))) + '</mark>' + escape(words(data.tokens.slice(row.span.end)));
+        const [before, hit, after] = textAround(data.tokens, row.span.start, row.span.end);
+        focusedSentence.innerHTML = escape(before) + '<mark>' + escape(hit) + '</mark>' + escape(after);
         const roles = new Map(evidenceWords(row, data.tokens.length).filter(word => word.roles.length).map(word => [word.index, word.roles.join(' ')]));
         $('#token-ribbon').innerHTML = data.tokens.map(token => { const bound = roles.get(token.index); return `<button type="button" data-token="${token.index}" class="${token.index >= row.span.start && token.index < row.span.end ? 'is-hit' : ''}${bound ? ' bound' : ''}"${bound ? ` data-roles="${escape(bound)}"` : ''}>${escape(surfaceOf(token))}</button>`; }).join('');
         const keys = Object.keys(data.tokens[tokenIndex].attributes);
@@ -1532,7 +1534,14 @@ function selectToken(index) {
     const attributes = $('#token-attributes'), more = attributes.querySelector(':scope>details')?.open ?? false, expanded = attributes.querySelector('.attribute-more')?.open ?? false;
     const roles = details.roles.join(', ');
     const place = locale === 'ja' ? { span: '一致範囲の語です。', bound: `パターンの条件で結び付いた語（${roles}）です。一致範囲の外にあります。`, outside: '一致範囲の外の語です。' }[details.place] : { span: 'This word is inside the match.', bound: `The pattern's condition binds this word as ${roles}; it lies outside the match.`, outside: 'This word is outside the match.' }[details.place];
-    attributes.innerHTML = `<details><summary>${locale === 'ja' ? '詳しく' : 'Details'}</summary><p class="attribute-span">${escape(place)}</p><div class="attribute-basics">${details.basics.map(row).join('')}</div>${details.all ? `<details class="attribute-more"><summary>${locale === 'ja' ? '全属性' : 'All attributes'} (${details.all.length})</summary><div class="attribute-all">${details.all.map(row).join('')}</div></details>` : ''}</details>`;
+    const annotations = (tokenData.spans ?? []).flatMap((span, id) => {
+        if (index < span.start || index >= span.end)
+            return [];
+        const end = Math.min(span.end, span.start + 12);
+        const unit = words(tokenData.tokens.slice(span.start, end)) + (end < span.end ? '…' : '');
+        return [`<li><strong>${escape(span.kind)} #${id}</strong> ${escape(unit)}${span.label ? ` (${escape(span.label)})` : ''}${span.head != null ? ` · ${locale === 'ja' ? '主辞' : 'head'} ${escape(surfaceOf(tokenData.tokens[span.head]))}` : ''}${span.governor != null ? ` → #${span.governor}` : ''}</li>`];
+    }).join('');
+    attributes.innerHTML = `<details><summary>${locale === 'ja' ? '詳しく' : 'Details'}</summary><p class="attribute-span">${escape(place)}</p>${annotations ? `<ul>${annotations}</ul>` : ''}<div class="attribute-basics">${details.basics.map(row).join('')}</div>${details.all ? `<details class="attribute-more"><summary>${locale === 'ja' ? '全属性' : 'All attributes'} (${details.all.length})</summary><div class="attribute-all">${details.all.map(row).join('')}</div></details>` : ''}</details>`;
     attributes.querySelector(':scope>details').open = more;
     const all = attributes.querySelector('.attribute-more');
     if (all)
@@ -1577,13 +1586,15 @@ function relationGloss(rel) { const gloss = named('dep.rel', rel); return gloss 
 function roleTags(roles) { return roles.map(role => `<span class="dependency-role">${escape(role)}</span>`).join(''); }
 function renderDependencies() {
     const tokens = tokenData?.tokens, row = inspecting?.row;
-    dependencyPanel.hidden = !tokens || !row || !hasDependencies(tokens);
+    const storedChunks = annotatedBunsetsu(tokenData?.spans ?? [], tokens ?? []);
+    const wordEdges = !!tokens && hasDependencies(tokens);
+    dependencyPanel.hidden = !tokens || !row || (!wordEdges && !storedChunks.length);
     if (!tokens || !row || dependencyPanel.hidden)
         return;
-    const words = evidenceWords(row, tokens.length), byIndex = new Map(words.map(word => [word.index, word])), starts = bunsetsuStarts(tokens);
-    const view = dependencyView(dependencyChoice, !!starts, compactLayout.matches);
+    const words = evidenceWords(row, tokens.length), byIndex = new Map(words.map(word => [word.index, word])), starts = storedChunks.length ? null : bunsetsuStarts(tokens);
+    const view = wordEdges ? dependencyView(dependencyChoice, !!storedChunks.length || !!starts, compactLayout.matches) : 'bunsetsu';
     for (const button of dependencyPanel.querySelectorAll('[data-dependency-view]')) {
-        button.hidden = button.dataset.dependencyView === 'bunsetsu' && !starts;
+        button.hidden = button.dataset.dependencyView === 'bunsetsu' ? !starts && !storedChunks.length : !wordEdges;
         button.setAttribute('aria-pressed', String(button.dataset.dependencyView === view));
     }
     const diagram = $('#dependency-diagram'), value = (index, key) => { const value = tokens[index].attributes[key]; return typeof value === 'string' ? value : ''; };
@@ -1599,7 +1610,7 @@ function renderDependencies() {
         diagram.firstElementChild.prepend(svg);
     }
     else {
-        const units = dependencyUnits(tokens, view === 'bunsetsu' ? starts : null), { items, arcs } = focusLayout(units, words);
+        const units = view === 'bunsetsu' && storedChunks.length ? storedChunks : dependencyUnits(tokens, view === 'bunsetsu' ? starts : null), { items, arcs } = focusLayout(units, words);
         const gap = (count) => locale === 'ja' ? `… ${count}${view === 'bunsetsu' ? '文節' : '語'} …` : `… ${count} ${view === 'bunsetsu' ? 'bunsetsu' : count === 1 ? 'word' : 'words'} …`;
         const chips = document.createElement('div');
         chips.className = 'dependency-chips';
@@ -1610,7 +1621,7 @@ function renderDependencies() {
             const unit = units[item.unit], held = [];
             let text = '';
             for (let index = unit.first; index <= unit.last; index++) {
-                text += surfaceOf(tokens[index]);
+                text += (index > unit.first && tokens[index].space_before ? ' ' : '') + surfaceOf(tokens[index]);
                 const word = byIndex.get(index);
                 if (word)
                     held.push(word);
@@ -1622,7 +1633,7 @@ function renderDependencies() {
         arcLayouts.set(chips, arcs);
         arcObserver.observe(chips);
     }
-    $('#dependency-evidence').innerHTML = words.map(word => `<tr${word.inSpan ? ' class="in-span"' : ''}><td>${word.index + 1}</td><td>${escape(named('upos', value(word.index, 'upos')) ?? value(word.index, 'upos'))}${word.roles.length ? ` <small class="role-names">${escape(word.roles.join(', '))}</small>` : ''}</td><td>${escape(surfaceOf(tokens[word.index]))}</td>${['lemma', 'upos'].map(key => `<td>${escape(value(word.index, key))}</td>`).join('')}<td>${escape(headLabel(tokens, word.index) ?? t('root'))}</td><td>${relationCell(value(word.index, 'dep.rel'))}</td></tr>`).join('');
+    $('#dependency-evidence').innerHTML = words.map(word => `<tr${word.inSpan ? ' class="in-span"' : ''}><td>${word.index + 1}</td><td>${escape(named('upos', value(word.index, 'upos')) ?? value(word.index, 'upos'))}${word.roles.length ? ` <small class="role-names">${escape(word.roles.join(', '))}</small>` : ''}</td><td>${escape(surfaceOf(tokens[word.index]))}</td>${['lemma', 'upos'].map(key => `<td>${escape(value(word.index, key))}</td>`).join('')}<td>${escape(value(word.index, 'dep.head') === '0' ? t('root') : headLabel(tokens, word.index) ?? '—')}</td><td>${relationCell(value(word.index, 'dep.rel'))}</td></tr>`).join('');
     scrollCue();
 }
 compactLayout.addEventListener('change', () => { if (!dependencyChoice)

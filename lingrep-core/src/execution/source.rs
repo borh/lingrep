@@ -105,6 +105,45 @@ impl SentenceLocation {
     }
 }
 
+/// The surface count key for a token span. Each observed source gap contributes
+/// one space. A multi-token key requires offsets on both sides of each boundary.
+///
+/// # Errors
+///
+/// Returns the sentence location when token text or a required offset is missing.
+pub fn surface_group(
+    sentence: &dyn TokenSequence,
+    span: std::ops::Range<usize>,
+    location: &SentenceLocation,
+) -> Result<String, ExecutionError> {
+    let mut group = String::new();
+    for index in span.start..span.end.min(sentence.len()) {
+        if index > span.start {
+            let spaced =
+                crate::token_match::source_space_before(sentence, index).ok_or_else(|| {
+                    ExecutionError::MissingSurfaceOffsets {
+                        source_name: location.source_name.to_string(),
+                        corpus_sentence_ordinal: location.corpus_sentence_ordinal,
+                        token_index: index,
+                    }
+                })?;
+            if spaced {
+                group.push(' ');
+            }
+        }
+        let word = crate::token_match::display_surface(sentence, index).ok_or_else(|| {
+            ExecutionError::MissingRequiredAttribute {
+                attribute: "text",
+                source_name: location.source_name.to_string(),
+                corpus_sentence_ordinal: location.corpus_sentence_ordinal,
+                token_index: index,
+            }
+        })?;
+        group.push_str(word);
+    }
+    Ok(group)
+}
+
 /// One sentence and its authoritative position in an execution run.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ExecutionSentence<T> {
@@ -169,6 +208,10 @@ impl BoundSentenceInput {
 }
 
 impl TokenSequence for BoundSentenceInput {
+    fn spans(&self) -> &[crate::token_match::SentenceSpan] {
+        self.words.spans()
+    }
+
     fn len(&self) -> usize {
         self.words.len()
     }

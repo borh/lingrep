@@ -111,7 +111,10 @@ impl CorpusPageProjector {
                 // Either missing side violates the published corpus artifact pair.
                 return Err(PageProjectionError::InconsistentArtifacts);
             };
-            selected.insert(id, (provenance, Arc::<[TokenInfo]>::from(tokens)));
+            selected.insert(
+                id,
+                (provenance, Arc::<[TokenInfo]>::from(tokens.into_tokens())),
+            );
         }
 
         let mut output = Vec::with_capacity(sentence_ids.len());

@@ -174,6 +174,11 @@ struct TokenQuery {
 #[derive(Serialize)]
 pub(crate) struct TokenRow {
     pub(crate) index: usize,
+    /// Whether displayed text has a space between this token and the one
+    /// before it ([`lingrep_core::token_match::display_space_before`]).
+    /// Omitted when false.
+    #[serde(skip_serializing_if = "std::ops::Not::not")]
+    pub(crate) space_before: bool,
     pub(crate) attributes: BTreeMap<String, Value>,
 }
 #[derive(Serialize)]
@@ -181,12 +186,15 @@ struct StoredSentence {
     analysis_identity: String,
     sentence: u64,
     tokens: Vec<TokenRow>,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    spans: Vec<lingrep_core::token_match::SentenceSpan>,
 }
 
 pub(crate) fn token_rows(sentence: &BoundTokenSentence, schema: &TokenSchema) -> Vec<TokenRow> {
     (0..sentence.len())
         .map(|index| TokenRow {
             index,
+            space_before: lingrep_core::token_match::display_space_before(sentence, index),
             attributes: schema
                 .keys()
                 .iter()
@@ -243,6 +251,7 @@ async fn tokens(
                 sentence.map(|sentence| StoredSentence {
                     analysis_identity: identity,
                     sentence: query.sentence,
+                    spans: sentence.spans().to_vec(),
                     tokens: token_rows(&sentence, &schema),
                 })
             })
@@ -787,6 +796,56 @@ mod tests {
         assert_eq!(
             json,
             serde_json::json!([{"index":0,"attributes":{"text":"猫","sudachi.reading":"ネコ","feat.Number":["Plur","Sing"]}}])
+        );
+    }
+
+    #[test]
+    fn a_token_row_reports_the_space_the_source_has_before_it() {
+        use lingrep_core::token_match::{
+            AttributeKind, CharSpan, ProjectedAttributeValue, SchemaAttribute,
+        };
+        let schema =
+            TokenSchema::new([SchemaAttribute::new("text", AttributeKind::Scalar).unwrap()])
+                .unwrap();
+        let projection = schema
+            .bind_projection(schema.keys().iter().cloned())
+            .unwrap();
+        // "NHK news を": a space before `news` and before `を`.
+        let rows = |spans: Vec<CharSpan>| {
+            let sentence = BoundTokenSentence::from_projected_attribute_values(
+                &projection,
+                3,
+                ["NHK", "news", "を"]
+                    .map(ProjectedAttributeValue::scalar)
+                    .to_vec(),
+            )
+            .unwrap()
+            .with_char_offsets(Some(std::sync::Arc::new(spans)));
+            serde_json::to_value(token_rows(&sentence, &schema)).unwrap()
+        };
+        assert_eq!(
+            rows(vec![
+                CharSpan::new(0, 3),
+                CharSpan::new(4, 8),
+                CharSpan::new(9, 10)
+            ]),
+            serde_json::json!([
+                {"index":0,"attributes":{"text":"NHK"}},
+                {"index":1,"space_before":true,"attributes":{"text":"news"}},
+                {"index":2,"space_before":true,"attributes":{"text":"を"}},
+            ])
+        );
+        assert_eq!(
+            rows(vec![
+                CharSpan::new(0, 3),
+                CharSpan::new(3, 7),
+                CharSpan::new(7, 8)
+            ]),
+            serde_json::json!([
+                {"index":0,"attributes":{"text":"NHK"}},
+                {"index":1,"attributes":{"text":"news"}},
+                {"index":2,"attributes":{"text":"を"}},
+            ])
         );
     }
 

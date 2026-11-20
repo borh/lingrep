@@ -320,7 +320,7 @@ pub fn run(
         config,
         terminal,
         QueryMode::Matches,
-        char_offsets_available,
+        true,
         metadata_projection.clone(),
         sample.filter(|_| args.sample.blocks),
         args.ending_report.is_none()
@@ -379,6 +379,7 @@ pub fn run(
         requested_context: context as u64,
         requested_limit: limit,
         requested_top: None,
+        by_span: None,
         execution_limits: protocol_execution_limits(config),
         temporary_storage_limits: TemporaryStorageLimits {
             max_temp_bytes: config.max_temp_bytes,
@@ -655,23 +656,20 @@ fn human_tokens(
     location: &lingrep_core::execution::SentenceLocation,
     conllu_spacing: bool,
 ) -> Result<Vec<String>, crate::direct_source::MissingRequiredAttribute> {
-    use lingrep_core::token_match::{AttributeKey, AttributeValueRef};
+    use lingrep_core::token_match::{AttributeKey, AttributeValueRef, source_space_before};
     let mut tokens = matched_orth_tokens(sentence, span.clone(), location)?;
     let boundaries = tokens.len().saturating_sub(1);
     let misc = AttributeKey::new("conllu.misc").expect("conllu.misc is canonical");
     for (offset, token) in tokens.iter_mut().take(boundaries).enumerate() {
         let index = span.start + offset;
-        let spaced = match (sentence.char_span(index), sentence.char_span(index + 1)) {
-            (Some(left), Some(right)) => left.end < right.start,
-            _ => {
-                conllu_spacing
-                    && !matches!(
-                        sentence.value_key(index, &misc),
-                        Some(AttributeValueRef::StringSet(values))
-                            if values.iter().any(|value| value == "SpaceAfter=No")
-                    )
-            }
-        };
+        let spaced = source_space_before(sentence, index + 1).unwrap_or_else(|| {
+            conllu_spacing
+                && !matches!(
+                    sentence.value_key(index, &misc),
+                    Some(AttributeValueRef::StringSet(values))
+                        if values.iter().any(|value| value == "SpaceAfter=No")
+                )
+        });
         if spaced {
             token.push(' ');
         }
@@ -773,6 +771,18 @@ fn match_evidence(
         })
         .collect();
     Ok(MatchEvidence {
+        spans: sentence
+            .spans()
+            .iter()
+            .map(|span| crate::protocol::query::EvidenceSpan {
+                kind: span.kind.clone(),
+                start: span.start as u64,
+                end: span.end as u64,
+                head: span.head.map(|head| head as u64),
+                label: span.label.clone(),
+                governor: span.governor.map(|id| id as u64),
+            })
+            .collect(),
         sentence: matched_surface(sentence, 0..sentence.len(), location)
             .map_err(ExecutionError::from)?,
         words,
@@ -971,6 +981,15 @@ impl<W: Write> DirectMatchSink<'_, W> {
                             start: record.start as u64,
                             end: record.end as u64,
                         },
+                        span_ids: sentence
+                            .spans()
+                            .iter()
+                            .enumerate()
+                            .filter(|(_, span)| {
+                                span.start <= record.start && record.end <= span.end
+                            })
+                            .map(|(id, _)| id as u64)
+                            .collect(),
                         char_span,
                         captures: record
                             .captures
@@ -985,6 +1004,7 @@ impl<W: Write> DirectMatchSink<'_, W> {
                                 char_span: span_char_range(sentence, capture.start..capture.end),
                             })
                             .collect(),
+                        interpretations: record.interpretations.to_vec(),
                         graph_bindings: record
                             .graph_bindings
                             .iter()
@@ -1300,6 +1320,7 @@ mod tests {
                 end: index % 3 + 1,
                 captures: Box::new([]),
                 graph_bindings: Box::default(),
+                interpretations: Box::default(),
                 lexical: None,
             })
             .collect()
@@ -1559,6 +1580,7 @@ mod tests {
                 end: 1,
                 captures: Box::new([]),
                 graph_bindings: Box::default(),
+                interpretations: Box::default(),
                 lexical: None
             };
             64

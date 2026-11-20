@@ -180,8 +180,9 @@ no successful completion claim, even if its retained matches look valid.
 ### Human KWIC rendering
 
 Human `matches` output concatenates morphemes by default. A single ordinary
-space separates a present context from the complete hit; there are no spaces
-inside the left context, hit, or right context unless requested. Context uses
+space separates a present context from the complete hit. Inside the left
+context, hit, or right context a space appears only where the source has
+whitespace between two tokens, or where a morpheme separator is requested. Context uses
 a six-color qualitative cycle to make adjacent unseparated morphemes easier to
 distinguish. Distances one through six have fixed colors; distance seven
 repeats distance one, eight repeats two, and so on. On a styled terminal the
@@ -383,6 +384,15 @@ ling matches --dict-path "$LINGREP_DICTIONARY_PATH" \
 `surface` is always the published span's own text. A `substitute` op changes
 `unit` without changing the span, so `unit` and `surface` can differ.
 
+`surface` joins the span's token spellings with one space wherever their
+character offsets show a gap. JSONL, TSV and surface count keys distinguish
+`NHK news` from `NHKnews`. Several spaces or a tab between the tokens give
+the same key as a single space. Use `char_span` for the original spacing.
+When offsets are unavailable, match exports concatenate the unplaced tokens.
+Grouping by a multi-token surface requires offsets for every internal boundary.
+The `missing_surface_offsets` diagnostic identifies the first unplaced boundary.
+A single-token surface and an explicit attribute key need no spacing evidence.
+
 A tag source is a literal (`{aspect: perfective}`), a capture-presence mapping
 (`{aspect: {perf: perfective, prog: progressive}}`, where the named capture that
 participated supplies the value), or a projection off one capture
@@ -523,6 +533,22 @@ a failed run never publishes successful completion coverage.
 
 With a pattern-metadata filter, coverage includes only eligible published names.
 Metadata category rows do not merge coverage records for their member patterns.
+
+### Counting by a sentence span
+
+`ling summarize --by-span bunsetsu` counts published matches by the surface of
+their enclosing bunsetsu. The JSONL `run.by_span` field names the requested kind.
+Two matching words in 猫が contribute two to the
+猫が row. A match crossing a bunsetsu boundary or lacking an annotation of
+the requested kind contributes one to `counters.records_unkeyed`. This option
+overrides the pattern's grouping key. If several spans of that kind contain
+the complete match, the shortest wins, with ties resolved by sentence span ID.
+
+JSONL `match` records carry `span_ids` when annotations contain the complete
+published match. These zero-based IDs are local to `corpus_sentence_ordinal`.
+With `--evidence`, each ID indexes the sentence annotation in `evidence.spans`.
+In the web token inspector, select a word and open **Details** to see its
+enclosing units, their IDs, and any recorded heads, labels and governors.
 
 ### Counting per document
 
@@ -1725,9 +1751,10 @@ Every analyzer reads a folded view of the source — variation selectors
 removed, half-width katakana widened, U+FF5E as U+301C, canonical
 composition — and its token boundaries are mapped back to the source. Each
 token publishes the exact source text it covers as `surface` and that
-surface's folded key as `text`. Vibrato keeps the compatibility ideographs its
-dictionary lists, such as 臭氣 with U+FA5C; Sudachi and external analyzers
-receive the unified ideograph, which NFC also produces.
+surface's folded key as `text`. Vibrato and Sudachi keep a compatibility
+ideograph inside a word their dictionary lists with it, such as 臭氣 with
+U+FA5C; external analyzers receive the unified ideograph, which NFC also
+produces.
 
 These choices are semantic. A prepared artifact records them, and changing one
 selects a different artifact rather than reinterpreting stored tokens. Prepared
@@ -1771,7 +1798,11 @@ Without further options, `ling` uses:
   and `sudachi.json` do not affect analysis; the folded view takes their
   place for half-width katakana and decomposed kana.
 
-The split mode and edition are part of the analysis identity.
+The split mode and edition are part of the analysis identity. Mode A also
+supplies sentence spans of kinds `sudachi.b` and `sudachi.c`. Mode B supplies
+`sudachi.c` spans. For example, SudachiDict core analyzes 国家公務員 in mode A
+as 国家, 公務, 員. Its B spans cover 国家 and 公務員, and its C span covers
+国家公務員.
 
 The dictionary must be in the `SudachiBinaryDic` container, which SudachiDict
 publishes from v20261015 on its
@@ -1849,6 +1880,20 @@ checked during installation. Keep that directory at its original path. Deleting
 download caches does not break the analyzer. Use an absolute `--analyzer-config` path when
 querying from another directory.
 
+A Stanza analyzer names `tokenize` alone, or `tokenize`, `pos` and `lemma`. Add
+`mwt` when Stanza lists a multi-word token model for the language, as it does
+for French; preparation fails and names the missing package otherwise. For a
+language without one, such as Japanese, omit it:
+
+```bash
+ling analyzer prepare stanza --output ./analyzers/stanza-ja \
+  --language ja --package tokenize=gsd \
+  --package pos=gsd_nocharlm --package lemma=gsd_nocharlm \
+  --probe-text '猫が走る。'
+```
+
+Without `mwt`, each Stanza token is one match token.
+
 Repeating the same preparation checks and reuses the directory. Use a new output
 directory to change the model, packages or release. Upgrading `ling` alone leaves
 existing bundles unchanged. Queries read the explicit configuration without
@@ -1886,6 +1931,24 @@ A GiNZA profile selection that runs GiNZA's `bunsetu_recognizer` adds the scalar
 `spacy.ginza.bunsetu`: `B` on the first token of each bunsetu (文節) and `I` on
 the others, the label `ginza -f conllu` prints as `BunsetuBILabel`. Write
 `[spacy.ginza.bunsetu=B]` to match bunsetu-initial tokens.
+
+The same profile supplies a sentence span of kind `bunsetsu` for each group.
+GiNZA's head token carries `spacy.ginza.bunsetuphrase`. Its value supplies the
+span's phrase label, such as `NP` or `VP`. When GiNZA starts a bunsetsu on a
+whitespace token, the next retained word carries the boundary. With CoNLL-U
+input, a complete `BunsetuBILabel` sequence in MISC supplies the
+intervals, and a complete `LUWBILabel` sequence supplies spans of kind `luw`.
+Packaged Vibrato/UniDic dictionaries produce short-unit tokens. A corpus with
+annotated long units can supply them through CoNLL-U.
+
+Span IDs start at zero in each sentence. Each interval uses matcher token
+indices and excludes its end. A span may contain spans of another kind or
+overlap another annotation. A head is a token index inside the interval.
+A governor is a span ID of the same kind. A missing governor means there is
+no observed outgoing dependency. Prepared corpora retain these annotations
+when a query requests a subset of the token attributes. Rebuild older
+corpora from annotated input to query the new layer. See the
+[sentence span pattern examples](pattern-language-reference.md#sentence-spans).
 
 A whole bunsetu is a `B` token, the `I` tokens after it, and no further `I`
 token. These definitions match each bunsetu, each bunsetu that ends in `が`,
@@ -2780,8 +2843,8 @@ stay balanced. No two values of a chart show the same form. The full name is
 in the bar's accessible name, in the line under the chart's name for the bar
 last pointed at, focused or tapped, and in the chart's table.
 
-Opening an entry requires a version 3 count table, which records the sentences
-where each entry occurs. Rebuild an earlier table with this release's
+Opening an entry requires a version 4 count table, whose surface keys preserve
+word boundaries. Rebuild an earlier table with this release's
 `ling summarize --write-table`; otherwise startup fails with an error naming it.
 
 The same tables serve the **Compare** page, at `compare` under the base path.

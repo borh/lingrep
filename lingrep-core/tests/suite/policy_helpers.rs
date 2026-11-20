@@ -217,6 +217,7 @@ pub(crate) fn record(pattern: &str, start: usize, end: usize) -> Match {
         end,
         captures: Box::default(),
         graph_bindings: Box::default(),
+        interpretations: Box::default(),
         lexical: None,
     }
 }

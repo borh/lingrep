@@ -42,6 +42,7 @@ pub(super) struct LoweredProgram {
     pub(super) program: ParsedProgram,
     pub(super) source_bytes: usize,
     pub(super) metadata_bytes: usize,
+    pub(super) bundle_copy_bytes: usize,
     /// Non-fatal diagnostics raised while reading the syntax tree.
     ///
     /// Carried out beside the program rather than raised through `Result`,
@@ -53,11 +54,20 @@ pub(super) struct LoweredProgram {
     pub(super) warnings: Vec<Diagnostic>,
 }
 
+#[derive(Default)]
+struct WhereClause {
+    relations: Box<[ParsedRelation]>,
+    enhanced_relations: Box<[super::model::ParsedEnhancedRelation]>,
+    orders: Box<[super::model::OrderConstraint]>,
+    span_paths: Box<[super::model::ParsedSpanPath]>,
+}
+
 pub(super) struct LoweredDefinition {
     pub(super) definition: ParsedDefinition,
     pub(super) sources: SourceRegistry,
     pub(super) source_bytes: usize,
     pub(super) metadata_bytes: usize,
+    pub(super) bundle_copy_bytes: usize,
     pub(super) warnings: Vec<Diagnostic>,
     pub(super) near: IndexMap<NearQuery, NearResolution>,
 }
@@ -176,6 +186,7 @@ pub(super) fn lower_definition_with_stats(
         sources,
         source_bytes: lowered.source_bytes,
         metadata_bytes: lowered.metadata_bytes,
+        bundle_copy_bytes: lowered.bundle_copy_bytes,
         warnings: lowered.warnings,
         near,
     })
@@ -213,6 +224,7 @@ struct Lowerer<'a, 'src> {
     definitions: usize,
     expression_nodes: usize,
     metadata_bytes: usize,
+    bundle_copy_bytes: usize,
     regex_bytes: usize,
     warnings: Vec<Diagnostic>,
     rewrite_skip: bool,
@@ -221,8 +233,6 @@ struct Lowerer<'a, 'src> {
     definition: CompactString,
     /// The attribute the literal being lowered is compared with.
     literal_key: LiteralKey,
-    /// Whether the last literal lowered was a `text` literal the fold changed.
-    literal_folded: bool,
 }
 
 /// What a literal is compared with, which decides how it is normalized.
@@ -269,6 +279,11 @@ impl LoweredEntry {
     }
 }
 
+struct AnnotationBundle {
+    entries: HashMap<CompactString, LoweredEntry>,
+    copy_bytes: usize,
+}
+
 #[derive(Default)]
 struct DocumentDraft {
     definitions: Vec<ParsedDefinition>,
@@ -276,7 +291,10 @@ struct DocumentDraft {
     /// the definition that follows it, so it is drained on a definition and
     /// must be empty at end of document.
     run: Vec<(CompactString, LoweredEntry)>,
+    interpretation: Option<super::model::ParsedInterpretation>,
     defaults: Option<HashMap<CompactString, LoweredEntry>>,
+    bundles: HashMap<CompactString, Arc<AnnotationBundle>>,
+    active_bundle: Option<(Arc<AnnotationBundle>, SourceSpan)>,
     schema: Option<CatalogSchema>,
     policy: Option<crate::fsm::policy_program::Program>,
     analyzers: Vec<ParsedAnalyzerConstraint>,
@@ -303,13 +321,17 @@ impl DocumentDraft {
     /// or definition. A `policy` block is exempt and says why at its arm: it
     /// declares nothing a later definition inherits.
     fn headers_allowed(&self) -> bool {
-        !self.saw_definition && self.run.is_empty()
+        !self.saw_definition
+            && self.run.is_empty()
+            && self.active_bundle.is_none()
+            && self.interpretation.is_none()
     }
 
     fn admit_annotation(
         &mut self,
         key: CompactString,
         entry: LoweredEntry,
+        explicit_override: bool,
     ) -> Result<(), DraftRefusal> {
         if self
             .run
@@ -322,12 +344,35 @@ impl DocumentDraft {
                 message: "duplicate metadata key".to_owned(),
             });
         }
+        let inherited = self
+            .active_bundle
+            .as_ref()
+            .and_then(|(bundle, _)| bundle.entries.get(&key));
+        if explicit_override && inherited.is_none() {
+            return Err(DraftRefusal {
+                code: DiagnosticCode::Syntax,
+                span: entry.span(),
+                message: format!("the selected annotation bundle does not supply `{key}`"),
+            });
+        }
+        if let Some(LoweredEntry::MetadataSet(shared)) = inherited
+            && !explicit_override
+            && !matches!(&entry, LoweredEntry::MetadataSet(local) if local.value == shared.value)
+        {
+            return Err(DraftRefusal {
+                code: DiagnosticCode::BundleOverrideRequired,
+                span: entry.span(),
+                message: format!(
+                    "to replace or remove the bundle value, write `override {key}: …`"
+                ),
+            });
+        }
         if let LoweredEntry::Unset { span } = &entry {
             let has_default = self
                 .defaults
                 .as_ref()
                 .is_some_and(|entries| entries.contains_key(&key));
-            if !has_default {
+            if !has_default && inherited.is_none() {
                 return Err(DraftRefusal {
                     code: DiagnosticCode::UnsetWithoutDefault,
                     span: *span,
@@ -347,9 +392,26 @@ impl DocumentDraft {
     /// take no metadata, so a run must not drift past them to the next
     /// definition) and at end of document.
     fn dangling_run(&self) -> Option<DraftRefusal> {
-        self.run.first().map(|(_, entry)| DraftRefusal {
+        if let Some(recipe) = &self.interpretation {
+            let span = recipe
+                .classify_by
+                .as_ref()
+                .map(|(_, s)| *s)
+                .or_else(|| recipe.captures.values().next().map(|r| r.span))?;
+            return Some(DraftRefusal {
+                code: DiagnosticCode::Syntax,
+                span,
+                message: "interpretation annotates no pattern".into(),
+            });
+        }
+        let span = self
+            .active_bundle
+            .as_ref()
+            .map(|(_, span)| *span)
+            .or_else(|| self.run.first().map(|(_, entry)| entry.span()))?;
+        Some(DraftRefusal {
             code: DiagnosticCode::Syntax,
-            span: entry.span(),
+            span,
             message: "metadata annotates no definition".to_owned(),
         })
     }
@@ -361,6 +423,14 @@ impl DocumentDraft {
         }
         if let Some(LoweredEntry::SkipSet(skip)) = effective.get_mut("skip") {
             skip.inherited = true;
+        }
+        if let Some((bundle, _)) = self.active_bundle.take() {
+            effective.extend(
+                bundle
+                    .entries
+                    .iter()
+                    .map(|(key, entry)| (key.clone(), entry.clone())),
+            );
         }
         for (key, entry) in std::mem::take(&mut self.run) {
             match entry {
@@ -434,13 +504,13 @@ impl<'a, 'src> Lowerer<'a, 'src> {
             definitions: 0,
             expression_nodes: 0,
             metadata_bytes: 0,
+            bundle_copy_bytes: 0,
             regex_bytes: 0,
             warnings: Vec::new(),
             rewrite_skip: true,
             near: IndexMap::new(),
             definition: CompactString::default(),
             literal_key: LiteralKey::Other,
-            literal_folded: false,
         }
     }
 
@@ -459,11 +529,98 @@ impl<'a, 'src> Lowerer<'a, 'src> {
                 .into();
             match child.kind() {
                 "comment" => {}
-                "metadata_entry" | "key_entry" | "skip_entry" => {
-                    let (key, entry) = self.lower_entry(child)?;
+                "bundle_block" => {
+                    self.refuse_dangling_run(&draft)?;
+                    let name = required_field(
+                        self.source,
+                        &self.source_label,
+                        child,
+                        "name",
+                        "identifier",
+                    )?;
+                    let bundle_name = CompactString::from(self.text(name)?);
+                    if draft.bundles.contains_key(&bundle_name) {
+                        return Err(self.error(
+                            name,
+                            DiagnosticCode::Syntax,
+                            "duplicate annotation bundle",
+                        ));
+                    }
+                    let entries = self.lower_entry_block(child)?;
+                    let mut copy_bytes = 0usize;
+                    for (key, entry) in &entries {
+                        if let LoweredEntry::MetadataSet(metadata) = entry {
+                            copy_bytes =
+                                copy_bytes.saturating_add(super::nfa::metadata_entry_owned_bytes(
+                                    key,
+                                    &metadata.value,
+                                    &self.source_label,
+                                )?);
+                        }
+                    }
+                    draft.bundles.insert(
+                        bundle_name,
+                        Arc::new(AnnotationBundle {
+                            entries,
+                            copy_bytes,
+                        }),
+                    );
+                }
+                "bundle_use" => {
+                    self.check_recovery_node(child)?;
+                    if !draft.run.is_empty()
+                        || draft.active_bundle.is_some()
+                        || draft.interpretation.is_some()
+                    {
+                        return Err(self.error(child, DiagnosticCode::Syntax, "`use @name` starts an annotation run; select one bundle before local entries"));
+                    }
+                    let name = required_field(
+                        self.source,
+                        &self.source_label,
+                        child,
+                        "name",
+                        "identifier",
+                    )?;
+                    let bundle_name = self.text(name)?;
+                    let bundle = draft.bundles.get(bundle_name).ok_or_else(|| self.error(
+                        name, DiagnosticCode::Syntax,
+                        format!("unknown annotation bundle `{bundle_name}`; declare it before use in this file")
+                    ))?;
+                    self.bundle_copy_bytes =
+                        self.bundle_copy_bytes.saturating_add(bundle.copy_bytes);
+                    if self.bundle_copy_bytes > self.limits.max_generated_owned_bytes() {
+                        return Err(self.error(
+                            child,
+                            DiagnosticCode::LimitExceeded,
+                            "expanding this bundle exceeds the generated owned bytes budget",
+                        ));
+                    }
+                    draft.active_bundle = Some((Arc::clone(bundle), self.span_of(name)?));
+                }
+                "metadata_entry" | "key_entry" | "skip_entry" | "override_entry" => {
+                    let explicit_override = child.kind() == "override_entry";
+                    let node = if explicit_override {
+                        self.check_recovery_node(child)?;
+                        required_field(
+                            self.source,
+                            &self.source_label,
+                            child,
+                            "entry",
+                            "metadata_entry",
+                        )?
+                    } else {
+                        child
+                    };
+                    let (key, entry) = self.lower_entry(node)?;
                     draft
-                        .admit_annotation(key, entry)
+                        .admit_annotation(key, entry, explicit_override)
                         .map_err(|refusal| self.refuse_draft(refusal))?;
+                }
+                "interpret_entry" | "classify_entry" => {
+                    self.lower_interpretation_entry(
+                        child,
+                        draft.interpretation.get_or_insert_with(Default::default),
+                    )?;
                 }
                 "defaults_block" => {
                     if draft.defaults.is_some() {
@@ -578,9 +735,18 @@ impl<'a, 'src> Lowerer<'a, 'src> {
                 "pattern_definition" | "lexicon_definition" => {
                     draft.saw_definition = true;
                     let (metadata, key, skip) = draft.materialize_metadata();
-                    draft
-                        .definitions
-                        .push(self.lower_definition_node(child, metadata, key, skip)?);
+                    let mut definition = self.lower_definition_node(child, metadata, key, skip)?;
+                    if let Some(recipe) = draft.interpretation.take() {
+                        if !definition.is_ordinary_pattern() {
+                            return Err(self.error(
+                                child,
+                                DiagnosticCode::InvalidInterpretation,
+                                "interpret and classify require an emitting pattern",
+                            ));
+                        }
+                        definition.interpretation = Some(recipe);
+                    }
+                    draft.definitions.push(definition);
                 }
                 _ => {
                     return Err(self.error(
@@ -628,8 +794,112 @@ impl<'a, 'src> Lowerer<'a, 'src> {
             program,
             source_bytes: self.source_bytes,
             metadata_bytes: self.metadata_bytes,
+            bundle_copy_bytes: self.bundle_copy_bytes,
             warnings: self.warnings,
         })
+    }
+
+    fn lower_interpretation_entry(
+        &mut self,
+        node: Node<'_>,
+        recipe: &mut super::model::ParsedInterpretation,
+    ) -> Result<(), CompileError> {
+        use crate::fsm::AnalyticalValue;
+        self.check_recovery_subtree(node)?;
+        self.charge_metadata_bytes(node)?;
+        let role_node =
+            required_field(self.source, &self.source_label, node, "role", "identifier")?;
+        let role = self.text(role_node)?.into();
+        if node.kind() == "classify_entry" {
+            if recipe
+                .classify_by
+                .replace((role, self.span_of(role_node)?))
+                .is_some()
+            {
+                return Err(self.error(
+                    node,
+                    DiagnosticCode::InvalidInterpretation,
+                    "a pattern can classify by one role",
+                ));
+            }
+            return Ok(());
+        }
+        let capture = required_field(
+            self.source,
+            &self.source_label,
+            node,
+            "capture",
+            "capture_reference",
+        )?;
+        let name = required_field(
+            self.source,
+            &self.source_label,
+            capture,
+            "name",
+            "identifier",
+        )?;
+        let map = required_field(
+            self.source,
+            &self.source_label,
+            node,
+            "labels",
+            "metadata_map",
+        )?;
+        let mut labels = std::collections::BTreeMap::new();
+        for pair in map
+            .named_children(&mut map.walk())
+            .filter(|child| child.kind() != "comment")
+        {
+            let key = required_field(self.source, &self.source_label, pair, "key", "identifier")?;
+            let value = pair.child_by_field_name("value").ok_or_else(|| {
+                self.error(
+                    pair,
+                    DiagnosticCode::InvalidInterpretation,
+                    "missing role label value",
+                )
+            })?;
+            let invalid = || {
+                self.error(
+                    value,
+                    DiagnosticCode::InvalidInterpretation,
+                    "a role label requires a string, boolean, or signed 64-bit integer",
+                )
+            };
+            let scalar = match value.kind() {
+                "metadata_string" => {
+                    AnalyticalValue::String(self.metadata_string_text(value)?.into())
+                }
+                "metadata_boolean" => AnalyticalValue::Boolean(self.text(value)? == "true"),
+                "metadata_number" => {
+                    AnalyticalValue::Integer(self.text(value)?.parse().map_err(|_| invalid())?)
+                }
+                _ => return Err(invalid()),
+            };
+            if labels.insert(self.text(key)?.into(), scalar).is_some() {
+                return Err(self.error(
+                    key,
+                    DiagnosticCode::InvalidInterpretation,
+                    "duplicate analytical label",
+                ));
+            }
+        }
+        let role = super::model::ParsedRole {
+            role,
+            labels,
+            span: self.span_of(capture)?,
+        };
+        if recipe
+            .captures
+            .insert(self.text(name)?.into(), role)
+            .is_some()
+        {
+            return Err(self.error(
+                capture,
+                DiagnosticCode::InvalidInterpretation,
+                "a capture can declare one analytical role",
+            ));
+        }
+        Ok(())
     }
 
     fn lower_labels_entry(
@@ -997,7 +1267,23 @@ impl<'a, 'src> Lowerer<'a, 'src> {
         for child in block.named_children(&mut cursor) {
             match child.kind() {
                 "comment" => {}
+                "identifier" if block.kind() == "bundle_block" => {}
                 "metadata_entry" | "key_entry" | "skip_entry" => {
+                    if block.kind() == "bundle_block" {
+                        let key = required_field(
+                            self.source,
+                            &self.source_label,
+                            child,
+                            "key",
+                            "identifier",
+                        )?;
+                        let text = self.text(key)?;
+                        if schema::compiler_owned(text)
+                            || matches!(text, "analyzer" | "vectors" | "labels")
+                        {
+                            return Err(self.error(key, DiagnosticCode::Syntax, format!("bundles supply descriptive metadata; write `{text}` on its definition")));
+                        }
+                    }
                     let (key, entry) = self.lower_entry(child)?;
                     let entry = match entry {
                         LoweredEntry::MetadataSet(entry) => LoweredEntry::MetadataSet(entry),
@@ -1007,9 +1293,13 @@ impl<'a, 'src> Lowerer<'a, 'src> {
                             return Err(self.error_at_key(
                                 child,
                                 DiagnosticCode::UnsetOutsideAnnotation,
-                                "`none` unsets a file default from a definition's \
-                                 annotation run; a `defaults` entry declares that \
-                                 default and cannot unset it",
+                                if block.kind() == "bundle_block" {
+                                    "a bundle supplies values; write `override KEY: none` on a definition to remove a bundled value"
+                                } else {
+                                    "`none` unsets a file default from a definition's \
+                                     annotation run; a `defaults` entry declares that \
+                                     default and cannot unset it"
+                                },
                             ));
                         }
                     };
@@ -1469,6 +1759,7 @@ impl<'a, 'src> Lowerer<'a, 'src> {
         // check of its own here.
         let mut members = Vec::new();
         let mut exact_members = Vec::new();
+        let mut normalized_literals = Vec::new();
         let mut seen = HashSet::new();
         let mut cursor = members_node.walk();
         for value_node in members_node.named_children(&mut cursor) {
@@ -1480,19 +1771,18 @@ impl<'a, 'src> Lowerer<'a, 'src> {
                 ));
             }
             // As `surface` reads it, then as every other attribute does.
-            self.literal_key = LiteralKey::Surface;
-            let exact = self.lower_literal_value(value_node, false);
-            self.literal_key = LiteralKey::Other;
-            let exact = exact?;
-            let literal = self.normalized_literal(value_node, exact.clone());
-            exact_members.push(exact);
-            if !seen.insert(literal.clone()) {
+            let exact = self.decode_literal_value(value_node, false)?;
+            let reported = self.warnings.len();
+            let literal = self.nfc_literal(value_node, exact.clone());
+            normalized_literals.extend(self.warnings.drain(reported..));
+            if !seen.insert(exact.clone()) {
                 return Err(self.error(
                     value_node,
                     DiagnosticCode::Syntax,
                     "set members must be unique",
                 ));
             }
+            exact_members.push(exact);
             members.push(literal);
         }
 
@@ -1500,6 +1790,7 @@ impl<'a, 'src> Lowerer<'a, 'src> {
             name,
             members,
             exact_members,
+            normalized_literals,
             span: self.span_of(node)?,
         })
     }
@@ -1714,6 +2005,7 @@ impl<'a, 'src> Lowerer<'a, 'src> {
                 ));
             }
             return Ok(ParsedDefinition {
+                interpretation: None,
                 name: self.text(name_node)?.into(),
                 body: ParsedDefinitionBody::Lexicon {
                     by: by.into_boxed_slice(),
@@ -1753,8 +2045,8 @@ impl<'a, 'src> Lowerer<'a, 'src> {
                 "unknown pattern expression node",
             ));
         }
-        let (relations, enhanced_relations, orders) = match node.child_by_field_name("where") {
-            None => (Box::default(), Box::default(), Box::default()),
+        let clause = match node.child_by_field_name("where") {
+            None => WhereClause::default(),
             Some(where_node) => {
                 if visibility == DefinitionVisibility::Fragment {
                     return Err(self.error(
@@ -1804,13 +2096,15 @@ impl<'a, 'src> Lowerer<'a, 'src> {
         }
 
         Ok(ParsedDefinition {
+            interpretation: None,
             name: self.text(name_node)?.into(),
             body: ParsedDefinitionBody::Pattern {
                 visibility,
                 expr,
-                relations,
-                enhanced_relations,
-                orders,
+                relations: clause.relations,
+                enhanced_relations: clause.enhanced_relations,
+                orders: clause.orders,
+                span_paths: clause.span_paths,
             },
             metadata,
             key,
@@ -1825,27 +2119,98 @@ impl<'a, 'src> Lowerer<'a, 'src> {
         })
     }
 
-    fn lower_where_clause(
-        &mut self,
+    fn lower_span_path(
+        &self,
         node: Node<'_>,
-    ) -> Result<
-        (
-            Box<[ParsedRelation]>,
-            Box<[super::model::ParsedEnhancedRelation]>,
-            Box<[super::model::OrderConstraint]>,
-        ),
-        CompileError,
-    > {
+    ) -> Result<super::model::ParsedSpanPath, CompileError> {
+        use super::model::{ParsedSpanOperand, ParsedSpanPath, SpanPosition};
+        if node.has_error() {
+            self.check_recovery_subtree(node)?;
+        }
+        let layer = node
+            .child_by_field_name("layer")
+            .ok_or_else(|| self.error(node, DiagnosticCode::Syntax, "expected a span layer"))?;
+        let kind = if layer.kind() == "metadata_string" {
+            self.metadata_string_text(layer)?
+        } else {
+            let mut cursor = layer.walk();
+            layer
+                .named_children(&mut cursor)
+                .filter(|n| n.kind() == "identifier")
+                .map(|n| self.text(n))
+                .collect::<Result<Vec<_>, _>>()?
+                .join(".")
+        };
+        if kind.is_empty() {
+            return Err(self.error(layer, DiagnosticCode::Syntax, "span layer must be nonempty"));
+        }
+        let mut operands = Vec::new();
+        for operand in node.children_by_field_name("operand", &mut node.walk()) {
+            let capture = required_field(
+                self.source,
+                &self.source_label,
+                operand,
+                "capture",
+                "capture_reference",
+            )?;
+            let name = required_field(
+                self.source,
+                &self.source_label,
+                capture,
+                "name",
+                "identifier",
+            )?;
+            let position = match operand.child_by_field_name("position") {
+                None => SpanPosition::Inside,
+                Some(p) => match self.text(p)? {
+                    "inside" => SpanPosition::Inside,
+                    "whole" => SpanPosition::Whole,
+                    "head" => SpanPosition::Head,
+                    _ => {
+                        return Err(self.error(
+                            p,
+                            DiagnosticCode::Syntax,
+                            "expected inside, whole or head",
+                        ));
+                    }
+                },
+            };
+            let label = operand
+                .child_by_field_name("label")
+                .map(|label| {
+                    if label.kind() == "metadata_string" {
+                        self.metadata_string_text(label)
+                    } else {
+                        Ok(self.text(label)?.to_owned())
+                    }
+                })
+                .transpose()?;
+            operands.push(ParsedSpanOperand {
+                capture: self.text(name)?.into(),
+                source: self.span_of(capture)?,
+                position,
+                label,
+            });
+        }
+        Ok(ParsedSpanPath { kind, operands })
+    }
+
+    fn lower_where_clause(&mut self, node: Node<'_>) -> Result<WhereClause, CompileError> {
         self.check_recovery_node(node)?;
         let mut relations = Vec::new();
         let mut enhanced_relations = Vec::new();
         let mut orders = Vec::new();
+        let mut span_paths = Vec::new();
         let mut cursor = node.walk();
         let constraints: Vec<_> = node
             .children_by_field_name("constraint", &mut cursor)
             .collect();
         for constraint in constraints {
             self.check_recovery_node(constraint)?;
+            if constraint.kind() == "span_constraint" {
+                span_paths.push(self.lower_span_path(constraint)?);
+                continue;
+            }
             if constraint.kind() == "order_constraint" {
                 let mut cursor = constraint.walk();
                 let operands = constraint
@@ -2048,11 +2413,12 @@ impl<'a, 'src> Lowerer<'a, 'src> {
                 target,
             });
         }
-        Ok((
-            relations.into_boxed_slice(),
-            enhanced_relations.into_boxed_slice(),
-            orders.into_boxed_slice(),
-        ))
+        Ok(WhereClause {
+            relations: relations.into_boxed_slice(),
+            enhanced_relations: enhanced_relations.into_boxed_slice(),
+            orders: orders.into_boxed_slice(),
+            span_paths: span_paths.into_boxed_slice(),
+        })
     }
 
     fn lower_enhanced_endpoint(
@@ -2821,7 +3187,9 @@ impl<'a, 'src> Lowerer<'a, 'src> {
                 }
                 let values_node =
                     required_field(self.source, &self.source_label, node, "values", "value_set")?;
-                let values = self.lower_finite_values(values_node, operator == "not has any")?;
+                let mut values =
+                    self.lower_finite_values(values_node, operator == "not has any")?;
+                values.sort_unstable();
                 if operator == "has any" {
                     AttrValueType::SetHasAny(Arc::from(values))
                 } else {
@@ -2853,46 +3221,7 @@ impl<'a, 'src> Lowerer<'a, 'src> {
                 }
                 let values_node =
                     required_field(self.source, &self.source_label, node, "values", "value_set")?;
-                self.check_recovery_node(values_node)?;
-                let mut values = Vec::new();
-                let mut seen = HashSet::new();
-                let mut folded_members = HashSet::new();
-                let mut cursor = values_node.walk();
-                for value_node in values_node.named_children(&mut cursor) {
-                    if value_node.kind() != "value" {
-                        return Err(self.error(
-                            value_node,
-                            DiagnosticCode::UnknownNode,
-                            "unknown finite-set member",
-                        ));
-                    }
-                    let literal = self.lower_literal_value(value_node, operator == "not in")?;
-                    // Two spellings that fold to one `text` key, such as
-                    // ＮＨＫ and NHK, are one member.
-                    let folded = std::mem::take(&mut self.literal_folded);
-                    if seen.contains(&literal) {
-                        if folded || folded_members.contains(&literal) {
-                            continue;
-                        }
-                        return Err(self.error(
-                            value_node,
-                            DiagnosticCode::Syntax,
-                            "finite-set members must be unique",
-                        ));
-                    }
-                    if folded {
-                        folded_members.insert(literal.clone());
-                    }
-                    seen.insert(literal.clone());
-                    values.push(literal);
-                }
-                if values.is_empty() {
-                    return Err(self.error(
-                        values_node,
-                        DiagnosticCode::Syntax,
-                        "finite sets must contain at least one value",
-                    ));
-                }
+                let values = self.lower_finite_values(values_node, operator == "not in")?;
                 if operator == "in" {
                     AttrValueType::OneOf(Arc::from(values))
                 } else {
@@ -2921,6 +3250,7 @@ impl<'a, 'src> Lowerer<'a, 'src> {
         self.check_recovery_node(values_node)?;
         let mut values = Vec::new();
         let mut seen = HashSet::new();
+        let mut text_keys = HashSet::new();
         let mut cursor = values_node.walk();
         for value_node in values_node.named_children(&mut cursor) {
             if value_node.kind() != "value" {
@@ -2930,7 +3260,12 @@ impl<'a, 'src> Lowerer<'a, 'src> {
                     "unknown finite-set member",
                 ));
             }
-            let literal = self.lower_literal_value(value_node, negated)?;
+            let exact = self.decode_literal_value(value_node, negated)?;
+            let literal = if self.literal_key == LiteralKey::Surface {
+                exact
+            } else {
+                self.nfc_literal(value_node, exact)
+            };
             if !seen.insert(literal.clone()) {
                 return Err(self.error(
                     value_node,
@@ -2938,7 +3273,14 @@ impl<'a, 'src> Lowerer<'a, 'src> {
                     "finite-set members must be unique",
                 ));
             }
-            values.push(literal);
+            if self.literal_key == LiteralKey::Text {
+                let folded = self.fold_text_literal(value_node, literal);
+                if text_keys.insert(folded.clone()) {
+                    values.push(folded);
+                }
+            } else {
+                values.push(literal);
+            }
         }
         if values.is_empty() {
             return Err(self.error(
@@ -2947,7 +3289,6 @@ impl<'a, 'src> Lowerer<'a, 'src> {
                 "finite sets must contain at least one value",
             ));
         }
-        values.sort_unstable();
         Ok(values)
     }
 
@@ -2986,14 +3327,23 @@ impl<'a, 'src> Lowerer<'a, 'src> {
         Ok(value)
     }
 
+    fn lower_literal_value(
+        &mut self,
+        value_node: Node<'_>,
+        negated: bool,
+    ) -> Result<CompactString, CompileError> {
+        let exact = self.decode_literal_value(value_node, negated)?;
+        Ok(self.normalized_literal(value_node, exact))
+    }
+
     /// Lowers a value node that must be a literal.
     ///
     /// Serves `=`, `!=`, `in`, and `not in` — every operator whose operand
     /// rules exclude a regex. `negated` selects which match-mode operator the
     /// diagnostic recommends: recommending `!~` for a positive `in {…}` would
     /// send the author to the complement of what they wrote.
-    fn lower_literal_value(
-        &mut self,
+    fn decode_literal_value(
+        &self,
         value_node: Node<'_>,
         negated: bool,
     ) -> Result<CompactString, CompileError> {
@@ -3037,9 +3387,8 @@ impl<'a, 'src> Lowerer<'a, 'src> {
         if text.len() >= 2 && text.starts_with('/') && text.ends_with('/') {
             self.lower_regex(node)
         } else {
-            Ok(AttrValueType::Single(
-                self.decode_literal_escapes(node, text)?,
-            ))
+            let exact = self.decode_literal_escapes(node, text)?;
+            Ok(AttrValueType::Single(self.normalized_literal(node, exact)))
         }
     }
 
@@ -3055,14 +3404,14 @@ impl<'a, 'src> Lowerer<'a, 'src> {
     /// each operator's arm. Reaching it at all is what proves the value is not
     /// a regex.
     fn decode_literal_escapes(
-        &mut self,
+        &self,
         node: Node<'_>,
         text: &str,
     ) -> Result<CompactString, CompileError> {
         self.refuse_unspaced_pipe(node, text)?;
         self.refuse_quoted_value(node, text)?;
         if !text.contains('\\') {
-            return Ok(self.normalized_literal(node, text.into()));
+            return Ok(text.into());
         }
         let mut decoded = String::with_capacity(text.len());
         let mut characters = text.chars();
@@ -3101,18 +3450,25 @@ impl<'a, 'src> Lowerer<'a, 'src> {
                 }
             }
         }
-        Ok(self.normalized_literal(node, decoded.into()))
+        Ok(decoded.into())
     }
 
     /// The literal `value` as the attribute it is compared with reads it:
     /// a `text` literal as its folded key, a `surface` literal as written,
     /// and any other in NFC.
     fn normalized_literal(&mut self, node: Node<'_>, value: CompactString) -> CompactString {
-        self.literal_folded = false;
         if self.literal_key == LiteralKey::Surface {
             return value;
         }
-        let normalized = if unicode_normalization::is_nfc(&value) {
+        let normalized = self.nfc_literal(node, value);
+        if matches!(self.literal_key, LiteralKey::Text | LiteralKey::LexiconText) {
+            return self.fold_text_literal(node, normalized);
+        }
+        normalized
+    }
+
+    fn nfc_literal(&mut self, node: Node<'_>, value: CompactString) -> CompactString {
+        if unicode_normalization::is_nfc(&value) {
             value
         } else {
             let normalized: CompactString =
@@ -3125,22 +3481,22 @@ impl<'a, 'src> Lowerer<'a, 'src> {
             );
             self.warn(node, DiagnosticCode::NormalizedLiteral, message);
             normalized
-        };
-        if matches!(self.literal_key, LiteralKey::Text | LiteralKey::LexiconText) {
-            let folded = text_key(&normalized);
-            if folded != normalized.as_str() {
-                let message = format!(
-                    "In {}, the `text` literal `{normalized}` ({}) matches as its folded key \
-                     `{folded}` ({}). Test `surface` to match the exact spelling",
-                    self.definition_label(),
-                    code_points(&normalized),
-                    code_points(&folded),
-                );
-                self.warn(node, DiagnosticCode::FoldedLiteral, message);
-                if self.literal_key == LiteralKey::Text {
-                    self.literal_folded = true;
-                    return folded.into();
-                }
+        }
+    }
+
+    fn fold_text_literal(&mut self, node: Node<'_>, normalized: CompactString) -> CompactString {
+        let folded = text_key(&normalized);
+        if folded != normalized.as_str() {
+            let message = format!(
+                "In {}, the `text` literal `{normalized}` ({}) matches as its folded key \
+                 `{folded}` ({}). Test `surface` to match the exact spelling",
+                self.definition_label(),
+                code_points(&normalized),
+                code_points(&folded),
+            );
+            self.warn(node, DiagnosticCode::FoldedLiteral, message);
+            if self.literal_key == LiteralKey::Text {
+                return folded.into();
             }
         }
         normalized
@@ -3807,7 +4163,7 @@ fn source_line_column(source: &str, offset: usize) -> (usize, usize) {
 #[path = "lower_tests.rs"]
 mod tests;
 
-fn code_points(text: &str) -> String {
+pub(super) fn code_points(text: &str) -> String {
     text.chars()
         .map(|character| format!("U+{:04X}", u32::from(character)))
         .collect::<Vec<_>>()

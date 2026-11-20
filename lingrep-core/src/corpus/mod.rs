@@ -13,6 +13,7 @@ pub mod scope_observation;
 pub mod section_policy;
 pub mod soranoha;
 pub mod source;
+pub(crate) mod span_annotations;
 pub mod structured;
 pub mod tei;
 pub mod text_source;

@@ -4,7 +4,9 @@ mod attribute_key;
 mod bound;
 mod maps;
 mod schema;
+mod sentence_span;
 mod storage;
+pub use sentence_span::SentenceSpan;
 
 pub use attribute_key::{AttributeKey, AttributeKeyError};
 pub use bound::{
@@ -436,6 +438,139 @@ pub fn display_surface_attributes(schema: &TokenSchema) -> Vec<AttributeKey> {
         .collect()
 }
 
+/// Whether adjacent tokens are separated in the source. Returns `None` if either
+/// token lacks a character span. Words sharing a multiword-token span touch.
+pub fn source_space_before<S: TokenSequence + ?Sized>(tokens: &S, index: usize) -> Option<bool> {
+    let left = tokens.char_span(index.checked_sub(1)?)?;
+    let right = tokens.char_span(index)?;
+    Some(left.end < right.start)
+}
+
+/// Whether displayed text has a space between token `index` and the token
+/// before it.
+///
+/// Whitespace between tokens is not a token, so joining
+/// [`display_surface`] values alone drops it. When both tokens carry a
+/// [`CharSpan`], the answer is whether the source has anything between them,
+/// which is exact for every analyzer and for CoNLL-U `SpaceAfter=No`; the
+/// words of one multiword token share a span and so are never separated.
+/// Without spans the answer is a guess from the two texts' scripts: a space
+/// between two letters of a script that separates words.
+///
+/// The first token of a sentence, and an index past its end, have no space
+/// before them.
+pub fn display_space_before<S: TokenSequence + ?Sized>(tokens: &S, index: usize) -> bool {
+    let Some(previous) = index.checked_sub(1) else {
+        return false;
+    };
+    if index >= tokens.len() {
+        return false;
+    }
+    source_space_before(tokens, index).unwrap_or_else(|| {
+        crate::utils::spaced_script_boundary(
+            display_surface(tokens, previous).unwrap_or(""),
+            display_surface(tokens, index).unwrap_or(""),
+        )
+    })
+}
+
+/// Appends the tokens of `span` to `text` as output displays them: each
+/// token's [`display_surface`], with one U+0020 wherever
+/// [`display_space_before`] reports a space between two tokens of the span.
+///
+/// The space stands for whatever the source has between the two tokens, so a
+/// tab or a run of spaces is displayed as one space. A token without a
+/// displayable text contributes nothing. No space precedes the span's first
+/// token; a caller joining adjacent spans asks [`display_space_before`] for
+/// the boundary.
+pub fn push_display_text<S: TokenSequence + ?Sized>(
+    text: &mut String,
+    tokens: &S,
+    span: std::ops::Range<usize>,
+) {
+    let end = span.end.min(tokens.len());
+    for index in span.start.min(end)..end {
+        if index > span.start && display_space_before(tokens, index) {
+            text.push(' ');
+        }
+        if let Some(surface) = display_surface(tokens, index) {
+            text.push_str(surface);
+        }
+    }
+}
+
+/// [`push_display_text`] into a new string.
+#[must_use]
+pub fn display_text<S: TokenSequence + ?Sized>(tokens: &S, span: std::ops::Range<usize>) -> String {
+    let mut text = String::new();
+    push_display_text(&mut text, tokens, span);
+    text
+}
+
+/// One sentence of [`TokenInfo`] together with the source spans recorded for
+/// its tokens.
+///
+/// A bare `Vec<TokenInfo>` cannot answer [`TokenSequence::char_span`], so
+/// [`display_space_before`] can only guess over one. Dereferences to the
+/// token slice.
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct TokenInfoSentence {
+    tokens: Vec<TokenInfo>,
+    char_offsets: Option<std::sync::Arc<Vec<CharSpan>>>,
+}
+
+impl TokenInfoSentence {
+    /// `char_offsets` is kept only when it has one span per token, the same
+    /// all-or-nothing rule as [`BoundTokenSentence::with_char_offsets`].
+    #[must_use]
+    pub fn new(
+        tokens: Vec<TokenInfo>,
+        char_offsets: Option<std::sync::Arc<Vec<CharSpan>>>,
+    ) -> Self {
+        let char_offsets = char_offsets.filter(|spans| spans.len() == tokens.len());
+        Self {
+            tokens,
+            char_offsets,
+        }
+    }
+}
+
+impl TokenInfoSentence {
+    /// The tokens alone, without their spans.
+    #[must_use]
+    pub fn into_tokens(self) -> Vec<TokenInfo> {
+        self.tokens
+    }
+}
+
+impl From<Vec<TokenInfo>> for TokenInfoSentence {
+    fn from(tokens: Vec<TokenInfo>) -> Self {
+        Self::new(tokens, None)
+    }
+}
+
+impl std::ops::Deref for TokenInfoSentence {
+    type Target = [TokenInfo];
+
+    fn deref(&self) -> &[TokenInfo] {
+        &self.tokens
+    }
+}
+
+impl TokenSequence for TokenInfoSentence {
+    fn len(&self) -> usize {
+        self.tokens.len()
+    }
+
+    fn char_span(&self, token: usize) -> Option<CharSpan> {
+        self.char_offsets.as_ref()?.get(token).copied()
+    }
+
+    fn get(&self, token: usize, attribute: TokenAttributeIndex) -> Option<&CompactString> {
+        TokenInfoTrait::get(<[TokenInfo]>::get(&self.tokens, token)?, attribute)
+    }
+}
+
 /// Construct a token from a surface string, setting `orth` and leaving all
 /// morphological attributes `None`.
 impl From<String> for TokenInfo {
@@ -789,6 +924,71 @@ mod tests {
         TokenAttributeIndex, TokenInfo, TokenSchema, featurize, resolve_pos, tokenize_bound,
     };
     use crate::token_match::TokenInfoTrait;
+
+    use crate::testing::helpers::placed_tokens as placed;
+
+    #[test]
+    fn display_text_keeps_the_spaces_the_source_has_between_tokens() {
+        let english = placed("I saw NHK news", &["I", "saw", "NHK", "news"]);
+        assert_eq!(super::display_text(&english, 0..4), "I saw NHK news");
+        assert_eq!(super::display_text(&english, 1..3), "saw NHK");
+        assert!(super::display_space_before(&english, 1));
+        assert!(!super::display_space_before(&english, 0));
+        assert!(!super::display_space_before(&english, 4));
+
+        // UniDic splits a half-width Latin word into letters; only the source
+        // says which of them a space separates.
+        let mixed = placed(
+            "昨日 NHK news を見た。",
+            &[
+                "昨日", "N", "H", "K", "n", "e", "w", "s", "を", "見", "た", "。",
+            ],
+        );
+        assert_eq!(super::display_text(&mixed, 0..12), "昨日 NHK news を見た。");
+
+        let japanese = placed(
+            "昨日はニュースを見た。",
+            &["昨日", "は", "ニュース", "を", "見", "た", "。"],
+        );
+        assert_eq!(
+            super::display_text(&japanese, 0..7),
+            "昨日はニュースを見た。"
+        );
+        assert_eq!(super::display_text(&japanese, 2..4), "ニュースを");
+    }
+
+    #[test]
+    fn display_text_shows_any_gap_as_one_space_and_none_inside_a_multiword_token() {
+        let wide = placed("a \t b", &["a", "b"]);
+        assert_eq!(super::display_text(&wide, 0..2), "a b");
+
+        // Both words of a CoNLL-U multiword token carry the token's span.
+        let shared = super::TokenInfoSentence::new(
+            ["vamos", "nos", "ya"]
+                .map(|word| TokenInfo::default().with_orth(word))
+                .to_vec(),
+            Some(std::sync::Arc::new(vec![
+                super::CharSpan::new(0, 7),
+                super::CharSpan::new(0, 7),
+                super::CharSpan::new(8, 10),
+            ])),
+        );
+        assert_eq!(super::display_text(&shared, 0..3), "vamosnos ya");
+    }
+
+    #[test]
+    fn display_text_without_spans_guesses_from_the_script() {
+        let words = ["前", "DNA", "machine", "learning", "解析"]
+            .map(|word| TokenInfo::default().with_orth(word));
+        assert_eq!(
+            super::display_text(&words, 0..5),
+            "前DNA machine learning解析"
+        );
+        assert_eq!(
+            super::display_text(&words, 0..9),
+            "前DNA machine learning解析"
+        );
+    }
 
     #[test]
     fn physical_token_size_matches_the_attribute_count() {

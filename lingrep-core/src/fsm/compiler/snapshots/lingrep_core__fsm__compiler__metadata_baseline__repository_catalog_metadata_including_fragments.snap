@@ -2231,6 +2231,15 @@ expression: baseline
             "source": "\"research query, ヲ格名詞句と述語の共起 dependency criterion\"",
             "status": "\"experimental\"",
         },
+        "pattern wo_predicate_bunsetsu": {
+            "category": "\"ヲ格共起\"",
+            "collocate": "\"accusative\"",
+            "head": "\"predicate\"",
+            "relation": "\"noun_wo+V\"",
+            "role": "\"research\"",
+            "source": "\"research query, ヲ格名詞句と述語の共起 dependency criterion\"",
+            "status": "\"experimental\"",
+        },
         "pattern wo_predicate_dep": {
             "category": "\"ヲ格共起\"",
             "collocate": "\"accusative\"",

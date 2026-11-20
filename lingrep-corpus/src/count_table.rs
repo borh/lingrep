@@ -33,7 +33,7 @@ pub use key_subset::{KeyEquals, KeyFieldError, KeySubset};
 compile_error!("count tables map little-endian arrays in place");
 
 pub const COUNT_TABLE_FORMAT: &str = "lingrep.count-table";
-pub const COUNT_TABLE_VERSION: u32 = 3;
+pub const COUNT_TABLE_VERSION: u32 = 4;
 
 const DOCUMENT_MAJOR_PAIRS: u64 = 2_000_000;
 

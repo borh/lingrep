@@ -80,6 +80,7 @@ fn named_and_unnamed_group_erasure_preserves_full_matches(tc: hegel::TestCase) {
                     .into_boxed_slice()
                 }),
                 graph_bindings: Box::default(),
+                interpretations: Box::default(),
                 lexical: None,
             });
         }

@@ -784,23 +784,29 @@ fn metadata_owned_bytes(
     metadata: &Metadata,
     source_label: &Arc<str>,
 ) -> Result<usize, CompileError> {
-    let entry_bytes = checked_owned_mul(
-        metadata.len(),
-        size_of::<(CompactString, Value)>(),
-        source_label,
-    )?;
-    // Use a deterministic 2x entry-storage allowance. Exact allocator control
-    // bytes remain structural memory bounded by the metadata/count budgets.
-    let mut bytes = checked_owned_mul(entry_bytes, 2, source_label)?;
-    for (key, entry) in metadata.iter() {
-        bytes = checked_owned_add(bytes, key.len(), source_label)?;
-        bytes = checked_owned_add(
+    metadata.iter().try_fold(0, |bytes, (key, entry)| {
+        checked_owned_add(
             bytes,
-            json_value_owned_bytes(&entry.value, source_label)?,
+            metadata_entry_owned_bytes(key, &entry.value, source_label)?,
             source_label,
-        )?;
-    }
-    Ok(bytes)
+        )
+    })
+}
+
+pub(super) fn metadata_entry_owned_bytes(
+    key: &str,
+    value: &Value,
+    source_label: &Arc<str>,
+) -> Result<usize, CompileError> {
+    // Use the same 2x entry-storage allowance when reserving a bundle copy
+    // and when measuring its materialized pattern metadata.
+    let storage = 2 * size_of::<(CompactString, Value)>();
+    let bytes = checked_owned_add(storage, key.len(), source_label)?;
+    checked_owned_add(
+        bytes,
+        json_value_owned_bytes(value, source_label)?,
+        source_label,
+    )
 }
 
 fn json_value_owned_bytes(value: &Value, source_label: &Arc<str>) -> Result<usize, CompileError> {

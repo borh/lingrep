@@ -1625,6 +1625,7 @@ pub(crate) fn synthesize_hidden_emitters(
         let span = fragments[&fragment];
         let hidden = CompactString::new(format!("{HIDDEN_PREFIX}{fragment}"));
         program.definitions.push(ParsedDefinition {
+            interpretation: None,
             name: hidden.clone(),
             body: super::model::ParsedDefinitionBody::Pattern {
                 visibility: DefinitionVisibility::Pattern,
@@ -1635,6 +1636,7 @@ pub(crate) fn synthesize_hidden_emitters(
                 relations: Box::default(),
                 enhanced_relations: Box::default(),
                 orders: Box::default(),
+                span_paths: Box::default(),
             },
             metadata: Metadata::default(),
             key: None,

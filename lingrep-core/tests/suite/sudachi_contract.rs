@@ -7,7 +7,7 @@ use lingrep_core::analysis::{
     SegmentationMode, SudachiConfig, SudachiEdition, SudachiPlan, SudachiResources, SudachiSplit,
     TextUnit, TextUnitKind,
 };
-use lingrep_core::token_match::{AttributeKind, DenseStorageKind};
+use lingrep_core::token_match::{AttributeKind, DenseStorageKind, TokenSequence};
 
 fn config(
     edition: SudachiEdition,
@@ -105,7 +105,7 @@ fn sudachi_semantic_identity_is_pinned() {
         .collect();
     assert_eq!(
         hex,
-        "3f2f63e3cd330eb6224b600d000c9de99995bd4135c973fc5f557683dce89f63"
+        "d5f420fc2e28204ca43cacb3e9539585f2296c5bf61a125573a93eb542a56296"
     );
 }
 
@@ -347,6 +347,58 @@ fn sudachi_core_preserves_exact_surfaces_for_every_split() {
 }
 
 #[test]
+#[ignore = "requires LINGREP_SUDACHI_DICT_CORE"]
+fn sudachi_coarser_units_cover_the_configured_tokens() {
+    for (split, expected) in [
+        (
+            SudachiSplit::A,
+            vec![
+                ("sudachi.c", 0, 3),
+                ("sudachi.b", 0, 1),
+                ("sudachi.b", 1, 3),
+            ],
+        ),
+        (SudachiSplit::B, vec![("sudachi.c", 0, 2)]),
+        (SudachiSplit::C, vec![]),
+    ] {
+        let plan = load_plan_with(
+            SudachiEdition::Core,
+            split,
+            ExtractionProfile::Morphology,
+            SegmentationMode::Input,
+            SudachiResources::BuiltIn,
+        );
+        let projection = plan
+            .schema()
+            .bind_projection(plan.schema().keys().iter().cloned())
+            .unwrap();
+        let input = TextUnit::sentence(
+            InputUnitId::new(10),
+            "国家公務員",
+            NormalizationPolicy::None,
+        )
+        .unwrap();
+        let batch = plan
+            .create_session()
+            .analyze_bounded_batch(vec![input], &projection)
+            .unwrap();
+        let words = batch.inputs()[0].sentences()[0].words();
+        let spans = words
+            .spans()
+            .iter()
+            .map(|span| {
+                assert_eq!(
+                    (span.head, span.governor, span.label.as_ref()),
+                    (None, None, None)
+                );
+                (span.kind.as_str(), span.start, span.end)
+            })
+            .collect::<Vec<_>>();
+        assert_eq!(spans, expected);
+    }
+}
+
+#[test]
 #[ignore = "requires every LINGREP_SUDACHI_DICT_* variable and LINGREP_SUDACHI_RESOURCES"]
 fn every_sudachi_edition_loads_and_produces_complete_morphology() {
     for edition in [
@@ -506,6 +558,7 @@ fn long_sudachi_input_keeps_one_sentence_and_complete_source_alignment() {
                         end: 16_383,
                         captures: Box::new([]),
                         graph_bindings: Box::new([]),
+                        interpretations: Box::default(),
                         lexical: None,
                     })
             );
@@ -515,8 +568,9 @@ fn long_sudachi_input_keeps_one_sentence_and_complete_source_alignment() {
 
 /// Sudachi reads the folded view of each sentence: an ideographic variation
 /// selector, half-width katakana, a decomposed kana and U+FF5E no longer split
-/// a word. Each token's `surface` is the exact source it covers and `text` is
-/// that surface's folded key.
+/// a word, and U+FA5C stays in 臭氣, which SudachiDict lists with it. Each
+/// token's `surface` is the exact source it covers and `text` is that
+/// surface's folded key.
 #[test]
 #[ignore = "requires LINGREP_SUDACHI_RESOURCES and LINGREP_SUDACHI_DICT_CORE"]
 fn sudachi_tokens_carry_the_exact_surface_and_its_folded_key() {
@@ -558,10 +612,11 @@ fn sudachi_tokens_carry_the_exact_surface_and_its_folded_key() {
             ],
         ),
         (
-            "\u{FA5C}氣が満ちた",
+            "部屋に\u{FA5C}氣が満ちた",
             vec![
-                ["\u{FA5C}", "臭", "臭い", "ADJ"],
-                ["氣", "氣", "氣", "NOUN"],
+                ["部屋", "部屋", "部屋", "NOUN"],
+                ["に", "に", "に", "ADP"],
+                ["\u{FA5C}氣", "臭氣", "\u{FA5C}氣", "NOUN"],
                 ["が", "が", "が", "ADP"],
                 ["満ち", "満ち", "満ちる", "VERB"],
                 ["た", "た", "た", "AUX"],

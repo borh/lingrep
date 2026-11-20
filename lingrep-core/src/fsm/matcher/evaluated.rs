@@ -92,6 +92,7 @@ impl EvaluatedPlan {
                 end: matched.end,
                 captures: matched.captures,
                 graph_bindings: matched.graph_bindings,
+                interpretations: Box::default(),
                 lexical: None,
             });
         }

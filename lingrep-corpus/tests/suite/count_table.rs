@@ -673,18 +673,18 @@ fn open_rejects_another_format_version() {
     let header = std::fs::read_to_string(path.join("header.json")).expect("header");
     std::fs::write(
         path.join("header.json"),
-        header.replace("\"version\": 3", "\"version\": 2"),
+        header.replace("\"version\": 4", "\"version\": 3"),
     )
     .expect("rewrite header");
     assert!(matches!(
         CountTable::read_key(&path),
-        Err(CountTableError::UnsupportedFormat { version: 2, .. })
+        Err(CountTableError::UnsupportedFormat { version: 3, .. })
     ));
     let error = CountTable::open(&path, &key()).err();
     assert!(
         matches!(
             error,
-            Some(CountTableError::UnsupportedFormat { version: 2, .. })
+            Some(CountTableError::UnsupportedFormat { version: 3, .. })
         ),
         "{error:?}"
     );

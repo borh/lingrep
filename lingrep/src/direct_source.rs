@@ -820,6 +820,43 @@ mod tests {
     use lingrep_core::corpus::{AdmittedSentence, SentenceId};
 
     #[test]
+    fn matched_surfaces_preserve_word_boundaries() {
+        use lingrep_core::testing::helpers::placed_tokens;
+        let location = SentenceLocation {
+            lookaround_divisions: None,
+            source_metadata: None,
+            corpus_sentence_ordinal: 0,
+            document_id: lingrep_core::corpus::DocumentId::new(0),
+            document_ordinal: 0,
+            document_sentence_ordinal: 0,
+            source_name: Arc::from("doc.txt"),
+        };
+        let both = |source: &str, words: &[&str], span: Range<usize>| {
+            let sentence = placed_tokens(source, words);
+            (
+                displayed_text(&sentence, span.clone(), &location).unwrap(),
+                matched_surface(&sentence, span, &location).unwrap(),
+            )
+        };
+        assert_eq!(
+            both("I saw  NHK\tnews", &["I", "saw", "NHK", "news"], 1..4),
+            ("saw NHK news".into(), "saw NHK news".into())
+        );
+        assert_eq!(
+            both(
+                "昨日 NHK を見た",
+                &["昨日", "N", "H", "K", "を", "見", "た"],
+                0..5
+            ),
+            ("昨日 NHK を".into(), "昨日 NHK を".into())
+        );
+        assert_eq!(
+            both("昨日は見た", &["昨日", "は", "見", "た"], 0..4),
+            ("昨日は見た".into(), "昨日は見た".into())
+        );
+    }
+
+    #[test]
     fn traversal_limit_errors_include_the_corresponding_cli_option() {
         for (field, flag) in [
             ("max_depth", "--max-traversal-depth"),
@@ -1452,8 +1489,34 @@ pub fn matched_surface(
     location: &SentenceLocation,
 ) -> Result<String, MissingRequiredAttribute> {
     let mut surface = String::new();
-    visit_matched_orths(sentence, span, location, |orth| surface.push_str(orth))?;
+    let first = span.start;
+    visit_matched_orths(sentence, span, location, |index, orth| {
+        if index > first
+            && lingrep_core::token_match::source_space_before(sentence, index) == Some(true)
+        {
+            surface.push(' ');
+        }
+        surface.push_str(orth);
+    })?;
     Ok(surface)
+}
+
+/// Display text for interactive previews, including inferred spacing when
+/// character offsets are unavailable.
+pub fn displayed_text(
+    sentence: &dyn lingrep_core::token_match::TokenSequence,
+    span: Range<usize>,
+    location: &SentenceLocation,
+) -> Result<String, MissingRequiredAttribute> {
+    let mut text = String::new();
+    let first = span.start;
+    visit_matched_orths(sentence, span, location, |index, orth| {
+        if index > first && lingrep_core::token_match::display_space_before(sentence, index) {
+            text.push(' ');
+        }
+        text.push_str(orth);
+    })?;
+    Ok(text)
 }
 
 pub fn matched_orth_tokens(
@@ -1462,7 +1525,7 @@ pub fn matched_orth_tokens(
     location: &SentenceLocation,
 ) -> Result<Vec<String>, MissingRequiredAttribute> {
     let mut result = Vec::with_capacity(span.end.saturating_sub(span.start));
-    visit_matched_orths(sentence, span, location, |orth| {
+    visit_matched_orths(sentence, span, location, |_, orth| {
         result.push(orth.to_owned());
     })?;
     Ok(result)
@@ -1472,7 +1535,7 @@ fn visit_matched_orths(
     sentence: &dyn lingrep_core::token_match::TokenSequence,
     span: Range<usize>,
     location: &SentenceLocation,
-    mut visit: impl FnMut(&str),
+    mut visit: impl FnMut(usize, &str),
 ) -> Result<(), MissingRequiredAttribute> {
     let end = span.end.min(sentence.len());
     for index in span.start.min(end)..end {
@@ -1485,7 +1548,7 @@ fn visit_matched_orths(
                     token_index: index,
                 }
             })?;
-        visit(text);
+        visit(index, text);
     }
     Ok(())
 }

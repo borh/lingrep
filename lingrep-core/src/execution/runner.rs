@@ -571,6 +571,7 @@ where
         window_widths.as_deref(),
         |sentences, links, targets| {
             BoundSentenceMatcher::new(fsm)
+                .with_cancellation(cancel)
                 .match_in_windows(pool, sentences, links, targets)
                 .map_err(ExecutionError::Matching)
         },
@@ -1583,6 +1584,9 @@ where
             let end = next + width.min(targets.end - next);
             let found = match match_batch(held, links, next..end) {
                 Err(ExecutionError::Matching(crate::fsm::BoundExecutionError::Resource(
+                    crate::fsm::MatchResourceError::Cancelled,
+                ))) => return Ok(BatchControl::Cancelled),
+                Err(ExecutionError::Matching(crate::fsm::BoundExecutionError::Resource(
                     crate::fsm::MatchResourceError::BatchOutput { .. },
                 ))) if end - next > 1 => {
                     width = (end - next) / 2;
@@ -1640,14 +1644,25 @@ mod tests {
 
     #[test]
     fn output_budget_retries_preserve_context_and_publish_each_sentence_once() {
-        for mode in ["complete", "stop", "cancel", "single_error", "other_error"] {
+        for mode in [
+            "complete",
+            "stop",
+            "cancel",
+            "replay_cancel",
+            "single_error",
+            "other_error",
+        ] {
             let cancel = CancellationFlag::new();
             let mut state = PublicationState::default();
             let locations = (0..6).map(SentenceLocation::run_local).collect::<Vec<_>>();
             let compiled = crate::fsm::compile_catalog(
                 crate::fsm::PatternSource::named(
                     "retry.lx",
-                    "pattern p := (?<x> [text=a]) followed_by([text=a], within=document).",
+                    if mode == "replay_cancel" {
+                        "interpret $x as slot {selected: true}\npattern p := (?<x> [text=a])."
+                    } else {
+                        "pattern p := (?<x> [text=a]) followed_by([text=a], within=document)."
+                    },
                 ),
                 crate::fsm::CompileLimits::default(),
             )
@@ -1729,7 +1744,9 @@ mod tests {
                     if mode == "other_error" {
                         return Err(ExecutionError::Sink("unrelated".into()));
                     }
-                    if targets.len() > 1 || mode == "single_error" {
+                    if mode == "replay_cancel" {
+                        cancel.cancel();
+                    } else if targets.len() > 1 || mode == "single_error" {
                         return Err(ExecutionError::Matching(
                             crate::fsm::BoundExecutionError::Resource(
                                 crate::fsm::MatchResourceError::BatchOutput { limit: 1 },
@@ -1737,6 +1754,7 @@ mod tests {
                         ));
                     }
                     BoundSentenceMatcher::new(&bound)
+                        .with_cancellation(&cancel)
                         .match_in_windows(&pool(), sentences, context, targets)
                         .map_err(ExecutionError::Matching)
                 },
@@ -1767,6 +1785,13 @@ mod tests {
                     );
                     assert_eq!(pushed, [(0, vec![matched.clone()])]);
                     assert_eq!(attempts.last(), Some(&(1..2)));
+                }
+                "replay_cancel" => {
+                    assert_eq!(result.unwrap(), BatchControl::Cancelled);
+                    assert!(pushed.is_empty());
+                    assert_eq!(attempts.len(), 1);
+                    assert_eq!(attempts[0], 1..7);
+                    assert_eq!(state.current.matches_found, 0);
                 }
                 "single_error" => {
                     assert!(matches!(

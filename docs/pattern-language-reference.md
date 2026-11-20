@@ -189,9 +189,9 @@ in the folded form, or test `surface` for the exact spelling. The check reads th
 `\x{FF5E}` is not reported. A bare token literal cannot contain a character
 the fold changes.
 
-Vibrato analyzes the same folded text, except that it keeps full-width ASCII
-and keeps a CJK compatibility ideograph inside an occurrence of a dictionary
-surface that contains it, such as 臭氣 with U+FA5C.
+Vibrato and Sudachi analyze the same folded text, except that they keep
+full-width ASCII and keep a CJK compatibility ideograph inside an occurrence
+of a dictionary surface that contains it, such as 臭氣 with U+FA5C.
 
 ### Unquoted values and escapes
 
@@ -221,7 +221,14 @@ The compiler normalizes literal values, `set` and lexicon members, and bare
 token literals to Unicode NFC, except a literal compared with `surface`. The
 `text` key is composed even where the corpus keeps its source unchanged, so a
 literal written as `カ` followed by U+3099 matches `ガ`. `NormalizedLiteral`
-identifies the definition and both spellings.
+identifies the definition and both spellings. A named set reports it at the
+member, unless the set is referenced and every reference compares it with
+`surface`. A set rejects repeated decoded spellings, including a literal
+repeated through an escape. Distinct spellings that share an NFC form,
+such as `カ\u3099` and `ガ`, can belong to one `surface` set. A reference
+comparing that set with `lemma` or `text` reports the collision. Distinct
+NFC forms that fold to the same `text` key, such as `ＮＨＫ` and `NHK`,
+still count as one member in a `text` comparison.
 
 The compiler preserves regex source and reports `RegexNotNfc` for non-NFC
 regexes. A class containing U+30AB and U+3099 as separate characters matches
@@ -315,6 +322,78 @@ bracketed values such as `[text=followed_by]`.
 
 Nullable fragments are legal, but emitting patterns must consume a token
 (`NullablePattern`) and no quantifier may repeat a nullable expression.
+
+## Sentence spans
+
+An emitting pattern can require its consumed tokens to lie inside one
+sentence-local annotation. The kind is supplied by the corpus. With overlapping
+annotations, any single annotation satisfying all fields is a witness.
+
+```pattern
+within_span: "bunsetsu"
+in_chunk := [upos=NOUN]+.
+
+within_span: {kind: "bunsetsu", label: "NP", position: "whole"}
+noun_chunk := []+.
+
+within_span: {kind: "bunsetsu", capture: "v", position: "head"}
+chunk_head := (?<v> [upos=VERB]) []?.
+
+span_dependency: {kind: "bunsetsu", dependent: "d", governor: "g"}
+chunk_edge := (?<d> [upos=NOUN]) []* (?<g> [upos=VERB]).
+```
+
+`position` defaults to `"inside"`. Use `"whole"` for the exact annotated
+interval and `"head"` for its single head token. `capture` limits the
+condition to that named capture. For a dependency, each capture must be
+nonempty and wholly inside its respective span, and the dependent span must
+point directly to the governor span. A missing span, label, head, capture or
+edge required by the query yields no witness. These annotations filter each
+candidate before longest-match selection. Sentence anchors and lookaround
+still use the sentence context. Token-level `where` constraints can be
+combined with both annotations. A reference to a definition expands its token
+expression. Its emission constraints apply when that definition emits.
+
+### Paths between annotated spans
+
+Use `where span(layer, path)` to constrain a capture or connect several
+captures. The body determines word order. The arrow points from governor to
+dependent, as it does for token edges. For example, this requires a bunsetsu
+dependency and a token-level subject relation between the two captured heads.
+
+```pattern
+subject_phrase := (?<noun> [upos=NOUN]) []* (?<verb> [upos=VERB])
+  where span(bunsetsu, $verb.head@VP -> $noun.head@NP),
+        $verb -[nsubj]-> $noun.
+```
+
+A bare `$capture` or `$capture.inside` must occupy a nonempty interval
+inside the span. Use `.whole` for equality with its interval and `.head`
+for its single head token. A variable-width capture may select a head if it
+can match one token. `@label` tests the exact phrase label. Quote labels that
+contain punctuation, as in `$noun.whole@"名詞-普通名詞-一般"`. Layer names can
+be identifiers, dotted names such as `sudachi.c`, or quoted strings.
+
+```pattern
+modified_argument := (?<modifier> []) []* (?<noun> [upos=NOUN]) []* (?<verb> [upos=VERB])
+  where span(bunsetsu, $verb -> $noun -> $modifier),
+        span(luw, $noun.whole).
+```
+
+Both edges in a path pass through the same middle span. Separate clauses
+choose independently: in `span(chunk, $a -> $b), span(chunk, $a -> $c)`,
+two different overlapping chunks containing `$a` can witness the two edges.
+A span-only clause works with the span layer alone, including on a corpus
+without token dependency attributes. A sentence missing the requested layer
+yields no matches for that definition and produces no missing-layer warning.
+Other definitions can still match. If the catalog also contains token dependency
+clauses, those require a corpus schema with `dep.head` and `dep.rel` before
+matching starts.
+
+The `within_span` shorthand and the `span_dependency` map, quoted path and
+list annotations remain available. For example,
+`span_dependency: "bunsetsu: $v.head -> $n.head"` has the same matching
+behavior as `where span(bunsetsu, $v.head -> $n.head)`.
 
 ## Dependency constraints
 
@@ -469,7 +548,7 @@ a shorter passing candidate survives a longer failing one — and before policy.
 An assignment that fails the clause does not hide a passing assignment reaching
 the same position.
 
-A catalog with a `where` clause requires `dep.head` and `dep.rel` at binding, so a
+A catalog with a basic token dependency constraint requires `dep.head` and `dep.rel` at binding, so a
 morphology-only corpus is rejected by name before matching. Only basic edges are
 consulted; `dep.enhanced` is not.
 
@@ -539,6 +618,44 @@ reconstruction, and exact anti-edges;
 the complete enhanced graph and publishes compatible relative-reference and
 empty-node motifs without declaring every absence an annotation error.
 
+## Analytical interpretations
+
+Use `interpret $capture as role {labels}` when alternative readings of the
+same match matter. Give each capture one public role. Several captures may
+supply the same role. Add `classify by role` to project that role’s labels
+onto the whole reading. Both declarations apply to the following pattern.
+
+```pattern
+interpret $possible as reading {voice: "potential"}
+interpret $affected as reading {voice: "passive"}
+classify by reading
+rareru := (?<possible> [text=られる]) | (?<affected> [text=られる]).
+```
+
+On one token られる, this example emits one match with two interpretations.
+A reading carries its own role occurrences, each with a public name,
+a half-open token range in the original sentence, and string, boolean or
+signed integer labels. Equal joint assignments appear once. Every occurrence
+of a repeated role is retained. An absent optional role contributes no
+occurrence. Classification collects the distinct values of each label on the
+designated role within that reading. If the designated role is absent from a reading, its classification is omitted. Fragment references can supply captures; the public role
+name comes from the declaration on the emitting pattern.
+
+`ling matches --json` publishes the readings in the match’s `interpretations`
+array. Ordinary match counts still count that record once. To count each
+interpretation by voice in this example, pipe the JSONL through:
+
+```sh
+jq -r 'select(.type == "match") | .data.interpretations[]? | .classification.voice[]?' |
+  sort | uniq -c
+```
+
+Interpretation extraction supports token tests, named captures, sequences,
+alternation and repetition. The compiler diagnoses an unsupported expression
+or a dependency constraint on an interpreted pattern. Extraction is bounded
+per sentence. Exceeding a resource limit fails the query before that sentence
+is published. The Workbench hit inspector shows the same roles and classifications.
+
 ## Metadata
 
 A `key: value` annotation binds to the definition that follows it; a run of
@@ -568,17 +685,17 @@ pattern ようである := [text=よう] [lemma=だ].
 
 Values are typed by the grammar: `string`, `number`, `boolean`, `list`, and `map`.
 Strings are always quoted; the only unquoted tokens are `true`, `false`, numbers,
-and `none`. There is no `null`; omit the key instead. `key: none` in an
-annotation run unsets the file default for that definition; it is the only
-spelling of `none`, and using it without a default, or anywhere but an
-annotation's top level, is a compile error.
+and `none`. There is no `null`; omit the key instead. In a definition’s
+annotation run, `KEY: none` removes a file default, and `override KEY: none`
+removes a bundle value.
+Using `none` without an inherited value or inside a list or map is a compile error.
 
 Without a `schema` block, any key is accepted. A `schema` block closes the
 catalog's descriptive key set, so an undeclared key is rejected; an empty `schema`
 block closes it to compiler-owned keys alone. A declaration names one of the
 five value types; `map` admits any map, whatever its keys. Compiler-owned keys —
 `output_name`, `groups`, `priority_order`, `key`, `skip`, `publish`, `transform`, `tags`,
-`render`, `dictionary`, `anchor` and `max_nesting` — are admitted without
+`render`, `dictionary`, `anchor`, `within_span`, `span_dependency` and `max_nesting` — are admitted without
 declaration and are an error to declare. `examples` and `counterexamples` are
 authored content, not compiler-owned, and stay declarable. A `pattern` or
 `fragment` prefix scopes `required`, so a key can be obligatory on patterns and
@@ -596,6 +713,34 @@ sum member pattern–sentence occurrences rather than distinct sentences: two
 patterns matching one sentence contribute two, even at the same span. These
 options operate after publication policy and do not infer metadata from referenced
 fragments. See [section summaries](cli-usage-guide.md#counting-per-section).
+
+### Reusing annotations
+
+A named bundle supplies descriptive metadata to the next definition that
+selects it. Keep the member name and examples beside the individual pattern.
+
+```pattern
+bundle light_verb
+  alternation: "light_verb"
+  slot: "sahen_noun"
+end
+
+use @light_verb
+member: "Nをする"
+pattern lv_wo_suru := (?<noun> [upos=NOUN]) を する.
+```
+
+Declare a bundle before its first use in the same file. Bundle names have
+their own namespace and must be unique in the file. Start an annotation run
+with one `use @name`. File defaults apply first, followed by bundle values
+and then local annotations. A local entry can repeat the same value. To change
+or remove a bundle value, write `override slot: "other"` or
+`override slot: none`. An override must name a key the selected bundle supplies.
+Removal also suppresses any file default for that key. The schema checks the
+effective metadata of each definition, including required keys after removal.
+
+Compiler-owned keys such as `key`, `skip`, and `output_name` must stay outside
+bundles. Applying a bundle to a fragment annotates that fragment alone.
 
 ### `key:`
 

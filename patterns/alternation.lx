@@ -46,27 +46,29 @@ fragment al_final_predicate :=
   ([unidic.pos1=補助記号 & unidic.pos2=句点])?
   $.
 
-alternation: "light_verb"
+bundle light_verb
+  alternation: "light_verb"
+  slot: "sahen_noun"
+end
+
+use @light_verb
 member: "Nをする"
-slot: "sahen_noun"
 examples: ["実験をする。", "研究発表をする。"]
 counterexamples: ["実験する。"]
 key: [$noun.span.norm]
 pattern lv_wo_suru :=
   (?<noun> @al_sahen_noun) @al_wo @al_suru.
 
-alternation: "light_verb"
+use @light_verb
 member: "Nを行う"
-slot: "sahen_noun"
 examples: ["実験を行う。", "分析を行った。"]
 counterexamples: ["実験をする。"]
 key: [$noun.span.norm]
 pattern lv_wo_okonau :=
   (?<noun> @al_sahen_noun) @al_wo @al_okonau.
 
-alternation: "light_verb"
+use @light_verb
 member: "Nする"
-slot: "sahen_noun"
 examples: ["実験する。", "資料を検討している。"]
 counterexamples: ["実験をする。"]
 key: [$noun.span.norm]

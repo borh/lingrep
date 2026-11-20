@@ -87,6 +87,7 @@ pub struct BoundTokenSentence {
     /// carried inside `AdmittedCorpusEvent::Sentence`, whose size clippy
     /// bounds against its sibling variants.
     char_offsets: Option<Arc<Vec<CharSpan>>>,
+    spans: Option<Arc<Vec<super::SentenceSpan>>>,
 }
 
 /// One token-sized row borrowed from a [`BoundTokenSentence`].
@@ -105,6 +106,7 @@ enum DenseValuesRef<'a> {
 /// Why a dense sentence could not be projected or accounted.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum BoundTokenError {
+    InvalidSpans(String),
     SchemaMismatch {
         expected: TokenSchemaDigest,
         actual: TokenSchemaDigest,
@@ -120,6 +122,7 @@ pub enum BoundTokenError {
 impl fmt::Display for BoundTokenError {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
+            Self::InvalidSpans(message) => formatter.write_str(message),
             Self::SchemaMismatch { .. } => {
                 formatter.write_str("bound projection schema does not match the token schema")
             }
@@ -136,6 +139,12 @@ impl fmt::Display for BoundTokenError {
 impl std::error::Error for BoundTokenError {}
 
 impl BoundTokenSentence {
+    pub fn with_spans(mut self, spans: Vec<super::SentenceSpan>) -> Result<Self, String> {
+        super::SentenceSpan::validate(&spans, self.token_count)?;
+        self.spans = (!spans.is_empty()).then(|| Arc::new(spans));
+        Ok(self)
+    }
+
     /// Attaches each token's sentence-relative code-point span.
     ///
     /// The caller owns the invariant that there is exactly one span per token
@@ -184,8 +193,12 @@ impl BoundTokenSentence {
                 values.push(value);
             }
         }
-        Self::from_projected_attribute_values(projection, self.token_count, values)
-            .map(|sentence| sentence.with_char_offsets(self.char_offsets.clone()))
+        Self::from_projected_attribute_values(projection, self.token_count, values).map(
+            |mut sentence| {
+                sentence.spans.clone_from(&self.spans);
+                sentence.with_char_offsets(self.char_offsets.clone())
+            },
+        )
     }
 
     /// Projects a sentence onto a compatible subset schema.
@@ -240,8 +253,12 @@ impl BoundTokenSentence {
                 values.push(value);
             }
         }
-        Self::from_projected_attribute_values(target, self.token_count, values)
-            .map(|sentence| sentence.with_char_offsets(self.char_offsets.clone()))
+        Self::from_projected_attribute_values(target, self.token_count, values).map(
+            |mut sentence| {
+                sentence.spans.clone_from(&self.spans);
+                sentence.with_char_offsets(self.char_offsets.clone())
+            },
+        )
     }
 
     /// Constructs a sentence from already projected row-major values.
@@ -360,6 +377,7 @@ impl BoundTokenSentence {
             ordinals: projection.ordinal_table(),
             values,
             char_offsets: None,
+            spans: None,
         })
     }
 
@@ -493,6 +511,17 @@ impl BoundTokenSentence {
                 }
             }
         }
+        if let Some(spans) = &self.spans {
+            bytes = bytes
+                .checked_add(spans.capacity() * std::mem::size_of::<super::SentenceSpan>())
+                .ok_or(BoundTokenError::ResourceAccounting)?;
+            for span in spans.iter() {
+                bytes = bytes
+                    .checked_add(span.kind.capacity())
+                    .and_then(|n| n.checked_add(span.label.as_ref().map_or(0, String::capacity)))
+                    .ok_or(BoundTokenError::ResourceAccounting)?;
+            }
+        }
         if let Some(offsets) = &self.char_offsets {
             bytes = bytes
                 .checked_add(offsets.capacity() * std::mem::size_of::<CharSpan>())
@@ -510,6 +539,9 @@ impl TokenInfoTrait for BoundToken<'_> {
 }
 
 impl super::TokenSequence for BoundTokenSentence {
+    fn spans(&self) -> &[super::SentenceSpan] {
+        self.spans.as_deref().map_or(&[], Vec::as_slice)
+    }
     fn len(&self) -> usize {
         self.len()
     }

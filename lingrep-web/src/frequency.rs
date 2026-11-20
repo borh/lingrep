@@ -984,7 +984,8 @@ fn definition_source(source: &str, name: &str) -> Option<String> {
     for node in root.named_children(&mut cursor) {
         match node.kind() {
             "comment" => {}
-            "metadata_entry" | "key_entry" | "skip_entry" => {
+            "metadata_entry" | "key_entry" | "skip_entry" | "bundle_use" | "override_entry"
+            | "interpret_entry" | "classify_entry" => {
                 run_start.get_or_insert(node.start_byte());
             }
             "pattern_definition" => {
@@ -2351,11 +2352,10 @@ pub(crate) mod tests {
 
     #[test]
     fn definition_source_is_the_named_definition_with_its_annotations() {
-        let source =
-            "fragment f := [text=a].\n\nkey: [text]\npattern p := @f [].\npattern q := [].\n";
+        let source = "bundle group\n  category: \"main\"\nend\nfragment f := [text=a].\n\nuse @group\noverride category: \"local\"\nkey: [text]\npattern p := @f [].\npattern q := [].\n";
         assert_eq!(
             definition_source(source, "p").as_deref(),
-            Some("key: [text]\npattern p := @f [].")
+            Some("use @group\noverride category: \"local\"\nkey: [text]\npattern p := @f [].")
         );
         assert_eq!(
             definition_source(source, "q").as_deref(),

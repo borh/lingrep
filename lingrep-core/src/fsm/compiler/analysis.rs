@@ -217,6 +217,10 @@ pub(crate) fn analyze(bound: &BoundProgram, evaluated: &BTreeSet<DefinitionId>) 
             && relations.is_empty()
             && enhanced_relations.is_empty()
             && orders.is_empty()
+            && definition.span_paths().is_empty()
+            && definition.interpretation.is_none()
+            && !definition.metadata.contains_key("within_span")
+            && !definition.metadata.contains_key("span_dependency")
             && is_single_token(expr)
         {
             single_token.push(definition.name.clone());

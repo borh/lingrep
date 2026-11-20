@@ -9,13 +9,13 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 use std::time::{Duration, Instant};
 
 use lingrep_core::analysis::{
-    AnalyzerDescriptor, AnalyzerFamily, ExternalComponent, ExternalProtocolLimits,
+    AnalyzerDescriptor, AnalyzerFamily, AnalyzerSession, ExternalComponent, ExternalProtocolLimits,
     ExternalRunConfig, ExtractionProfile, InputUnitId, NormalizationPolicy, SegmentationMode,
     TextUnit, TextUnitKind, external_component_closure_digest,
 };
 use lingrep_core::execution::{
-    ExecutionBatch, ExecutionLimits, ExternalAdapterCommand, ExternalAdapterProcess,
-    LiveExternalSource, SentenceBatchSource, VerifiedAdapterManifest,
+    ExecutionLimits, ExternalAdapterCancellation, ExternalAdapterCommand, ExternalAdapterProcess,
+    ExternalAnalyzerSession, VerifiedAdapterManifest,
 };
 use lingrep_core::fsm::{BoundCatalog, CompileLimits, PatternSource, compile_catalog};
 use lingrep_core::token_match::{
@@ -24,7 +24,7 @@ use lingrep_core::token_match::{
 };
 
 const SPACY_SEMANTICS_DIGEST: &str =
-    "f9d77b5c557f7b403316c99ef6ce0b03087ed07036b2fc9c9115e9fb852934e6";
+    "fb03302d08b4d7742dcaacfc221ec7c4a38afd1dbf88a4e7c768d7b4a3febe48";
 const STANZA_SEMANTICS_DIGEST: &str =
     "21a0972b2d9b8719c6af51f07cec52e3c1894a817bd41d1861f9c9d1306fcf2a";
 // The Python setup computes the same digest over the same tree in
@@ -271,13 +271,19 @@ struct StanzaOwnerFixture {
     _isolated: tempfile::TempDir,
     command: ExternalAdapterCommand,
     manifest: VerifiedAdapterManifest,
+    descriptor: AnalyzerDescriptor,
+    schema: TokenSchema,
     config: ExternalRunConfig,
     projection: lingrep_core::token_match::BoundProjection,
 }
 
 fn stanza_owner_fixture() -> StanzaOwnerFixture {
+    stanza_owner_fixture_for("LINGREP_STANZA_MODEL_ROOT", "fr")
+}
+
+fn stanza_owner_fixture_for(model_variable: &str, language: &str) -> StanzaOwnerFixture {
     let python = PathBuf::from(std::env::var_os("LINGREP_STANZA_ADAPTER_PYTHON").unwrap());
-    let source_model = PathBuf::from(std::env::var_os("LINGREP_STANZA_MODEL_ROOT").unwrap());
+    let source_model = PathBuf::from(std::env::var_os(model_variable).unwrap());
     let repository = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
         .parent()
         .unwrap()
@@ -320,7 +326,7 @@ fn stanza_owner_fixture() -> StanzaOwnerFixture {
     resources.sort_by(|left, right| left.0.cmp(&right.0));
     let entrypoint = "python/stanza-adapter/bin/lingrep-stanza-adapter";
     let command =
-        ExternalAdapterCommand::stanza(python, entrypoint, "model", "fr", "cpu", 1).unwrap();
+        ExternalAdapterCommand::stanza(python, entrypoint, "model", language, "cpu", 1).unwrap();
     let manifest = VerifiedAdapterManifest::new(
         root,
         implementation,
@@ -334,7 +340,7 @@ fn stanza_owner_fixture() -> StanzaOwnerFixture {
         ExtractionProfile::Morphology,
         SegmentationMode::Input,
         NormalizationPolicy::Nfc,
-        "fr",
+        language,
         "input-v1",
         manifest.implementation_digest(),
         manifest.resource_manifest_digest(),
@@ -346,9 +352,9 @@ fn stanza_owner_fixture() -> StanzaOwnerFixture {
     )
     .unwrap();
     let config = ExternalRunConfig::new(
-        "stanza-fr-gsd-v1",
-        descriptor,
-        schema,
+        format!("stanza-{language}-gsd-v1"),
+        descriptor.clone(),
+        schema.clone(),
         projection.clone(),
         manifest.components().to_vec(),
         ExternalProtocolLimits::default(),
@@ -358,6 +364,8 @@ fn stanza_owner_fixture() -> StanzaOwnerFixture {
         _isolated: isolated,
         command,
         manifest,
+        descriptor,
+        schema,
         config,
         projection,
     }
@@ -626,6 +634,7 @@ fn locked_ginza_model_runs_through_rust_with_validated_identity_and_provenance()
         SchemaAttribute::new("dep.head", AttributeKind::Scalar).unwrap(),
         SchemaAttribute::new("dep.rel", AttributeKind::Scalar).unwrap(),
         SchemaAttribute::new("spacy.ginza.bunsetu", AttributeKind::Scalar).unwrap(),
+        SchemaAttribute::new("spacy.ginza.bunsetuphrase", AttributeKind::Scalar).unwrap(),
         SchemaAttribute::new("spacy.morph.inflection", AttributeKind::StringSet).unwrap(),
         SchemaAttribute::new("spacy.morph.reading", AttributeKind::StringSet).unwrap(),
     ])
@@ -895,54 +904,93 @@ fn locked_stanza_adapter_runs_through_the_verified_rust_process_owner() {
     process.finish().unwrap();
 }
 
+/// Stanza expands the source token `du` to the words `de` and `le`. Neither
+/// has a source slice of its own, so the `surface` of each is the adapter's
+/// form.
 #[test]
 #[ignore = "requires the locked Stanza CPU environment and fixed French GSD model"]
-fn locked_stanza_mwt_preserves_source_and_word_identity_through_rust() {
+fn locked_stanza_mwt_publishes_surface_and_folded_text_through_the_session() {
     let fixture = stanza_owner_fixture();
-    let projection = fixture.projection.clone();
-    let process = ExternalAdapterProcess::launch(
+    let mut session = ExternalAnalyzerSession::new(
+        fixture.command,
+        fixture.manifest,
+        fixture.descriptor,
+        fixture.schema,
+        ExecutionLimits::default(),
+        Arc::new(|_| Ok(())),
+        ExternalAdapterCancellation::new(),
+    )
+    .unwrap();
+    let projection = session
+        .schema()
+        .bind_projection(["surface", "text"].map(|key| AttributeKey::new(key).unwrap()))
+        .unwrap();
+    let batch = session
+        .analyze_bounded_batch(
+            vec![
+                TextUnit::sentence(
+                    InputUnitId::new(81),
+                    "Je mange du pain.",
+                    NormalizationPolicy::Nfc,
+                )
+                .unwrap(),
+            ],
+            &projection,
+        )
+        .unwrap();
+    let surface = projection.ordinal_key("surface").unwrap();
+    let text = projection.ordinal_key("text").unwrap();
+    let words = batch.inputs()[0].sentences()[0].words();
+    let published = (0..words.len())
+        .map(|index| {
+            let word = words.token(index).unwrap();
+            (word.get(surface).unwrap(), word.get(text).unwrap())
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(
+        published,
+        ["Je", "mange", "de", "le", "pain", "."].map(|form| (form, form))
+    );
+    session.finish().unwrap();
+}
+
+#[test]
+#[ignore = "requires the locked Stanza CPU environment and fixed Japanese GSD model"]
+fn locked_stanza_japanese_without_mwt_yields_one_word_per_surface_token() {
+    let fixture = stanza_owner_fixture_for("LINGREP_STANZA_JA_MODEL_ROOT", "ja");
+    let mut process = ExternalAdapterProcess::launch(
         fixture.command,
         fixture.manifest,
         fixture.config,
         Arc::new(|_| Ok(())),
     )
     .unwrap();
-    let batches = std::iter::once(vec![
-        TextUnit::sentence(
-            InputUnitId::new(81),
-            "Je mange du pain.",
-            NormalizationPolicy::Nfc,
+    assert_eq!(process.descriptor().language_policy(), "ja");
+    let batch = process
+        .exchange_batch(
+            vec![
+                TextUnit::sentence(InputUnitId::new(82), "猫が走る。", NormalizationPolicy::Nfc)
+                    .unwrap(),
+            ],
+            &ExecutionLimits::default(),
         )
-        .unwrap(),
-    ]);
-    let mut source = LiveExternalSource::new(process, batches, "stanza-fr-gsd").unwrap();
-    assert_eq!(source.trust_class(), "locally-executed");
-    let ExecutionBatch::BoundTokenized { sentences, .. } = source
-        .next_batch(&ExecutionLimits::default())
-        .unwrap()
-        .unwrap()
-    else {
-        panic!("Stanza morphology must yield schema-bound sentences");
-    };
-    let text = projection.ordinal_key("text").unwrap();
-    let forms = (0..sentences[0].value.words().len())
-        .map(|index| {
-            sentences[0]
-                .value
-                .words()
-                .token(index)
-                .unwrap()
-                .get(text)
-                .unwrap()
-        })
+        .unwrap();
+    let sentence = &batch.analysis().inputs()[0].sentences()[0];
+    let word_ranges = sentence
+        .surface_tokens()
+        .iter()
+        .map(lingrep_core::analysis::SurfaceToken::word_range)
         .collect::<Vec<_>>();
-    assert_eq!(forms, ["Je", "mange", "de", "le", "pain", "."]);
-    assert!(
-        source
-            .next_batch(&ExecutionLimits::default())
-            .unwrap()
-            .is_none()
-    );
+    assert_eq!(word_ranges, [0..1, 1..2, 2..3, 3..4]);
+    let values = |key: &str| {
+        let ordinal = fixture.projection.ordinal_key(key).unwrap();
+        (0..sentence.words().len())
+            .map(|index| sentence.words().token(index).unwrap().get(ordinal).unwrap())
+            .collect::<Vec<_>>()
+    };
+    assert_eq!(values("text"), ["猫", "が", "走る", "。"]);
+    assert_eq!(values("upos"), ["NOUN", "ADP", "VERB", "PUNCT"]);
+    process.finish().unwrap();
 }
 
 #[test]
@@ -1357,7 +1405,7 @@ fn bundled_adapter_identity_follows_its_semantics_revision_not_its_file_bytes() 
             )
             .unwrap(),
             "spacy-profile",
-            "lingrep.spacy-adapter/v1",
+            "lingrep.spacy-adapter/v2",
             SPACY_SEMANTICS_DIGEST,
         ),
         (
@@ -1765,67 +1813,18 @@ fn ignored_term_reaches_the_fixed_grace_then_kills_the_group() {
 }
 
 #[test]
-fn live_source_pulls_exactly_one_input_batch_at_a_time() {
-    let pulled = Arc::new(AtomicUsize::new(0));
-    let observed = Arc::clone(&pulled);
-    let batches = (0_u64..2).map(move |ordinal| {
-        observed.fetch_add(1, Ordering::Relaxed);
-        vec![
-            TextUnit::sentence(
-                InputUnitId::new(ordinal + 10),
-                format!("文{ordinal}"),
-                NormalizationPolicy::None,
-            )
-            .unwrap(),
-        ]
-    });
-    let process = launch("echo", Arc::new(|_| Ok(())));
-    let mut source = LiveExternalSource::new(process, batches, "local-echo").unwrap();
-    assert_eq!(source.trust_class(), "locally-executed");
-    assert!(!source.wants_lookahead());
-    assert_eq!(pulled.load(Ordering::Relaxed), 0);
-
-    let first = source
-        .next_batch(&ExecutionLimits::default())
-        .unwrap()
-        .unwrap();
-    assert_eq!(pulled.load(Ordering::Relaxed), 1);
-    let ExecutionBatch::BoundTokenized { sentences, .. } = first else {
-        panic!("live morphology must yield schema-bound sentences");
-    };
-    assert_eq!(sentences[0].location.source_name.as_ref(), "local-echo");
-
-    assert!(
-        source
-            .next_batch(&ExecutionLimits::default())
-            .unwrap()
-            .is_some()
-    );
-    assert_eq!(pulled.load(Ordering::Relaxed), 2);
-    assert!(
-        source
-            .next_batch(&ExecutionLimits::default())
-            .unwrap()
-            .is_none()
-    );
-}
-
-#[test]
-fn invalid_execution_limits_do_not_pull_or_execute_a_live_batch() {
-    let pulled = Arc::new(AtomicUsize::new(0));
-    let observed = Arc::clone(&pulled);
-    let batches = std::iter::once_with(move || {
-        observed.fetch_add(1, Ordering::Relaxed);
-        vec![input()]
-    });
-    let process = launch("echo", Arc::new(|_| Ok(())));
-    let mut source = LiveExternalSource::new(process, batches, "bounded-live").unwrap();
+fn invalid_execution_limits_fail_a_live_exchange_naming_the_field() {
+    let mut process = launch("echo", Arc::new(|_| Ok(())));
     let limits = ExecutionLimits {
-        max_stage_sentences: 0,
+        max_tokenized_bytes: 0,
         ..ExecutionLimits::default()
     };
-    assert!(source.next_batch(&limits).is_err());
-    assert_eq!(pulled.load(Ordering::Relaxed), 0);
+    let error = process.exchange_batch(vec![input()], &limits).unwrap_err();
+    let lingrep_core::execution::ExternalProcessError::Protocol(error) = error else {
+        panic!("expected protocol limit error");
+    };
+    assert_eq!(error.category(), "limit");
+    assert!(error.to_string().contains("max_tokenized_bytes"), "{error}");
 }
 
 #[test]

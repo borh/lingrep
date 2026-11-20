@@ -3,6 +3,12 @@ use compact_str::CompactString;
 /// Matching exceeded a graph budget for one sentence or the shared memory budget for results.
 #[derive(Clone, Debug, Eq, PartialEq, thiserror::Error)]
 pub enum MatchResourceError {
+    #[error(
+        "Could not reconstruct the analytical roles of an accepted span in pattern `{pattern}`."
+    )]
+    InterpretationReplay { pattern: CompactString },
+    #[error("Matching was cancelled.")]
+    Cancelled,
     #[error("Pattern `{pattern}` exceeded the {resource} budget for one sentence (limit {limit}). {remedy}", remedy = resource_remedy(.resource))]
     Sentence {
         pattern: CompactString,
@@ -18,6 +24,8 @@ pub enum MatchResourceError {
 fn resource_remedy(resource: &str) -> &'static str {
     if resource == "graph relation depth" {
         "Reduce the number of graph relation clauses in this pattern."
+    } else if resource.starts_with("interpretation") {
+        "Narrow the interpreted alternatives or reduce repeated role occurrences."
     } else {
         "Narrow the token or graph predicates, or add an ordering constraint between graph binders."
     }
@@ -66,6 +74,37 @@ impl MatchBudget {
                 limit,
             })?;
         Ok(())
+    }
+
+    pub(super) fn interpretation(
+        &mut self,
+        pattern: &str,
+        steps: usize,
+        bytes: usize,
+    ) -> Result<(), MatchResourceError> {
+        if self
+            .output
+            .cancel
+            .as_ref()
+            .is_some_and(crate::execution::CancellationFlag::is_cancelled)
+        {
+            return Err(MatchResourceError::Cancelled);
+        }
+        self.output.check()?;
+        Self::charge(
+            &mut self.steps,
+            steps,
+            pattern,
+            "interpretation work steps",
+            MAX_GRAPH_WORK,
+        )?;
+        Self::charge(
+            &mut self.bytes,
+            bytes,
+            pattern,
+            "interpretation allocation bytes",
+            MAX_ALLOCATION_BYTES,
+        )
     }
 
     pub(crate) fn step(&mut self, pattern: &str) -> Result<(), MatchResourceError> {
@@ -130,6 +169,7 @@ pub enum EnhancedMatchError {
 
 /// Cumulative estimated result allocation for one batch; charges are not released during matching.
 pub(crate) struct OutputBudget {
+    cancel: Option<crate::execution::CancellationFlag>,
     remaining: std::sync::atomic::AtomicUsize,
     exhausted: std::sync::atomic::AtomicBool,
     limit: usize,
@@ -144,6 +184,7 @@ impl Default for OutputBudget {
 impl OutputBudget {
     pub(crate) fn new(limit: usize) -> Self {
         Self {
+            cancel: None,
             remaining: std::sync::atomic::AtomicUsize::new(limit),
             exhausted: std::sync::atomic::AtomicBool::new(false),
             limit,
@@ -159,6 +200,14 @@ impl OutputBudget {
     #[cfg(test)]
     pub(super) fn allocated_bytes(&self) -> usize {
         self.limit - self.remaining.load(std::sync::atomic::Ordering::Relaxed)
+    }
+
+    pub(crate) fn with_cancellation(
+        mut self,
+        cancel: Option<&crate::execution::CancellationFlag>,
+    ) -> Self {
+        self.cancel = cancel.cloned();
+        self
     }
 
     pub(crate) fn check(&self) -> Result<(), MatchResourceError> {
@@ -218,6 +267,49 @@ pub(crate) fn compact_heap_bytes(value: &CompactString) -> usize {
     }
 }
 
+impl crate::fsm::Interpretation {
+    /// Owned bytes charged to matcher output and retained result buffers, including the record itself.
+    #[must_use]
+    pub fn retained_bytes(&self) -> usize {
+        use super::program::btree_storage_bytes;
+        use crate::fsm::AnalyticalValue;
+        fn value_bytes(value: &AnalyticalValue) -> usize {
+            match value {
+                AnalyticalValue::String(text) => compact_heap_bytes(text),
+                AnalyticalValue::Boolean(_) | AnalyticalValue::Integer(_) => 0,
+            }
+        }
+        let mut bytes = std::mem::size_of::<Self>()
+            .saturating_add(std::mem::size_of_val(self.roles.as_ref()))
+            .saturating_add(
+                btree_storage_bytes::<CompactString, Box<[AnalyticalValue]>>(
+                    self.classification.len(),
+                ),
+            );
+        for role in &self.roles {
+            bytes = bytes
+                .saturating_add(compact_heap_bytes(&role.role))
+                .saturating_add(btree_storage_bytes::<CompactString, AnalyticalValue>(
+                    role.labels.len(),
+                ));
+            for (key, value) in &role.labels {
+                bytes = bytes
+                    .saturating_add(compact_heap_bytes(key))
+                    .saturating_add(value_bytes(value));
+            }
+        }
+        for (key, values) in &self.classification {
+            bytes = bytes
+                .saturating_add(compact_heap_bytes(key))
+                .saturating_add(std::mem::size_of_val(values.as_ref()));
+            for value in values {
+                bytes = bytes.saturating_add(value_bytes(value));
+            }
+        }
+        bytes
+    }
+}
+
 pub(crate) fn match_heap_bytes(value: &crate::fsm::Match) -> usize {
     use crate::fsm::{Capture, GraphBinding, GraphNodeAttribute, LexicalMatch};
     let mut bytes = compact_heap_bytes(&value.pattern)
@@ -233,6 +325,9 @@ pub(crate) fn match_heap_bytes(value: &crate::fsm::Match) -> usize {
                 .len()
                 .saturating_mul(std::mem::size_of::<GraphBinding>()),
         );
+    for interpretation in &value.interpretations {
+        bytes = bytes.saturating_add(interpretation.retained_bytes());
+    }
     for capture in &value.captures {
         bytes = bytes
             .saturating_add(compact_heap_bytes(&capture.name))

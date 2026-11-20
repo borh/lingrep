@@ -28,6 +28,14 @@
   </div>{% endfor %}
   </div>{% endif %}
   {% for capture in captures %}<div id="{{ id_prefix }}-{{ capture.ordinal }}">{{ capture.detail_html|safe }}</div>{% endfor %}
+  {% if !interpretations.is_empty() %}<section>
+    <h3 data-i18n="hit.interpretations">Interpretations</h3>
+    <ol>{% for reading in interpretations %}<li>
+      {% if reading.roles.is_empty() %}<span data-i18n="hit.no_roles">No role present</span>{% endif %}
+      {% for role in reading.roles %}<div><strong>{{ role.role }}</strong> <span data-i18n="hit.tokens_range" data-i18n-args='{"start": {{ role.start }}, "end": {{ role.end }}}'>tokens {{ role.start }}..{{ role.end }}</span>{% for (key, value) in role.labels %} <code>{{ key }}={{ value }}</code>{% endfor %}</div>{% endfor %}
+      {% if !reading.classification.is_empty() %}<div><span data-i18n="hit.classification">Classification</span>{% for (key, values) in reading.classification %} <code>{{ key }}={% for value in values %}{{ value }}{% if !loop.last %}, {% endif %}{% endfor %}</code>{% endfor %}</div>{% endif %}
+    </li>{% endfor %}</ol>
+  </section>{% endif %}
   {% if !graph_bindings.is_empty() %}<section class="hit-graph-bindings" aria-label="Graph bindings" data-i18n-aria-label="hit.graph_bindings">
     <h3 data-i18n="hit.graph_bindings">Graph bindings</h3>
     <dl>{% for binding in graph_bindings %}<div class="hit-graph-binding"><dt>{{ binding.name }}</dt><dd>{% if binding.is_node %}<span data-i18n="hit.graph_node">Node</span>{% else %}<span data-i18n="hit.graph_edge">Edge</span>{% endif %} <code>{{ binding.identity }}</code>{% match binding.relation %}{% when Some with (relation) %} <span data-i18n="hit.graph_relation">relation</span> <code>{{ relation }}</code>{% when None %}{% endmatch %}{% if !binding.attributes.is_empty() %}<ul>{% for attribute in binding.attributes %}<li><code>{{ attribute.name }}</code>: <span>{{ attribute.value }}</span></li>{% endfor %}</ul>{% endif %}</dd></div>{% endfor %}</dl>

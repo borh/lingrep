@@ -158,6 +158,63 @@ fn spellings_that_fold_to_one_key_are_one_set_member() {
 }
 
 #[test]
+fn extracting_a_set_preserves_attribute_specific_uniqueness() {
+    let members = r"{カ\u3099, ガ}";
+    let declaration = format!("set S := {members}.\n");
+    let tokens = [("カ\u{3099}", "ガ"), ("ガ", "ガ"), ("窓", "窓")];
+    for op in ["in", "not in"] {
+        let pattern = |operand| format!("p := (?<w> [surface {op} {operand}]).");
+        let expected = run(&pattern(members), &schema(true), &tokens);
+        assert_eq!(expected.len(), if op == "in" { 2 } else { 1 });
+        assert_eq!(
+            run(
+                &(declaration.clone() + &pattern("@S")),
+                &schema(true),
+                &tokens
+            ),
+            expected
+        );
+    }
+    compile(&(declaration.clone() + "p := []."));
+    for attr_op in ["lemma in", "text in", "conllu.feats has any"] {
+        let named = format!("{declaration}p := [surface in @S].\nq := [{attr_op} @S].");
+        let inline = format!("q := [{attr_op} {members}].");
+        for source in [&named, &inline] {
+            let error = compile_catalog(
+                PatternSource::named("probe", source),
+                CompileLimits::default(),
+            )
+            .err()
+            .expect("NFC-equivalent members collide");
+            assert_eq!(error.diagnostics[0].code(), DiagnosticCode::Syntax);
+            if source == &named {
+                let diagnostic = &error.diagnostics[0];
+                assert_eq!(diagnostic.location().line(), 3);
+                assert!(diagnostic.message.contains("@S"));
+                assert!(
+                    diagnostic.message.contains("カ\u{3099}") && diagnostic.message.contains("ガ")
+                );
+            }
+        }
+    }
+    for members in [r"{ガ, \u30AC}", r"{ＮＨＫ, \uFF2EＨＫ}"] {
+        for source in [
+            format!("set S := {members}.\np := []."),
+            format!("p := [text in {members}]."),
+        ] {
+            assert!(
+                compile_catalog(
+                    PatternSource::named("probe", &source),
+                    CompileLimits::default()
+                )
+                .is_err(),
+                "{source}"
+            );
+        }
+    }
+}
+
+#[test]
 fn a_surface_literal_matches_only_its_exact_spelling() {
     let schema = schema(true);
     for (literal, expected) in [
@@ -239,6 +296,10 @@ fn the_compiler_names_each_folded_text_literal_and_unfolded_text_regex() {
         "p := [text in {ＮＨＫ, 窓}].",
         "lexicon p by [text, norm] := {\"ＮＨＫ\"}.",
         "set S := {ＮＨＫ, 窓}.\np := [text in @S].",
+        "p := (?<v> [upos=VERB]) where $v -[obj]-> [text in {ＮＨＫ, 窓}].",
+        "set S := {ＮＨＫ, 窓}.\np := (?<v> [upos=VERB]) where $v -[obj]-> [text in @S].",
+        "set S := {ＮＨＫ, 窓}.\np := (?<v> [upos=VERB]) where $v -[obj]-> (?<o> [text in @S]).",
+        "set S := {ＮＨＫ, 窓}.\np := (?<v> [upos=VERB]) where $v -[enhanced obj]-> (?<o> [text in @S]).",
     ] {
         let diagnostics = codes(source);
         assert_eq!(diagnostics.len(), 1, "{source}: {diagnostics:?}");
@@ -287,5 +348,107 @@ fn a_lemma_literal_is_compared_as_written_on_every_corpus() {
             .map(|record| record.start)
             .collect();
         assert_eq!(positions, if folded { vec![] } else { vec![1] });
+    }
+}
+
+/// `set S` with one member that is not NFC: カ followed by U+3099.
+const NFD_SET: &str = "set S := {カ\u{3099}ラス, 窓}.\n";
+
+fn normalized_literals(output: &lingrep_core::fsm::CompileOutput) -> Vec<&str> {
+    output
+        .diagnostics
+        .iter()
+        .filter(|diagnostic| diagnostic.code() == DiagnosticCode::NormalizedLiteral)
+        .map(|diagnostic| diagnostic.message.as_str())
+        .collect()
+}
+
+#[test]
+fn a_set_that_only_surface_reads_does_not_report_normalized_literal() {
+    for references in [
+        "p := [surface in @S].",
+        "p := [surface not in @S].",
+        "p := [surface in @S] [surface not in @S].\nq := [!(surface in @S)].",
+        "test T := surface in @S.\np := [@T].",
+        "p := (?<v> [upos=VERB]) where $v -[obj]-> [surface in @S].",
+        "p := (?<v> [upos=VERB]) where $v -[obj]-> (?<o> [surface in @S]).",
+        "p := (?<v> [upos=VERB]) where $v -[enhanced obj]-> (?<o> [surface in @S]).",
+    ] {
+        let source = format!("{NFD_SET}{references}");
+        assert_eq!(
+            normalized_literals(&compile(&source)),
+            Vec::<&str>::new(),
+            "{source}"
+        );
+    }
+}
+
+#[test]
+fn a_set_another_attribute_reads_reports_normalized_literal_at_its_member() {
+    for references in [
+        "p := [lemma in @S].",
+        "p := [lemma not in @S].",
+        "p := [text in @S].",
+        "p := [conllu.feats has any @S].",
+        "p := [surface in @S].\nq := [lemma in @S].",
+        "p := [surface in @S | lemma in @S].",
+        "test T := lemma in @S.\np := [surface in @S].",
+        "p := (?<v> [surface in @S]) where $v -[obj]-> [lemma in @S].",
+        "p := (?<v> [surface in @S]) where $v -[obj]-> (?<o> [lemma in @S]).",
+        "p := (?<v> [surface in @S]) where $v -[enhanced obj]-> (?<o> [lemma in @S]).",
+        // No reference shows that only `surface` reads the set.
+        "p := [surface=窓].",
+    ] {
+        let source = format!("{NFD_SET}{references}");
+        let output = compile(&source);
+        let warnings: Vec<_> = output
+            .diagnostics
+            .iter()
+            .filter(|diagnostic| diagnostic.code() == DiagnosticCode::NormalizedLiteral)
+            .collect();
+        assert_eq!(warnings.len(), 1, "{source}: {:?}", output.diagnostics);
+        assert_eq!(
+            warnings[0].message,
+            "In definition `S`, the literal `カ\u{3099}ラス` (U+30AB U+3099 U+30E9 U+30B9) is \
+             normalized to `ガラス` (U+30AC U+30E9 U+30B9) for matching",
+            "{source}"
+        );
+        let location = warnings[0].location();
+        assert_eq!((location.line(), location.column()), (1, 11), "{source}");
+    }
+}
+
+#[test]
+fn a_set_reference_in_another_document_decides_normalized_literal() {
+    for (reference, expected) in [("surface", 0), ("lemma", 1)] {
+        let mut builder = lingrep_core::fsm::FsmBuilder::new();
+        builder
+            .add_document(PatternSource::named("sets.lx", NFD_SET))
+            .unwrap();
+        builder
+            .add_document(PatternSource::named(
+                "catalog.lx",
+                &format!("p := [{reference} in @S]."),
+            ))
+            .unwrap();
+        let output = builder.build().unwrap();
+        let warnings = normalized_literals(&output);
+        assert_eq!(warnings.len(), expected, "{reference}: {warnings:?}");
+    }
+}
+
+#[test]
+fn an_inline_surface_literal_does_not_report_normalized_literal() {
+    for source in [
+        "p := [surface=カ\u{3099}ラス].",
+        "p := [surface!=カ\u{3099}ラス].",
+        "p := [surface in {カ\u{3099}ラス, 窓}].",
+        "p := [surface not in {カ\u{3099}ラス, 窓}].",
+    ] {
+        assert_eq!(
+            normalized_literals(&compile(source)),
+            Vec::<&str>::new(),
+            "{source}"
+        );
     }
 }

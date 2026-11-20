@@ -55,6 +55,19 @@ surface permutation, and requires two or more exact-width-one captures.
 
 DEPENDENCY CONSTRAINTS
 
+Use within_span: "bunsetsu" to confine the match to a sentence span.
+The map form accepts kind, label, capture and position (inside, whole or head).
+span_dependency: {kind: "bunsetsu", dependent: "d", governor: "g"} requires
+a directed edge between spans containing the named captures.
+span_dependency: "bunsetsu: $v.head@VP -> $n.head@NP" follows a governor-to-dependent
+edge between two bunsetsu heads. Add arrows to follow a chain; use a list of
+paths to require all of them. A bare capture tests containment; .whole tests
+the full span.
+
+Use where span(bunsetsu, $v.head@VP -> $n.head@NP) to select spans by their
+heads and labels. A dotted layer or quoted label is accepted. Combine span
+paths and token relations with commas. Span-only queries read the span layer.
+
 An emitting pattern may close with a `where` clause of comma-separated edge
 constraints over its named captures:
 
@@ -285,7 +298,7 @@ Metadata lines immediately before a definition annotate that definition:
   options: {mode: "strict"}       map
 
 `none` is valid only on a top-level annotation to remove an inherited
-default. There is no `null` value.
+value. There is no `null` value.
 
   defaults
     status: "experimental"
@@ -300,6 +313,28 @@ default. There is no `null` value.
 
 One `defaults` block and one `schema` block may appear before the first
 definition. Schema types are `string`, `number`, `boolean`, `list`, and `map`.
+
+  bundle light_verb
+    alternation: "light_verb"
+    slot: "sahen_noun"
+  end
+
+Start a definition's annotations with `use @light_verb` to apply its
+descriptive metadata. Declare the bundle earlier in the same file. Use
+`override slot: "other"` or `override slot: none` for a local exception.
+
+ANALYTICAL INTERPRETATIONS
+
+  interpret $possible as reading {voice: "potential"}
+  interpret $affected as reading {voice: "passive"}
+  classify by reading
+  rareru := (?<possible> [text=られる]) | (?<affected> [text=られる]).
+
+Each distinct assignment of role spans and typed labels is one interpretation
+of the emitted match. Repeated roles retain every occurrence. The optional
+`classify by` collects the selected role's distinct label values per reading.
+`matches --json` includes these readings; `summarize` counts the match once.
+Use token tests, captures, sequence, alternation and repetition in the pattern.
 
 ANALYZER REQUIREMENTS AND RESULT KEYS
 

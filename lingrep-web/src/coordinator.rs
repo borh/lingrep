@@ -149,7 +149,9 @@ fn classify_execution_error(error: &ExecutionError) -> AttemptFailure {
                     lingrep_core::fsm::MatchResourceError::BatchOutput { .. } => format!(
                         "{error} Narrow the pattern to produce fewer matches in one sentence."
                     ),
-                    lingrep_core::fsm::MatchResourceError::Sentence { .. } => error.to_string(),
+                    lingrep_core::fsm::MatchResourceError::Sentence { .. }
+                    | lingrep_core::fsm::MatchResourceError::InterpretationReplay { .. }
+                    | lingrep_core::fsm::MatchResourceError::Cancelled => error.to_string(),
                 },
             }
         }
@@ -2705,6 +2707,7 @@ mod tests {
             }]
             .into_boxed_slice(),
             graph_bindings: Box::default(),
+            interpretations: Box::default(),
             lexical: None,
         }
     }
@@ -2914,6 +2917,7 @@ mod tests {
                     pattern_key,
                     captures: Box::default(),
                     graph_bindings: Box::default(),
+                    interpretations: Box::default(),
                     lexical: None,
                     in_chain: false,
                 },
@@ -2923,6 +2927,7 @@ mod tests {
                     pattern_key,
                     captures: Box::default(),
                     graph_bindings: Box::default(),
+                    interpretations: Box::default(),
                     lexical: None,
                     in_chain: false,
                 },

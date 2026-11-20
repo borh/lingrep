@@ -69,6 +69,7 @@ from lingrep_adapter_protocol.resources import adapter_semantics_digest
 
 from .bundle import (
     BUNSETU_KEY,
+    BUNSETU_PHRASE_KEY,
     admit_saved_transformers,
     digest_json,
     load_profile,
@@ -79,7 +80,7 @@ from .bundle import (
 # Identifies this adapter's token output for a given model and runtime, and is
 # mirrored by SPACY_ADAPTER_SEMANTICS_REVISION in lingrep-core's
 # execution/external_process.rs. Replace both when the output changes.
-ADAPTER_SEMANTICS_REVISION = "lingrep.spacy-adapter/v1"
+ADAPTER_SEMANTICS_REVISION = "lingrep.spacy-adapter/v2"
 
 ValueKind = Literal["scalar", "string_set"]
 Segmentation = Literal["input", "analyzer"]
@@ -222,12 +223,11 @@ def iter_analyzed_sentences(
     offsets = _utf8_boundaries(doc.text)
     if segmentation == "input":
         units: Iterable[tuple[int, int, Iterable[TokenLike]]] = [
-            (0, len(doc.text), iter(doc))
+            (0, len(doc.text), doc)
         ]
     elif segmentation == "analyzer":
         units = (
-            (sentence.start_char, sentence.end_char, iter(sentence))
-            for sentence in doc.sents
+            (sentence.start_char, sentence.end_char, sentence) for sentence in doc.sents
         )
     else:
         raise ValueError(f"unsupported segmentation mode {segmentation!r}")
@@ -243,12 +243,22 @@ def iter_analyzed_sentences(
         dependency_requested = any(
             attribute.key.startswith("dep.") for attribute in projection
         )
-        first_token_index: int | None = None
+        word_ids = {}
+        if dependency_requested:
+            for token in tokens:
+                if not token.is_space:
+                    word_ids[token.i] = len(word_ids) + 1
+        boundary_requested = any(
+            attribute.key == BUNSETU_KEY for attribute in projection
+        )
+        pending_boundary = False
         for token in tokens:
             if token.is_space:
+                if boundary_requested:
+                    from ginza import bunsetu_bi_label
+
+                    pending_boundary |= bunsetu_bi_label(token) == "B"
                 continue
-            if dependency_requested and first_token_index is None:
-                first_token_index = token.i
             token_end = token.idx + len(token.text)
             if not start_char <= token.idx <= token_end <= end_char:
                 raise ValueError("spaCy token range lies outside its sentence")
@@ -256,7 +266,8 @@ def iter_analyzed_sentences(
             if byte_range[0] < prior_end:
                 raise ValueError("spaCy token ranges overlap or decrease")
             prior_end = byte_range[1]
-            projected = _project_token(token, projection, first_token_index)
+            projected = _project_token(token, projection, word_ids, pending_boundary)
+            pending_boundary = False
             resident_bytes += 32 + sum(_json_value_size(value) for value in projected)
             if resident_limit is not None and resident_bytes > resident_limit:
                 raise ValueError(
@@ -636,6 +647,7 @@ def _validate_projection(projection: Sequence[ProjectionAttribute]) -> None:
             "dep.head",
             "dep.rel",
             BUNSETU_KEY,
+            BUNSETU_PHRASE_KEY,
         ):
             expected = "scalar"
         elif attribute.key == "dep.enhanced" or attribute.key.startswith(
@@ -679,7 +691,8 @@ def _projection_order(key: str) -> tuple[int, int, bytes]:
 def _project_token(
     token: TokenLike,
     projection: Sequence[ProjectionAttribute],
-    first_token_index: int | None,
+    word_ids: Mapping[int, int],
+    pending_boundary: bool,
 ) -> list[Any]:
     morphology = _canonical_morphology(token.morph.to_dict())
     scalar = {
@@ -690,18 +703,25 @@ def _project_token(
         "xpos": token.tag_ or None,
     }
     if any(attribute.key.startswith("dep.") for attribute in projection):
-        assert first_token_index is not None
         scalar["dep.head"] = (
             "0"
             if token.head.i == token.i
-            else str(token.head.i - first_token_index + 1)
+            else str(word_ids[token.head.i])
+            if token.head.i in word_ids
+            else None
         )
         scalar["dep.rel"] = token.dep_.lower() or None
         morphology["dep.enhanced"] = []
     if any(attribute.key == BUNSETU_KEY for attribute in projection):
         from ginza import bunsetu_bi_label
 
-        scalar[BUNSETU_KEY] = bunsetu_bi_label(token)
+        scalar[BUNSETU_KEY] = "B" if pending_boundary else bunsetu_bi_label(token)
+    if any(attribute.key == BUNSETU_PHRASE_KEY for attribute in projection):
+        from ginza import bunsetu_phrase_span, is_bunsetu_head
+
+        scalar[BUNSETU_PHRASE_KEY] = (
+            bunsetu_phrase_span(token).label_ if is_bunsetu_head(token) else None
+        )
     return [
         scalar[attribute.key]
         if attribute.kind == "scalar"

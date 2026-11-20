@@ -309,12 +309,13 @@ pub(crate) async fn decode_refs(
     ready: &ReadyCorpus,
     inspector: &SnapshotInspector,
     refs: &[&MatchRef],
-) -> Result<HashMap<u64, Option<Vec<lingrep_core::token_match::TokenInfo>>>, Response> {
+) -> Result<HashMap<u64, Option<lingrep_core::token_match::TokenInfoSentence>>, Response> {
     let mut unique: Vec<u64> = refs.iter().map(|r| r.sentence_index).collect();
     unique.sort_unstable();
     unique.dedup();
 
-    let mut map: HashMap<u64, Option<Vec<lingrep_core::token_match::TokenInfo>>> = HashMap::new();
+    let mut map: HashMap<u64, Option<lingrep_core::token_match::TokenInfoSentence>> =
+        HashMap::new();
     for chunk in unique.chunks(crate::corpus_runtime::CORPUS_DECODE_CHUNK) {
         let reader = inspector.reader_clone();
         let chunk_vec = chunk.to_vec();

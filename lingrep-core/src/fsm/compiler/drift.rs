@@ -17,7 +17,8 @@
 //! compare by `as_str()`, the `AttrValueType` manual-`Eq` precedent. Capture
 //! *names* participate; hygienic paths do not, because a path encodes
 //! reference-occurrence numbering, which is derived rather than authored.
-//! Metadata never participates: comparison is metadata-insensitive.
+//! Descriptive metadata is excluded. Analytical role assignments and the
+//! whole-match classification participate because they change emitted matches.
 //!
 //! ## Alternation branch order is preserved
 //!
@@ -132,6 +133,7 @@ pub fn report_catalog_drift_with_vectors(
 
     for source in sources {
         let mut lowered = lower_document(source, &limits)?;
+        super::text_key::check_set_references(&lowered)?;
         super::resolve_near(&mut lowered, vectors);
         let program = bind(lowered, &limits)?;
         // Reference closure inlines, so a chain of doubling references
@@ -154,7 +156,22 @@ pub fn report_catalog_drift_with_vectors(
                     relations,
                     enhanced_relations,
                     orders,
+                    span_paths,
                 } => {
+                    let mut canonical_paths = span_paths
+                        .iter()
+                        .map(|path| {
+                            (
+                                path.kind.clone(),
+                                path.operands
+                                    .iter()
+                                    .map(|n| (n.capture.clone(), n.position, n.label.clone()))
+                                    .collect::<Vec<_>>(),
+                            )
+                        })
+                        .collect::<Vec<_>>();
+                    canonical_paths.sort();
+                    canonical_paths.dedup();
                     let mut canonical_orders =
                         orders
                             .iter()
@@ -266,6 +283,11 @@ pub fn report_catalog_drift_with_vectors(
                             })?,
                             relations: canonical_relations.into_boxed_slice(),
                             enhanced_relations: canonical_enhanced_relations.into_boxed_slice(),
+                            paths: canonical_paths,
+                            interpretation: definition
+                                .interpretation
+                                .as_ref()
+                                .map(CanonicalInterpretation::from),
                             orders: canonical_orders.into_boxed_slice(),
                         },
                     )
@@ -366,6 +388,11 @@ enum CanonicalExpr {
     },
 }
 
+type CanonicalSpanPath = (
+    String,
+    Vec<(CompactString, super::model::SpanPosition, Option<String>)>,
+);
+
 #[derive(Clone, Debug, PartialEq, Eq)]
 enum CanonicalDefinitionBody {
     Pattern {
@@ -376,11 +403,43 @@ enum CanonicalDefinitionBody {
         relations: Box<[CanonicalRelation]>,
         enhanced_relations: Box<[CanonicalEnhancedRelation]>,
         orders: Box<[(CompactString, CompactString)]>,
+        paths: Vec<CanonicalSpanPath>,
+        interpretation: Option<CanonicalInterpretation>,
     },
     Lexicon {
         by: Box<[crate::token_match::AttributeKey]>,
         sorted_members: Box<[CompactString]>,
     },
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+struct CanonicalInterpretation {
+    captures: Vec<CanonicalRole>,
+    classify_by: Option<CompactString>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+struct CanonicalRole {
+    capture: CompactString,
+    role: CompactString,
+    labels: BTreeMap<CompactString, crate::fsm::AnalyticalValue>,
+}
+
+impl From<&super::model::ParsedInterpretation> for CanonicalInterpretation {
+    fn from(recipe: &super::model::ParsedInterpretation) -> Self {
+        Self {
+            captures: recipe
+                .captures
+                .iter()
+                .map(|(capture, role)| CanonicalRole {
+                    capture: capture.clone(),
+                    role: role.role.clone(),
+                    labels: role.labels.clone(),
+                })
+                .collect(),
+            classify_by: recipe.classify_by.as_ref().map(|(role, _)| role.clone()),
+        }
+    }
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord)]
@@ -776,6 +835,20 @@ mod tests {
     }
 
     #[test]
+    fn span_drift_ignores_clause_order_and_preserves_edge_direction() {
+        let left = "p := (?<a> []) (?<b> []) where span(c, $a.head -> $b), span(luw, $b.whole).";
+        let reordered =
+            "p := (?<a> []) (?<b> []) where span(luw, $b.whole), span(c, $a.head -> $b).";
+        let reversed = reordered.replace("$a.head -> $b", "$b -> $a.head");
+        assert!(
+            drift(&[("a.lx", left), ("b.lx", reordered)])
+                .entries
+                .is_empty()
+        );
+        assert_eq!(names(&drift(&[("a.lx", left), ("b.lx", &reversed)])), ["p"]);
+    }
+
+    #[test]
     fn enhanced_constraint_order_does_not_drift() {
         let left = "pattern p := (?<v> []) where \
                     $v -[enhanced obj as $edge_a]-> (?<a> []), \
@@ -839,6 +912,34 @@ mod tests {
             ("b.lx", "note: \"two\"\np := [upos=X]."),
         ]);
         assert!(report.entries.is_empty(), "{report:?}");
+    }
+
+    #[test]
+    fn interpretation_roles_labels_and_whole_match_projection_participate_in_drift() {
+        let body = "p := (?<a> x) (?<b> y).";
+        let recipe = "interpret $a as tense { past: true, rank: 1 }\ninterpret $b as kind {}\nclassify by tense";
+        let first = format!("{recipe}\n{body}");
+        let reordered = format!(
+            "classify by tense\ninterpret $b as kind {{}}\ninterpret $a as tense {{rank: 1, past: true}}\n{body}"
+        );
+        assert!(
+            drift(&[("first", &first), ("reordered", &reordered)])
+                .entries
+                .is_empty()
+        );
+        for changed in [
+            body.to_owned(),
+            first.replace("rank: 1", "rank: \"1\""),
+            first.replace("as kind", "as other"),
+            first.replace("classify by tense", "classify by kind"),
+            first.replace("classify by tense", ""),
+        ] {
+            assert_eq!(
+                names(&drift(&[("first", &first), ("changed", &changed)])),
+                ["p"],
+                "{changed}"
+            );
+        }
     }
 
     #[test]

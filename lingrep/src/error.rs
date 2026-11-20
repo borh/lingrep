@@ -633,6 +633,11 @@ fn execution_classification(
             lingrep_core::fsm::MatchResourceError::BatchOutput { .. },
         )) => failure("match_batch_too_large", Matching, AfterChange),
         E::Matching(lingrep_core::fsm::BoundExecutionError::Resource(
+            lingrep_core::fsm::MatchResourceError::Sentence { resource, .. },
+        )) if resource.starts_with("interpretation") => {
+            failure("interpretation_limit", Matching, AfterChange)
+        }
+        E::Matching(lingrep_core::fsm::BoundExecutionError::Resource(
             lingrep_core::fsm::MatchResourceError::Sentence { .. },
         )) => failure("graph_assignment_limit", Matching, AfterChange),
         E::Matching(_) => failure("matching", Matching, AfterChange),
@@ -703,6 +708,15 @@ fn execution_classification(
             corpus_sentence_ordinal,
             token_index,
         } => failure("missing_required_attribute", Matching, AfterChange).at(
+            Some(source_name.clone()),
+            Some(*corpus_sentence_ordinal),
+            Some(*token_index as u64),
+        ),
+        E::MissingSurfaceOffsets {
+            source_name,
+            corpus_sentence_ordinal,
+            token_index,
+        } => failure("missing_surface_offsets", Matching, AfterChange).at(
             Some(source_name.clone()),
             Some(*corpus_sentence_ordinal),
             Some(*token_index as u64),

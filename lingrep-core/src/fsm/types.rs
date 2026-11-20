@@ -3,7 +3,7 @@ use compact_str::CompactString;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::cmp::Ordering;
-use std::collections::HashMap;
+use std::collections::{BTreeMap, HashMap};
 use std::fmt::{self, Display};
 use std::hash::Hash;
 use std::sync::Arc;
@@ -91,6 +91,41 @@ pub struct Capture {
     pub end: usize,
 }
 
+/// A joint assignment of analytical roles within one canonical match.
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Ord, PartialOrd, Serialize, Deserialize)]
+pub struct Interpretation {
+    pub roles: Box<[RoleOccurrence]>,
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub classification: BTreeMap<CompactString, Box<[AnalyticalValue]>>,
+}
+
+/// One occurrence in raw, sentence-relative token coordinates.
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Ord, PartialOrd, Serialize, Deserialize)]
+pub struct RoleOccurrence {
+    pub role: CompactString,
+    pub start: usize,
+    pub end: usize,
+    pub labels: BTreeMap<CompactString, AnalyticalValue>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Ord, PartialOrd, Serialize, Deserialize)]
+#[serde(untagged)]
+pub enum AnalyticalValue {
+    String(CompactString),
+    Boolean(bool),
+    Integer(i64),
+}
+
+impl Display for AnalyticalValue {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::String(text) => f.write_str(text),
+            Self::Boolean(value) => Display::fmt(value, f),
+            Self::Integer(value) => Display::fmt(value, f),
+        }
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct Match {
     /// Name of the pattern that matched
@@ -104,6 +139,8 @@ pub struct Match {
     /// Enhanced graph nodes and edges bound by this assignment, in canonical
     /// binding-kind/name order. Empty for ordinary sequence-only matches.
     pub graph_bindings: Box<[GraphBinding]>,
+    /// Distinct joint assignments requested by this definition.
+    pub interpretations: Box<[Interpretation]>,
     /// Authored lexical identity when this record came from an inline lexicon.
     pub lexical: Option<Box<LexicalMatch>>,
 }

@@ -9,6 +9,7 @@ pub fn canonicalize_matches(matches: &mut [Match]) {
             .then_with(|| left.captures.cmp(&right.captures))
             .then_with(|| left.graph_bindings.cmp(&right.graph_bindings))
             .then_with(|| left.lexical.cmp(&right.lexical))
+            .then_with(|| left.interpretations.cmp(&right.interpretations))
     });
 }
 

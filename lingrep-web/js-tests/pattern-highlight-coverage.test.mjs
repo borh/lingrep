@@ -188,3 +188,56 @@ test("grouping parentheses inside a token test are highlighted", async () => {
     );
   }
 });
+
+test("span paths highlight their layer, selectors, labels and arrows", async () => {
+  const vendor = `${process.cwd()}/lingrep-web/assets/editor/vendor`;
+  const { Parser, Language, Query } = await import(`${vendor}/web-tree-sitter.js`);
+  await Parser.init({ locateFile: (name) => `${vendor}/${name}` });
+  const parser = new Parser();
+  const language = await Language.load(`${vendor}/tree-sitter-lingrep.wasm`);
+  parser.setLanguage(language);
+  const query = new Query(language, readFileSync(`${vendor}/highlights.scm`, "utf8"));
+  const source = 'p := (?<a> []) (?<b> []) where span(sudachi.c, $a.head@"P-X" -> $b.whole).';
+  const tree = parser.parse(source);
+  assert.equal(tree.rootNode.hasError, false);
+  const ranges = highlightRangesFromCaptures(query.captures(tree.rootNode).map(({name, node}) => ({
+    name, start: node.startIndex, end: node.endIndex,
+  })));
+  for (const [word, cls] of [
+    ["span", "pattern-keyword"], ["sudachi.c", "pattern-property"], ["head", "pattern-property"],
+    ['"P-X"', "pattern-string"], ["->", "pattern-operator"], ["whole", "pattern-property"],
+  ]) {
+    const start = source.indexOf(word);
+    assert.ok(ranges.some(range => range.start === start && range.end === start + word.length && range.cls === cls), word);
+  }
+});
+
+test("annotation bundles and analytical roles highlight their names and keywords", async () => {
+  const vendor = `${process.cwd()}/lingrep-web/assets/editor/vendor`;
+  const { Parser, Language, Query } = await import(`${vendor}/web-tree-sitter.js`);
+  await Parser.init({ locateFile: (name) => `${vendor}/${name}` });
+  const parser = new Parser();
+  const language = await Language.load(`${vendor}/tree-sitter-lingrep.wasm`);
+  parser.setLanguage(language);
+  const query = new Query(language, readFileSync(`${vendor}/highlights.scm`, "utf8"));
+  const source = 'bundle Light\n slot: "noun"\nend\nuse @Light\noverride slot: none\ninterpret $x as ending {tense: "past"}\nclassify by ending\np := (?<x> []).';
+  const tree = parser.parse(source);
+  assert.equal(tree.rootNode.hasError, false);
+  const ranges = highlightRangesFromCaptures(query.captures(tree.rootNode).map(({ name, node }) => ({
+    name, start: node.startIndex, end: node.endIndex,
+  })));
+  const expected = [
+    ["bundle", "pattern-keyword"], ["Light", "pattern-definition"], ["slot", "pattern-property"],
+    ["end", "pattern-keyword"], ["use", "pattern-keyword"], ["@", "pattern-operator"],
+    ["Light", "pattern-variable"], ["override", "pattern-keyword"], ["slot", "pattern-property"],
+    ["interpret", "pattern-keyword"], ["$", "pattern-operator"], ["x", "pattern-variable"],
+    ["as", "pattern-keyword"], ["ending", "pattern-variable"], ["tense", "pattern-property"],
+    ["classify", "pattern-keyword"], ["by", "pattern-keyword"], ["ending", "pattern-variable"],
+  ];
+  let offset = 0;
+  for (const [word, cls] of expected) {
+    const start = source.indexOf(word, offset);
+    offset = start + word.length;
+    assert.ok(ranges.some(range => range.start === start && range.end === offset && range.cls === cls), word);
+  }
+});

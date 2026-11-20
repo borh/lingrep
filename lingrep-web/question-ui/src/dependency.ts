@@ -1,5 +1,5 @@
 import {attributeMembers,basicAttributeKeys,surfaceOf} from './model.js';
-import type {Token,MatchRecord,Locale} from './model.js';
+import type {Token,MatchRecord,Locale,SentenceSpan} from './model.js';
 
 /** A word the match binds: the span, every capture, and every word a `where` clause binds, as `ling matches --evidence` lists them. */
 export interface EvidenceWord { readonly index:number; readonly roles:readonly string[]; readonly inSpan:boolean; }
@@ -57,6 +57,20 @@ export function dependencyUnits(tokens:readonly Token[],starts:readonly boolean[
     for(let index=first;index<=last;index++){const head=headIndex(tokens[index]);if(head===null||unitOf.get(head)!==unit){headWord=index;break;}}
     const head=headIndex(tokens[headWord]);
     return {first,last,head:head===null?null:unitOf.get(head)??null,rel:scalar(tokens[headWord],'dep.rel')??''};
+  });
+}
+
+export function annotatedBunsetsu(spans:readonly SentenceSpan[], tokens:readonly Token[]):Unit[] {
+  const chunks = spans.map((span,id)=>({span,id})).filter(({span})=>span.kind==='bunsetsu')
+    .sort((a,b)=>a.span.start-b.span.start);
+  const unitById = new Map(chunks.map(({id},unit)=>[id,unit]));
+  return chunks.map(({span})=>{
+    const word=span.head==null?undefined:tokens[span.head];
+    const target=word?headIndex(word):null;
+    const governor=span.governor==null?undefined:spans[span.governor];
+    const sameEdge=target!==null && governor && governor.start<=target && target<governor.end;
+    return {first:span.start,last:span.end-1,head:span.governor==null?null:unitById.get(span.governor)??null,
+      rel:word && sameEdge ? scalar(word,'dep.rel')??'' : ''};
   });
 }
 

@@ -56,24 +56,19 @@ impl PreparedPolicyFixture {
         let artifact = directory.path().join("policy.lingcorpus");
         std::fs::write(&patterns, CROSS_SURFACE_CATALOG).expect("write policy catalog");
 
-        let mut research = TokenInfo::default();
-        research.set(TokenAttributeIndex::Orth, "研究".into());
-        research.set(TokenAttributeIndex::Lemma, "研究".into());
-        let mut copula = TokenInfo::default();
-        copula.set(TokenAttributeIndex::Orth, "だ".into());
-        copula.set(TokenAttributeIndex::Lemma, "だ".into());
-        let mut punctuation = TokenInfo::default();
-        punctuation.set(TokenAttributeIndex::Pos, "PUNCT".into());
-        punctuation.set(TokenAttributeIndex::Orth, "。".into());
-        punctuation.set(TokenAttributeIndex::Lemma, "。".into());
-
-        tokio::runtime::Runtime::new()
-            .expect("policy fixture runtime")
-            .block_on(build_single_sentence_artifact(
-                &artifact,
-                "研究だ。",
-                &[research, copula, punctuation],
-            ));
+        let input = directory.path().join("policy.conllu");
+        std::fs::write(
+            &input,
+            "# text = 研究だ。\n1\t研究\t研究\tNOUN\t_\t_\t0\troot\t_\tSpaceAfter=No\n2\tだ\tだ\tAUX\t_\t_\t1\tcop\t_\tSpaceAfter=No\n3\t。\t。\tPUNCT\t_\t_\t1\tpunct\t_\t_\n\n",
+        )
+        .expect("write policy sentence");
+        let build = lingrep_without_dictionary()
+            .args(["corpus", "build", "--output"])
+            .arg(&artifact)
+            .arg(input)
+            .output()
+            .expect("ling runs");
+        assert_success(&build, "corpus build");
 
         Self {
             _directory: directory,

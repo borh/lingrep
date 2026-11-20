@@ -209,8 +209,8 @@ class AdapterSemanticsTests(unittest.TestCase):
     def test_revision_digest_matches_the_rust_pin(self):
         # SPACY_SEMANTICS_DIGEST in lingrep-core/tests/external_process_contract.rs
         self.assertEqual(
-            adapter_semantics_digest("lingrep.spacy-adapter/v1"),
-            "f9d77b5c557f7b403316c99ef6ce0b03087ed07036b2fc9c9115e9fb852934e6",
+            adapter_semantics_digest("lingrep.spacy-adapter/v2"),
+            "fb03302d08b4d7742dcaacfc221ec7c4a38afd1dbf88a4e7c768d7b4a3febe48",
         )
 
     @unittest.skipUnless(

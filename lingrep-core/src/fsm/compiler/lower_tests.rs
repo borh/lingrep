@@ -70,6 +70,94 @@ fn annotation_run_binds_to_the_following_definition_with_key_spans() {
 }
 
 #[test]
+fn bundle_application_merges_one_definition_before_schema_validation() {
+    let source = r#"
+defaults
+  role: "catalog"
+end
+schema
+  role: string required
+  source: string
+end
+bundle helper
+  role: "helper"
+  source: "citation"
+end
+use @helper
+a := x.
+use @helper
+override role: "exception"
+override source: none
+b := x.
+role: "local"
+c := x.
+d := x.
+"#;
+    let definitions = lower(source).definitions;
+    let roles: Vec<_> = definitions
+        .iter()
+        .map(|d| &d.metadata["role"].value)
+        .collect();
+    assert_eq!(
+        roles,
+        [
+            &json!("helper"),
+            &json!("exception"),
+            &json!("local"),
+            &json!("catalog")
+        ]
+    );
+    assert_eq!(definitions[0].metadata["source"].value, json!("citation"));
+    assert!(
+        definitions[1..]
+            .iter()
+            .all(|d| !d.metadata.contains_key("source"))
+    );
+}
+
+#[test]
+fn annotation_bundle_refusals_name_the_authored_conflict() {
+    let header = "bundle family\n  role: \"shared\"\nend\n";
+    for (body, message) in [
+        ("use @family\nrole: \"local\"\np := x.", "override role:"),
+        ("use @family\nrole: none\np := x.", "override role:"),
+        (
+            "use @family\noverride note: \"local\"\np := x.",
+            "does not supply",
+        ),
+        ("use @missing\np := x.", "unknown annotation bundle"),
+        (
+            "role: \"x\"\nuse @family\np := x.",
+            "starts an annotation run",
+        ),
+        (
+            "use @family\nuse @family\np := x.",
+            "starts an annotation run",
+        ),
+        ("use @family\n", "annotates no definition"),
+        (
+            "bundle family\n  source: \"x\"\nend",
+            "duplicate annotation bundle",
+        ),
+        (
+            "bundle policy_key\n  output_name: \"x\"\nend",
+            "descriptive metadata",
+        ),
+    ] {
+        let source = format!("{header}{body}");
+        let error = refuse(&source);
+        assert!(error.to_string().contains(message), "{body}: {error}");
+        if message == "override role:" {
+            assert_eq!(
+                error.diagnostics[0].code(),
+                DiagnosticCode::BundleOverrideRequired
+            );
+            assert_eq!(&source[error_range(&error)], "role");
+        }
+    }
+}
+
+#[test]
 fn a_dangling_annotation_run_reports_its_first_key() {
     let source = "layer: \"S2\"\ncategory: \"c\"\n";
     let error = refuse(source);

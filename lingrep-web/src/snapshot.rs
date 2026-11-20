@@ -108,6 +108,8 @@ pub struct MatchRef {
     pub captures: Box<[CaptureSpanRef]>,
     #[serde(with = "crate::result_index::bindings")]
     pub graph_bindings: Box<[lingrep_core::fsm::GraphBinding]>,
+    #[serde(default, skip_serializing_if = "<[_]>::is_empty")]
+    pub interpretations: Box<[lingrep_core::fsm::Interpretation]>,
     pub lexical: Option<LexicalMatchRef>,
     /// Whether this match is a component of a derived chain. `false` for a
     /// compound's own match and whenever the run derived no compounds.

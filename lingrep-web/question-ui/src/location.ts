@@ -1,4 +1,5 @@
-import type { SavedQuestion } from './model.js';
+import { textOf } from './model.js';
+import type { SavedQuestion, Token } from './model.js';
 export interface ConcordanceLocation { readonly kind: 'concordance'; readonly scopeDocument?: number|null; readonly returnAfter?:number; readonly pattern: string; readonly document: number | null; readonly after: number; readonly filter: string; }
 interface HitCoordinates { readonly pattern:string; readonly document:number; readonly sequence:number|null; }
 export interface ExampleLocation extends HitCoordinates { readonly kind:'example'; readonly returnTo:ConcordanceLocation; }
@@ -104,13 +105,13 @@ export function parseEntryLines(text:string|null):EntryLines|null {
   if(!record(value)||!Array.isArray(value.words)||!value.words.every(word=>typeof word==='string')||!Array.isArray(value.lines)||!value.lines.length||!value.lines.every(line)||!ordinal(value.total)||value.total<value.lines.length||value.works!==undefined&&!ordinal(value.works)||!names(value.names)||!ordinal(value.at)||value.at>=value.lines.length)throw new Error('The frequency entry in this address is invalid. Open it again from the frequency view.');
   return {words:value.words,total:value.total,...(value.works!==undefined?{works:value.works as number}:{}),at:value.at,...(value.names!==undefined?{names:value.names as Record<string,string>}:{}),lines:value.lines.map(({sentence,document,start,end,roles}:EntryLine)=>({sentence,document,...(start!==undefined?{start,end}:{}),roles:roles.map(({name,start,end})=>({name,start,end}))}))};
 }
-/** A listed line read as a concordance line from its sentence's token `texts`: up to `context` tokens on each side of its span, the span's text, and the role words outside the span by token index. A line without a span spans its role words. */
-export function entryContext(texts:readonly string[],line:EntryLine,context:number){
+/** A listed line read as a concordance line from its sentence's `tokens`: up to `context` tokens on each side of its span, the span's text, the whole line's text, and the role words outside the span by token index. A line without a span spans its role words. */
+export function entryContext(tokens:readonly Token[],line:EntryLine,context:number){
   const start=line.start??Math.min(...line.roles.map(role=>role.start)),end=line.end??Math.max(...line.roles.map(role=>role.end));
-  const tokens=(from:number,to:number)=>texts.slice(Math.max(0,from),to).map((text,offset)=>({index:Math.max(0,from)+offset,attributes:{text}}));
   const bound=new Map<number,string[]>();
   for(const role of line.roles)for(let index=role.start;index<role.end;index++)if(index<start||index>=end)bound.set(index,[...(bound.get(index)??[]),role.name]);
-  return {left:context?tokens(start-context,start):[],hit:texts.slice(start,end).join(''),right:tokens(end,end+context),bound};
+  const from=context?Math.max(0,start-context):start;
+  return {left:tokens.slice(from,start),hit:textOf(tokens.slice(start,end)),right:tokens.slice(end,end+context),text:textOf(tokens.slice(from,end+context)),bound};
 }
 /** The frequency view address to return to, or null unless `value` is a relative `frequencies` address. */
 export const frequencyReturn=(value:string|null):string|null=>value!==null&&/^frequencies(#|$)/.test(value)?value:null;

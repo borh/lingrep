@@ -1,3 +1,4 @@
+import { textOf } from './model.js';
 export const defaultView = () => ({ kind: 'concordance', scopeDocument: null, returnAfter: -1, pattern: '', document: null, after: -1, filter: '' });
 const record = (value) => typeof value === 'object' && value !== null && !Array.isArray(value);
 const ordinal = (value) => typeof value === 'number' && Number.isSafeInteger(value) && value >= 0;
@@ -117,16 +118,16 @@ export function parseEntryLines(text) {
         throw new Error('The frequency entry in this address is invalid. Open it again from the frequency view.');
     return { words: value.words, total: value.total, ...(value.works !== undefined ? { works: value.works } : {}), at: value.at, ...(value.names !== undefined ? { names: value.names } : {}), lines: value.lines.map(({ sentence, document, start, end, roles }) => ({ sentence, document, ...(start !== undefined ? { start, end } : {}), roles: roles.map(({ name, start, end }) => ({ name, start, end })) })) };
 }
-/** A listed line read as a concordance line from its sentence's token `texts`: up to `context` tokens on each side of its span, the span's text, and the role words outside the span by token index. A line without a span spans its role words. */
-export function entryContext(texts, line, context) {
+/** A listed line read as a concordance line from its sentence's `tokens`: up to `context` tokens on each side of its span, the span's text, the whole line's text, and the role words outside the span by token index. A line without a span spans its role words. */
+export function entryContext(tokens, line, context) {
     const start = line.start ?? Math.min(...line.roles.map(role => role.start)), end = line.end ?? Math.max(...line.roles.map(role => role.end));
-    const tokens = (from, to) => texts.slice(Math.max(0, from), to).map((text, offset) => ({ index: Math.max(0, from) + offset, attributes: { text } }));
     const bound = new Map();
     for (const role of line.roles)
         for (let index = role.start; index < role.end; index++)
             if (index < start || index >= end)
                 bound.set(index, [...(bound.get(index) ?? []), role.name]);
-    return { left: context ? tokens(start - context, start) : [], hit: texts.slice(start, end).join(''), right: tokens(end, end + context), bound };
+    const from = context ? Math.max(0, start - context) : start;
+    return { left: tokens.slice(from, start), hit: textOf(tokens.slice(start, end)), right: tokens.slice(end, end + context), text: textOf(tokens.slice(from, end + context)), bound };
 }
 /** The frequency view address to return to, or null unless `value` is a relative `frequencies` address. */
 export const frequencyReturn = (value) => value !== null && /^frequencies(#|$)/.test(value) ? value : null;

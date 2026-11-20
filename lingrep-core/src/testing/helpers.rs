@@ -32,6 +32,35 @@ pub fn token(orth: &str) -> crate::token_match::TokenInfo {
     token
 }
 
+/// A sentence whose tokens are `words`, each found in `source` after the one
+/// before it, carrying the source spans an analyzer would report.
+///
+/// # Panics
+///
+/// When a word does not occur in `source` after the previous word.
+pub fn placed_tokens(source: &str, words: &[&str]) -> crate::token_match::TokenInfoSentence {
+    let mut at = 0;
+    let ranges = words
+        .iter()
+        .enumerate()
+        .map(|(index, word)| {
+            let start = at
+                + source
+                    .get(at..)
+                    .and_then(|rest| rest.find(word))
+                    .expect("word occurs in order");
+            at = start + word.len();
+            (start..at, index..index + 1)
+        })
+        .collect::<Vec<_>>();
+    let spans = crate::token_match::CharSpan::from_surface_ranges(source, words.len(), ranges)
+        .expect("words cover the source in order");
+    crate::token_match::TokenInfoSentence::new(
+        words.iter().map(|word| token(word)).collect(),
+        Some(std::sync::Arc::new(spans)),
+    )
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

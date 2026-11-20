@@ -417,7 +417,7 @@ pub fn catalog_campaign_descriptors() -> Vec<CatalogDescriptor> {
                 BoundedRepeat,
                 RegexPredicate,
             ][..],
-            "the ヲ格 relation as a linear XPOS rule and as a dependency edge over one CoNLL-U token set",
+            "the ヲ格 relation by linear context, token dependency, and bunsetsu attachment",
         ),
     ]
     .into_iter()

@@ -293,10 +293,11 @@ impl ViewFold {
     /// is a single singleton whose canonical decomposition occurs in no
     /// surface. Dictionary order and duplicates do not affect the result.
     #[must_use]
-    pub fn from_dictionary_surfaces<'a>(surfaces: impl IntoIterator<Item = &'a str>) -> Self {
+    pub fn from_dictionary_surfaces(surfaces: impl IntoIterator<Item = impl AsRef<str>>) -> Self {
         let mut candidates = BTreeSet::new();
         let mut surface_chars = FxHashSet::default();
         for surface in surfaces {
+            let surface = surface.as_ref();
             surface_chars.extend(surface.chars());
             if surface
                 .chars()

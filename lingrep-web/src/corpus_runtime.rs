@@ -18,7 +18,7 @@ use lingrep_core::{
     },
     execution::{BoundedRecordReader, DEFAULT_MAX_INPUT_RECORD_BYTES},
     spill::TempBudget,
-    token_match::{TokenAttributeIndex, TokenInfo},
+    token_match::{TokenAttributeIndex, TokenInfoSentence},
 };
 use lingrep_corpus::{
     AdmissionIdentity, AnalysisIdentity, AnalysisInputs, BuildConfig, CorpusArtifact,
@@ -295,7 +295,7 @@ impl BoundCorpusReader {
             .sentence_words_bounded(index, limit)
             .map_err(CorpusReadError::Corruption)
     }
-    pub async fn sentence(&self, index: u64) -> Result<Option<Vec<TokenInfo>>, CorpusReadError> {
+    pub async fn sentence(&self, index: u64) -> Result<Option<TokenInfoSentence>, CorpusReadError> {
         self.decode_sentences(&[index])
             .map(|mut values| values.pop().flatten())
     }
@@ -303,7 +303,7 @@ impl BoundCorpusReader {
     pub fn decode_sentences(
         &self,
         indices: &[u64],
-    ) -> Result<Vec<Option<Vec<TokenInfo>>>, CorpusReadError> {
+    ) -> Result<Vec<Option<TokenInfoSentence>>, CorpusReadError> {
         self.source
             .decode_sentences(&self.pool, indices)
             .map_err(CorpusReadError::Corruption)
@@ -313,7 +313,7 @@ impl BoundCorpusReader {
         &self,
         indices: &[u64],
         attributes: &[TokenAttributeIndex],
-    ) -> Result<Vec<Option<Vec<TokenInfo>>>, CorpusReadError> {
+    ) -> Result<Vec<Option<TokenInfoSentence>>, CorpusReadError> {
         self.source
             .decode_sentences_with_attributes(&self.pool, indices, attributes)
             .map_err(CorpusReadError::Corruption)
@@ -1226,7 +1226,7 @@ fn scan_source(
 
 #[cfg(test)]
 pub(crate) fn test_ready_corpus(
-    sentences: Vec<Vec<TokenInfo>>,
+    sentences: Vec<Vec<lingrep_core::token_match::TokenInfo>>,
 ) -> (tempfile::TempDir, ReadyCorpus) {
     use lingrep_core::corpus::{
         AdmittedSentence, DiscoveryReport, DocumentId, InventoryStats, SourceDocument,
@@ -1468,7 +1468,8 @@ mod tests {
 
     #[test]
     fn ready_sentence_count_uses_the_already_open_source() {
-        let (directory, ready) = test_ready_corpus(vec![vec![TokenInfo::default()]]);
+        let (directory, ready) =
+            test_ready_corpus(vec![vec![lingrep_core::token_match::TokenInfo::default()]]);
         let token_path = directory.path().join("unit.lingcorpus/tokens.v1.zst");
         let moved = directory.path().join("tokens.v1.zst.moved");
         std::fs::rename(&token_path, &moved).unwrap();

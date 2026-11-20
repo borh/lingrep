@@ -694,6 +694,7 @@ fn a_record_this_catalog_does_not_declare_survives_the_program() {
             end: 2,
             captures: Box::default(),
             graph_bindings: Box::default(),
+            interpretations: Box::default(),
             lexical: None,
         },
         Match {
@@ -702,6 +703,7 @@ fn a_record_this_catalog_does_not_declare_survives_the_program() {
             end: 2,
             captures: Box::default(),
             graph_bindings: Box::default(),
+            interpretations: Box::default(),
             lexical: None,
         },
     ];

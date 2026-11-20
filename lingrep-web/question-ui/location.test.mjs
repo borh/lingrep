@@ -139,14 +139,17 @@ test('a stored run supplies the expected analysis only for its own corpus',async
 
 test("an entry line reads as a concordance line: its span, its context and the role words outside the span",async()=>{
   const {entryContext}=await import('./location.js');
-  const texts=['肥っ','て','坂','を','上る','とき','。'];
+  const texts=['肥っ','て','坂','を','上る','とき','。'].map((text,index)=>({index,attributes:{text}}));
   const line={sentence:1,document:0,start:2,end:4,roles:[{name:'n',start:2,end:3},{name:'p',start:3,end:4},{name:'v',start:4,end:5}]};
   const read=entryContext(texts,line,1);
   assert.deepEqual(read.left.map(token=>[token.index,token.attributes.text]),[[1,'て']]);
   assert.equal(read.hit,'坂を');
   assert.deepEqual(read.right.map(token=>[token.index,token.attributes.text]),[[4,'上る']]);
   assert.deepEqual([...read.bound],[[4,['v']]]);
-  assert.equal(entryContext(texts,{...line,start:undefined,end:undefined},0).hit,'坂を上る');
+  assert.equal(entryContext(texts,{...line,start:undefined,end:undefined},0).hit,'坂を上る');  assert.equal(read.text,'て坂を上る');
+  const spaced=['I','saw','NHK','news','today'].map((text,index)=>({index,attributes:{text},...(index?{space_before:true}:{})}));
+  const english=entryContext(spaced,{sentence:1,document:0,start:2,end:4,roles:[]},1);
+  assert.deepEqual([english.hit,english.text],['NHK news','saw NHK news today']);
 });
 
 test('an address names the served catalog by its fingerprint and carries any other source in full',async()=>{

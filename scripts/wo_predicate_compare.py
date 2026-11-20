@@ -1,10 +1,10 @@
 #!/usr/bin/env python3
-"""Compare the linear and dependency ヲ格名詞句–述語 arms over one CoNLL-U corpus.
+"""Compare linear, token-dependency, and bunsetsu ヲ格名詞句–述語 attachments over one CoNLL-U corpus.
 
 Reads the match JSONL (``ling matches --json``) of
-``patterns/wo-predicate-dep.lx`` — which emits ``wo_predicate_linear`` and
-``wo_predicate_dep`` over the same tokens — together with the CoNLL-U file the
-matches came from, and classifies every を case particle in the corpus:
+``patterns/wo-predicate-dep.lx`` together with the CoNLL-U file the
+matches came from, and counts distinct (を, predicate) attachments by the arms that found them.
+The existing linear/dependency comparison classifies each を case particle:
 
 * ``both_same``      — both arms found it and named the same predicate token
 * ``both_differ``    — both found it, different predicate tokens
@@ -13,7 +13,7 @@ matches came from, and classifies every を case particle in the corpus:
 * ``neither``        — a を case particle no arm attached (the oracle still
                        records the parser's head for it)
 
-A third, independent oracle is computed directly from the CoNLL-U columns:
+An independent token-dependency oracle is computed directly from the CoNLL-U columns:
 for every ``を`` with ``xpos`` starting ``助詞-格助詞`` and ``deprel=case``,
 its head is the nominal it marks, and that nominal's head is the predicate.
 The oracle is what any head-sharing query could express, free of lingrep patterns's
@@ -35,6 +35,7 @@ from __future__ import annotations
 import argparse
 import collections
 import hashlib
+import itertools
 import json
 import random
 import sys
@@ -51,6 +52,7 @@ class Sentence:
     doc_id: str
     sent_id: str
     text: str
+    has_bunsetsu_boundaries: bool = True
     forms: list[str] = field(default_factory=list)
     lemmas: list[str] = field(default_factory=list)
     upos: list[str] = field(default_factory=list)
@@ -65,12 +67,12 @@ def read_conllu(path: Path):
     ordinal = 0
     doc_id = ""
     sent_id = ""
-    text = ""
+    text = None
     rows: list[list[str]] = []
     with path.open(encoding="utf-8") as handle:
-        for line in handle:
+        for line in itertools.chain(handle, [""]):
             line = line.rstrip("\n")
-            if line.startswith("# newdoc"):
+            if line == "# newdoc" or line.startswith("# newdoc id = "):
                 doc += 1
                 ordinal = 0
                 doc_id = line.partition("=")[2].strip()
@@ -78,28 +80,34 @@ def read_conllu(path: Path):
             if line.startswith("# sent_id"):
                 sent_id = line.partition("=")[2].strip()
                 continue
-            if line.startswith("# text ="):
-                text = line[len("# text =") :].strip()
+            if line.startswith("# text = "):
+                text = line[len("# text = ") :]
                 continue
             if line.startswith("#"):
                 continue
             if not line:
                 if rows:
-                    yield _sentence(doc, ordinal, doc_id, sent_id, text, rows)
-                    ordinal += 1
+                    doc = max(doc, 0)
+                    admitted = text.strip() if text is not None else any(row[1].strip() for row in rows)
+                    if admitted:
+                        yield _sentence(doc, ordinal, doc_id, sent_id, text or "", rows)
+                        ordinal += 1
+                    text = None
+                    sent_id = ""
                     rows = []
                 continue
             cols = line.split("\t")
             if "-" in cols[0] or "." in cols[0]:
                 continue
             rows.append(cols)
-    if rows:
-        yield _sentence(doc, ordinal, doc_id, sent_id, text, rows)
 
 
 def _sentence(doc, ordinal, doc_id, sent_id, text, rows) -> Sentence:
     s = Sentence(doc, ordinal, doc_id, sent_id, text)
-    for cols in rows:
+    for i, cols in enumerate(rows):
+        boundary = next((v for v in cols[9].split("|") if v.startswith("BunsetuBILabel=")), None)
+        if not (boundary == "BunsetuBILabel=B" or (i > 0 and boundary == "BunsetuBILabel=I")):
+            s.has_bunsetsu_boundaries = False
         s.forms.append(cols[1])
         s.lemmas.append(cols[2])
         s.upos.append(cols[3])
@@ -113,6 +121,7 @@ def read_matches(path: Path):
     """Map (doc, sentence, を token index) -> head token index, per pattern."""
     linear: dict[tuple[int, int, int], int] = {}
     dep: dict[tuple[int, int, int], tuple[int, str]] = {}
+    attachments = collections.defaultdict(set)
     run = None
     counts = collections.Counter()
     with path.open(encoding="utf-8") as handle:
@@ -128,17 +137,23 @@ def read_matches(path: Path):
             captures = {c["name"]: c["span"] for c in data["captures"]}
             key = (data["document_ordinal"], data["document_sentence_ordinal"])
             counts[data["pattern"]] += 1
-            if data["pattern"] == "wo_predicate_linear":
+            pattern = data["pattern"]
+            if pattern == "wo_predicate_linear":
                 wo = captures["collocate"]["end"]
                 linear[key + (wo,)] = captures["head"]["start"]
-            elif data["pattern"] == "wo_predicate_dep":
+            elif pattern == "wo_predicate_dep":
                 wo = captures["w"]["start"]
                 rel = next(
                     (k["value"] for k in data.get("key", []) if k["name"].endswith("dep.rel")),
                     "",
                 )
                 dep[key + (wo,)] = (captures["head"]["start"], rel)
-    return linear, dep, run, counts
+            elif pattern == "wo_predicate_bunsetsu":
+                wo = captures["w"]["start"]
+            else:
+                continue
+            attachments[key + (wo, captures["head"]["start"])].add(pattern.removeprefix("wo_predicate_"))
+    return linear, dep, attachments, run, counts
 
 
 def _nest(counter: collections.Counter) -> dict[str, dict[str, int]]:
@@ -221,7 +236,12 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--seed", type=int, default=20260914)
     args = parser.parse_args(argv)
 
-    linear, dep, run, pattern_counts = read_matches(args.matches)
+    linear, dep, attachments, run, pattern_counts = read_matches(args.matches)
+
+    bunsetsu_heads = collections.defaultdict(list)
+    for (doc, sentence, wo, head), arms in attachments.items():
+        if "bunsetsu" in arms:
+            bunsetsu_heads[(doc, sentence, wo)].append(head)
 
     doc_meta: list[dict] = []
     if args.jsonl is not None:
@@ -249,6 +269,7 @@ def main(argv: list[str] | None = None) -> int:
     rng = random.Random(args.seed)
     reservoir_seen = collections.Counter()
     sentences = 0
+    bunsetsu_sentences = 0
     tokens = 0
     docs = set()
     wo_total = 0
@@ -266,6 +287,7 @@ def main(argv: list[str] | None = None) -> int:
 
     for s in read_conllu(args.conllu):
         sentences += 1
+        bunsetsu_sentences += s.has_bunsetsu_boundaries
         tokens += len(s.forms)
         docs.add(s.doc)
         for i, form in enumerate(s.forms):
@@ -336,6 +358,9 @@ def main(argv: list[str] | None = None) -> int:
                     "linear_head": "" if lh is None else s.forms[lh],
                     "dep_head": "" if dep_head is None else s.forms[dep_head],
                     "dep_rel": dh[1] if dh else "",
+                    "bunsetsu_heads": ", ".join(
+                        f"{h}={s.forms[h]}" for h in sorted(bunsetsu_heads.get(key, ()))
+                    ),
                     "oracle": o_cls,
                     "oracle_head": "" if pred is None else s.forms[pred],
                     "marked": mark(s, i, lh, dep_head),
@@ -354,6 +379,7 @@ def main(argv: list[str] | None = None) -> int:
 
     linear_total = sum(v for k, v in classes.items() if k in {"both_same", "both_differ", "linear_only"})
     dep_total = sum(v for k, v in classes.items() if k in {"both_same", "both_differ", "dep_only"})
+    attachment_counts = collections.Counter("+".join(sorted(arms)) for arms in attachments.values())
     summary = {
         "inputs": {
             "conllu": str(args.conllu),
@@ -364,9 +390,11 @@ def main(argv: list[str] | None = None) -> int:
             "run_id": (run or {}).get("run_id"),
         },
         "corpus": {"documents": len(docs), "sentences": sentences, "tokens": tokens},
+        "sentences_with_bunsetsu_boundaries": bunsetsu_sentences,
         "wo_case_particles": wo_total,
         "pattern_records": dict(pattern_counts),
         "classes": dict(classes),
+        "attachment_agreement": dict(sorted(attachment_counts.items())),
         "linear_total": linear_total,
         "dep_total": dep_total,
         "dep_only_share_of_linear": (classes["dep_only"] / linear_total) if linear_total else None,
@@ -406,6 +434,10 @@ def main(argv: list[str] | None = None) -> int:
     ]
     for k, v in dep_vs_oracle.most_common():
         lines.append(f"| {k} | {v:,} |")
+    lines += ["", f"Complete bunsetsu boundaries in {bunsetsu_sentences:,} of {sentences:,} sentences."]
+    lines += ["", "| arms finding the same を and predicate | attachments |", "|---|---:|"]
+    for arms, count in sorted(attachment_counts.items()):
+        lines.append(f"| {arms} | {count:,} |")
     lines += ["", "| dependency-only: what blocks the linear rule | count |", "|---|---:|"]
     for k, v in dep_only_blockers.most_common():
         lines.append(f"| {k} | {v:,} |")

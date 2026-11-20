@@ -1,7 +1,7 @@
 ---
 title: Fragment metadata and match evidence: design proposal
 type: investigation
-status: current
+status: historical
 summary: Keep authored definition metadata local; treat selected fragment occurrences as a separate, opt-in evidence feature if a concrete consumer requires them.
 updated: 2026-11-16
 scope:
@@ -26,6 +26,9 @@ This is a recommendation for review, not an adopted language change. The
 implementation of filtering and aggregation by authored pattern metadata is
 independent of this proposal. No fragment-propagation behavior is implemented by
 this document.
+
+The shipped forms are documented in the [pattern language reference](pattern-language-reference.md#analytical-interpretations).
+It covers joint interpretations and reusable definition annotations.
 
 ## The two questions require different information
 

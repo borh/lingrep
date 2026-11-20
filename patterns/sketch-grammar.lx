@@ -18,60 +18,53 @@ analyzer: { family: "vibrato", resource: "unidic-csj", segmentation: ["input", "
 # the later verb, and 副詞可能 nominals (結果, 場合, 上) are included.
 # Quotative と is tagged 格助詞, so no と relation is defined.
 
-role: "helper"
-source: "Srdanović Erjavec, Erjavec & Kilgarriff 2008, A Web Corpus and Word Sketches for Japanese; re-derived against unidic-cwj-202512"
+bundle sketch_helper
+  role: "helper"
+  source: "Srdanović Erjavec, Erjavec & Kilgarriff 2008, A Web Corpus and Word Sketches for Japanese; re-derived against unidic-cwj-202512"
+end
+
+use @sketch_helper
 fragment sk_ga := [unidic.orthbase=が & unidic.pos1=助詞 & unidic.pos2=格助詞].
-role: "helper"
-source: "Srdanović Erjavec, Erjavec & Kilgarriff 2008, A Web Corpus and Word Sketches for Japanese; re-derived against unidic-cwj-202512"
+use @sketch_helper
 fragment sk_wo := [unidic.orthbase=を & unidic.pos1=助詞 & unidic.pos2=格助詞].
-role: "helper"
-source: "Srdanović Erjavec, Erjavec & Kilgarriff 2008, A Web Corpus and Word Sketches for Japanese; re-derived against unidic-cwj-202512"
+use @sketch_helper
 fragment sk_ni := [unidic.orthbase=に & unidic.pos1=助詞 & unidic.pos2=格助詞].
-role: "helper"
-source: "Srdanović Erjavec, Erjavec & Kilgarriff 2008, A Web Corpus and Word Sketches for Japanese; re-derived against unidic-cwj-202512"
+use @sketch_helper
 fragment sk_de := [unidic.orthbase=で & unidic.pos1=助詞 & unidic.pos2=格助詞].
-role: "helper"
-source: "Srdanović Erjavec, Erjavec & Kilgarriff 2008, A Web Corpus and Word Sketches for Japanese; re-derived against unidic-cwj-202512"
+use @sketch_helper
 fragment sk_no := [unidic.orthbase=の & unidic.pos1=助詞 & unidic.pos2=格助詞].
-role: "helper"
-source: "Srdanović Erjavec, Erjavec & Kilgarriff 2008, A Web Corpus and Word Sketches for Japanese; re-derived against unidic-cwj-202512"
+use @sketch_helper
 fragment sk_wa := [unidic.orthbase=は & unidic.pos1=助詞 & unidic.pos2=係助詞].
 
-role: "helper"
-source: "Srdanović Erjavec, Erjavec & Kilgarriff 2008, A Web Corpus and Word Sketches for Japanese; re-derived against unidic-cwj-202512"
+use @sketch_helper
 fragment sk_nominal :=
   [unidic.pos1 in {名詞, 代名詞}]
   ([unidic.pos1=接尾辞 & unidic.pos2=名詞的])*.
 
 # Heads do not exclude `非自立可能` because UniDic assigns it to content verbs
 # such as 続く in 議論が続く.
-role: "helper"
-source: "Srdanović Erjavec, Erjavec & Kilgarriff 2008, A Web Corpus and Word Sketches for Japanese; re-derived against unidic-cwj-202512"
+use @sketch_helper
 fragment sk_predicate :=
   ( [unidic.pos1=名詞 & unidic.pos3=サ変可能] [lemma=為る]
   | [unidic.pos1=動詞] ).
 
-role: "helper"
-source: "Srdanović Erjavec, Erjavec & Kilgarriff 2008, A Web Corpus and Word Sketches for Japanese; re-derived against unidic-cwj-202512"
+use @sketch_helper
 fragment sk_gap :=
   [unidic.pos1 not in {動詞, 助動詞, 補助記号}
    & unidic.pos2 not in {格助詞, 係助詞, 接続助詞}].
 
-role: "helper"
-source: "Srdanović Erjavec, Erjavec & Kilgarriff 2008, A Web Corpus and Word Sketches for Japanese; re-derived against unidic-cwj-202512"
+use @sketch_helper
 fragment sk_adjective_attributive :=
   [unidic.pos1=形容詞 & unidic.cform=連体形-一般].
 
 # UniDic splits ChaSen's adjectival noun `N.Ana` into these three shapes.
-role: "helper"
-source: "Srdanović Erjavec, Erjavec & Kilgarriff 2008, A Web Corpus and Word Sketches for Japanese; re-derived against unidic-cwj-202512"
+use @sketch_helper
 fragment sk_na_stem :=
   ( [unidic.pos1=形状詞 & unidic.pos2!=助動詞語幹]
   | [unidic.pos1=名詞 & unidic.pos3=形状詞可能]
   | [unidic.pos1=名詞] [unidic.pos1=接尾辞 & unidic.pos2=形状詞的] ).
 
-role: "helper"
-source: "Srdanović Erjavec, Erjavec & Kilgarriff 2008, A Web Corpus and Word Sketches for Japanese; re-derived against unidic-cwj-202512"
+use @sketch_helper
 fragment sk_na :=
   [lemma=だ & unidic.pos1=助動詞 & unidic.cform=連体形-一般].
 

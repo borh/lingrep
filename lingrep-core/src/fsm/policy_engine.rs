@@ -839,6 +839,7 @@ mod tests {
                 end: index + 1,
                 captures: Box::default(),
                 graph_bindings: Box::default(),
+                interpretations: Box::default(),
                 lexical: None,
             })
             .collect()
@@ -1116,6 +1117,7 @@ mod tests {
                 end,
                 captures: Box::default(),
                 graph_bindings: Box::default(),
+                interpretations: Box::default(),
                 lexical: None,
             });
         }

@@ -177,7 +177,9 @@ fn expected_match(sequence: u64) -> Value {
         (1, sentence - 35, "b.md", "B Study", "B")
     };
     let cat = json!({"index":0,"attributes":{"text":"cat","lemma":"cat"}});
-    let copula = json!({"index":1,"attributes":{"text":"is","lemma":"be"}});
+    // The fixture's tokens carry no source spans, so the space between the
+    // two Latin words is the one guessed from their script.
+    let copula = json!({"index":1,"space_before":true,"attributes":{"text":"is","lemma":"be"}});
     let punctuation = json!({"index":2,"attributes":{"text":"。"}});
     let mut row = json!({
         "sequence":sequence,"pattern":if phrase{"phrase"}else{"copula"},
@@ -185,7 +187,7 @@ fn expected_match(sequence: u64) -> Value {
         "captures":if phrase{vec![json!({"name":"item","hygienic_path":"phrase/item","span":{"start":0,"end":1}})]}else{vec![]},
         "corpus_sentence_ordinal":sentence,"document_ordinal":document,"document_sentence_ordinal":local,
         "source_name":source,"source_metadata":{"document":{"title":title,"author":author}},
-        "surface":if phrase{"catis"}else{"is"},
+        "surface":if phrase{"cat is"}else{"is"},
         "tokens":if phrase{vec![cat.clone(),copula]}else{vec![copula]},
         "left_context":if phrase{vec![]}else{vec![cat]},"right_context":[punctuation]
     });

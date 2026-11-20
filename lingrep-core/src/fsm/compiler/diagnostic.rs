@@ -120,6 +120,7 @@ pub enum DiagnosticCode {
     /// a publication rule that cannot be executed, and silently ignoring it
     /// would publish records the catalog says it does not publish.
     InvalidPolicyValue,
+    InvalidInterpretation,
     /// An unrecognized metadata key within one edit of a recognized
     /// result-policy key. Non-fatal: free-form annotation is legal, so this
     /// cannot be an error — but a misspelled policy key is inert, and inert
@@ -199,6 +200,8 @@ pub enum DiagnosticCode {
     /// remains writable as `\u0022…\u0022`. The check produces no diagnostic on
     /// any tracked catalog.
     QuotedAttributeValue,
+    /// A definition changed a bundled annotation without an explicit `override`.
+    BundleOverrideRequired,
     /// A `key: none` annotation for a key no `defaults` block supplies.
     ///
     /// `none` is not a value: it deletes the entry the `defaults` block would
@@ -371,6 +374,7 @@ impl DiagnosticCode {
             Self::TokenTestExpansionTooLarge => "TokenTestExpansionTooLarge",
             Self::UnverifiableExamples => "UnverifiableExamples",
             Self::InvalidPolicyValue => "InvalidPolicyValue",
+            Self::InvalidInterpretation => "InvalidInterpretation",
             Self::SuspiciousPolicyKey => "SuspiciousPolicyKey",
             Self::IneffectivePolicy => "IneffectivePolicy",
             Self::ImplausiblePolicyValue => "ImplausiblePolicyValue",
@@ -386,6 +390,7 @@ impl DiagnosticCode {
             Self::ReservedName => "ReservedName",
             Self::PipeInBareValue => "PipeInBareValue",
             Self::QuotedAttributeValue => "QuotedAttributeValue",
+            Self::BundleOverrideRequired => "BundleOverrideRequired",
             Self::UnsetWithoutDefault => "UnsetWithoutDefault",
             Self::UnsetOutsideAnnotation => "UnsetOutsideAnnotation",
             Self::DuplicateGroupDefinition => "DuplicateGroupDefinition",

@@ -1151,7 +1151,7 @@ const PINNED_DEFINITION_COUNTS: &[(&str, usize)] = &[
     ("patterns/ud-valency.lx", 7),
     // Four linear-rule fragments and the two arms of the ヲ格 comparison; the
     // two sets add no definition CST node.
-    ("patterns/wo-predicate-dep.lx", 6),
+    ("patterns/wo-predicate-dep.lx", 7),
     ("scripts/test/test_metadata.lx", 1),
     ("tests/fixtures/selective-patterns.lx", 10),
     ("lingrep/tests/fixtures/one.lx", 1),
@@ -1210,6 +1210,108 @@ fn pinned_tree_sitter_parses_repository_catalogs() {
 }
 
 #[test]
+fn pinned_tree_sitter_exposes_bundle_application_and_interpretation_fields() {
+    let source = concat!(
+        "bundle b\n  slot: \"x\"\nend\nuse @b\noverride slot: none\n",
+        "interpret $past as ending {tense: \"past\"}\nclassify by ending\np := (?<past> [])."
+    );
+    let tree = parse_with_pinned_grammar(source);
+    let root = tree.root_node();
+    assert!(!root.has_error(), "{root}");
+    for (index, kind, fields) in [
+        (0, "bundle_block", &[("name", "identifier", "b")][..]),
+        (1, "bundle_use", &[("name", "identifier", "b")][..]),
+        (
+            2,
+            "override_entry",
+            &[("entry", "metadata_entry", "slot: none")][..],
+        ),
+        (
+            3,
+            "interpret_entry",
+            &[
+                ("capture", "capture_reference", "$past"),
+                ("role", "identifier", "ending"),
+                ("labels", "metadata_map", "{tense: \"past\"}"),
+            ][..],
+        ),
+        (4, "classify_entry", &[("role", "identifier", "ending")][..]),
+    ] {
+        let node = root.named_child(index).unwrap();
+        assert_eq!(node.kind(), kind);
+        for &(field, expected_kind, spelling) in fields {
+            let child = node.child_by_field_name(field).unwrap();
+            assert_eq!(child.kind(), expected_kind);
+            assert_eq!(source.get(child.byte_range()), Some(spelling));
+        }
+    }
+}
+
+#[test]
+fn interpretation_keywords_keep_legacy_names_and_metadata() {
+    let source = r#"
+schema
+  interpret: string required
+  classify: string required
+  classify_by: string
+end
+defaults
+  interpret: "reading"
+  classify: "category"
+end
+classify_by: "annotation"
+interpret: "reading"
+interpret := [text=x].
+classify := @interpret.
+"#;
+    let tree = parse_with_pinned_grammar(source);
+    assert!(!tree.root_node().has_error(), "{}", tree.root_node());
+    let compiled = compile_catalog(
+        PatternSource::named("legacy", source),
+        CompileLimits::default(),
+    )
+    .unwrap();
+    for name in ["interpret", "classify"] {
+        let pattern = &compiled.matcher.patterns()[name];
+        assert_eq!(pattern.metadata["interpret"], "reading");
+        assert_eq!(pattern.metadata["classify"], "category");
+    }
+    assert_eq!(
+        compiled.matcher.patterns()["interpret"].metadata["classify_by"],
+        "annotation"
+    );
+    let tokens = [token_with_attrs(&[(TokenAttributeIndex::Orth, "x")])];
+    assert_eq!(
+        compiled.matcher.find_matches(&tokens),
+        [full_match("classify", 0, 1), full_match("interpret", 0, 1)]
+    );
+}
+
+#[test]
+fn accumulated_interpretation_diagnostics_point_at_the_role_or_capture_in_its_document() {
+    for (clause, operand) in [
+        ("interpret $missing as tense {value: true}", "$missing"),
+        (
+            "interpret $a as tense {value: true}\nclassify by aspect",
+            "aspect",
+        ),
+    ] {
+        let second = format!("# 二番目\n{clause}\np := (?<a> x).");
+        let mut builder = FsmBuilder::new();
+        builder
+            .add_document(PatternSource::named("first", "first := x."))
+            .unwrap();
+        builder
+            .add_document(PatternSource::named("second", &second))
+            .unwrap();
+        let errors = builder.build().err().expect("invalid analytical binding");
+        let location = errors.diagnostics[0].location();
+        assert_eq!(location.source_name(), "second");
+        assert_eq!(second.get(location.byte_range()), Some(operand));
+    }
+}
+
+#[test]
 fn pinned_grammar_parses_match_mode_operators() {
     // Grammar acceptance only. Lowering is asserted separately; this test
     // pins the operators the pinned revision must be able to parse at all,
@@ -1229,6 +1331,18 @@ fn pinned_grammar_parses_match_mode_operators() {
             "pinned grammar must parse {source} without recovery nodes"
         );
     }
+}
+
+#[test]
+fn pinned_tree_sitter_exposes_each_span_operand() {
+    let tree = parse_with_pinned_grammar(
+        r#"span := (?<a> []) (?<b> []) where span(sudachi.c, $a.whole@"name->with punctuation" -> $b)."#,
+    );
+    let root = tree.root_node();
+    assert!(!root.has_error(), "{root}");
+    assert_eq!(count_named_nodes(root, "span_constraint"), 1);
+    assert_eq!(count_named_nodes(root, "span_layer_name"), 1);
+    assert_eq!(count_named_nodes(root, "span_operand"), 2);
 }
 
 #[test]
@@ -4348,6 +4462,7 @@ fn normalized_grammar_preserves_precedence_and_complete_matches() {
             end: 3,
             captures: Box::default(),
             graph_bindings: Box::default(),
+            interpretations: Box::default(),
             lexical: None,
         }]
     );
@@ -5117,6 +5232,35 @@ fn large_literal_quantifier_exhausts_generated_owned_bytes_atomically() {
 }
 
 #[test]
+fn bundle_fan_out_is_admitted_before_builder_retains_each_document() {
+    let limits = CompileLimits::default()
+        .tightened(|limits| {
+            limits.max_generated_owned_bytes = 6_000;
+        })
+        .unwrap();
+    let data = "z".repeat(4096);
+    let with_bundle =
+        |name: &str| format!("bundle b\n note: \"{data}\"\nend\nuse @b\n{name} := x.\n");
+    let first = with_bundle("first");
+    let second = with_bundle("second");
+    let mut builder = FsmBuilder::with_limits(limits);
+    builder
+        .add_definition(PatternSource::named("first", &first))
+        .unwrap();
+    let failure = builder
+        .add_document(PatternSource::named("second", &second))
+        .expect_err("second bundle expansion exceeds remaining bytes");
+    assert_eq!(failure.diagnostics[0].code(), DiagnosticCode::LimitExceeded);
+    let location = failure.diagnostics[0].location();
+    assert_eq!(location.source_name(), "second");
+    assert_eq!(second.get(location.byte_range()), Some("use @b"));
+    builder
+        .add_document(PatternSource::named("retry", "second := y."))
+        .unwrap();
+    assert!(builder.build().is_ok());
+}
+
+#[test]
 fn shared_metadata_fan_out_exhausts_generated_owned_bytes_atomically() {
     const DEFINITIONS: usize = 32;
     let metadata_value = "m".repeat(8_192);
@@ -5563,6 +5707,7 @@ fn typed_compilation_keeps_full_match_output_and_canonical_order() {
             end: 1,
             captures: Box::default(),
             graph_bindings: Box::default(),
+            interpretations: Box::default(),
             lexical: None,
         },
         Match {
@@ -5571,6 +5716,7 @@ fn typed_compilation_keeps_full_match_output_and_canonical_order() {
             end: 1,
             captures: Box::default(),
             graph_bindings: Box::default(),
+            interpretations: Box::default(),
             lexical: None,
         },
     ];
@@ -5657,6 +5803,7 @@ fn full_match(pattern: &str, start: usize, end: usize) -> Match {
         end,
         captures: Box::default(),
         graph_bindings: Box::default(),
+        interpretations: Box::default(),
         lexical: None,
     }
 }

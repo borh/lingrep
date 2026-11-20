@@ -79,41 +79,37 @@ max_nesting: {depth: 0, witness: ["これは重要である|。"], divergence: [
 fragment TRAILING_APPARATUS := [upos=PUNCT]+.
 
 
-role: "research"
-layer: "S3"
-category: "論文運営・読者誘導"
+bundle reader_guidance
+  role: "research"
+  layer: "S3"
+  category: "論文運営・読者誘導"
+end
+
+use @reader_guidance
 examples: ["本稿の結論としておく", "仮説としておく"]
 priority_order: 0
 research_classes: ["S1B"]
 としておく := [text=と] [text=し] @VERB_TE [lemma=置く].
 
-role: "research"
-layer: "S3"
-category: "論文運営・読者誘導"
+use @reader_guidance
 examples: ["結論としておきたい"]
 priority_order: 0
 research_classes: ["S1B", "S2I"]
 としておきたい := [text=と] [text=し] @VERB_TE [lemma=置く] [text=たい].
 
-role: "research"
-layer: "S3"
-category: "論文運営・読者誘導"
+use @reader_guidance
 examples: ["仮定としておこう"]
 priority_order: 0
 research_classes: ["S1B", "S2I"]
 としておこう := [text=と] [text=し] @VERB_TE [lemma=置く & unidic.cform=意志推量形].
 
-role: "research"
-layer: "S3"
-category: "論文運営・読者誘導"
+use @reader_guidance
 examples: ["概説にとどめる", "触れにとどめる"]
 priority_order: 0
 research_classes: ["S1B"]
 にとどめる := [text=に] [lemma=留める].
 
-role: "research"
-layer: "S3"
-category: "論文運営・読者誘導"
+use @reader_guidance
 examples: ["言及としておくにとどめる"]
 priority_order: 0
 research_classes: ["S1B"]

@@ -344,6 +344,8 @@ pub struct QueryRun {
     pub requested_context: u64,
     pub requested_limit: Option<u64>,
     pub requested_top: Option<u64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub by_span: Option<String>,
     pub execution_limits: ExecutionLimits,
     pub temporary_storage_limits: TemporaryStorageLimits,
     pub traversal_limits: TraversalLimits,
@@ -727,6 +729,9 @@ pub struct MatchData {
     pub sequence: u64,
     pub pattern: String,
     pub span: SourceSpan,
+    /// Sentence-local annotation IDs enclosing the complete published match.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub span_ids: Vec<u64>,
     /// The published span's code-point range in the sentence text.
     ///
     /// Absent when the run cannot supply offsets at all — see the `run`
@@ -757,6 +762,10 @@ pub struct MatchData {
     /// Named enhanced graph assignments in canonical binding-kind/name order.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub graph_bindings: Vec<GraphBinding>,
+    /// Distinct joint assignments for this match, in raw sentence token coordinates.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    #[schemars(schema_with = "interpretations_schema")]
+    pub interpretations: Vec<lingrep_core::fsm::Interpretation>,
     pub corpus_sentence_ordinal: u64,
     pub source_name: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -798,13 +807,26 @@ pub struct MatchData {
 /// sentence's full token stream.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct MatchEvidence {
-    /// The whole sentence's token texts, concatenated as `surface` is.
+    /// Sentence annotations indexed by a match's span IDs and each span's governor.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub spans: Vec<EvidenceSpan>,
+    /// The whole sentence's token spellings, joined with the same spacing as `surface`.
     pub sentence: String,
     /// The span's words, every captured word, and every word a graph binding
     /// names, in sentence order. A graph-bound word outside the span is
     /// included whatever `--context` requests; an empty enhanced node has no
     /// word and appears only in `graph_bindings`.
     pub words: Vec<EvidenceWord>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
+pub struct EvidenceSpan {
+    pub kind: String,
+    pub start: u64,
+    pub end: u64,
+    pub head: Option<u64>,
+    pub label: Option<String>,
+    pub governor: Option<u64>,
 }
 
 /// One word of [`MatchEvidence`]. A value the token does not carry is `null`.
@@ -1131,6 +1153,27 @@ pub fn normalize_run_variance(event: &mut serde_json::Value) {
         }
         _ => {}
     }
+}
+
+fn interpretations_schema(_: &mut schemars::SchemaGenerator) -> schemars::Schema {
+    let scalar = serde_json::json!({"type": ["string", "integer", "boolean"]});
+    schemars::json_schema!({
+        "type": "array",
+        "items": {
+            "type": "object", "required": ["roles"],
+            "properties": {
+                "roles": {"type": "array", "items": {
+                    "type": "object", "required": ["role", "start", "end", "labels"],
+                    "properties": {
+                        "role": {"type": "string"}, "start": {"type": "integer", "minimum": 0},
+                        "end": {"type": "integer", "minimum": 0},
+                        "labels": {"type": "object", "additionalProperties": scalar}
+                    }
+                }},
+                "classification": {"type": "object", "additionalProperties": {"type": "array", "items": scalar}}
+            }
+        }
+    })
 }
 
 fn source_metadata_schema(_: &mut schemars::SchemaGenerator) -> schemars::Schema {

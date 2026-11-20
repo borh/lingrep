@@ -161,3 +161,16 @@ test('token details gloss values as the evidence table does, say how a word outs
   const variant=[token(0,'ガラス','NOUN',0,'root',{surface:'ｶﾞﾗｽ'})];
   assert.deepEqual(tokenDetails(variant,0,row,names,'ja','文の中心').basics.slice(0,2).map(({key,name,values})=>[key,name,values.map(({value})=>value)]),[['surface','表層形',['ｶﾞﾗｽ']],['text','照合形',['ガラス']]]);
 });
+
+test('stored bunsetsu governors address the sentence span table across layers', async () => {
+  const {annotatedBunsetsu} = await import('./dependency.js');
+  const spans = [
+    {kind:'bunsetsu',start:0,end:2,head:0,governor:2,label:'NP'},
+    {kind:'entity',start:0,end:1,head:null,governor:null,label:null},
+    {kind:'bunsetsu',start:2,end:3,head:2,governor:null,label:'VP'},
+  ];
+  assert.deepEqual(annotatedBunsetsu(spans, unlabelled([['猫','NOUN',3,'nsubj'],['が','ADP',1,'case'],['来る','VERB',0,'root']])), [
+    {first:0,last:1,head:1,rel:'nsubj'},
+    {first:2,last:2,head:null,rel:''},
+  ]);
+});

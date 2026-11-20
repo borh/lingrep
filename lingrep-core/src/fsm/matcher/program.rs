@@ -1,3 +1,5 @@
+mod interpret;
+
 use super::assertion::AssertionSession;
 use super::predicate::{
     CompiledPositionAssertion, Members, PREDICATE_SITE_CAPTURE_PREVIOUS_TOKEN,
@@ -183,7 +185,7 @@ fn compact_string_heap_bytes(value: &compact_str::CompactString) -> usize {
 }
 
 /// Upper storage estimate for maps constructed only by insertion and cloning.
-fn btree_storage_bytes<K, V>(entries: usize) -> usize {
+pub(super) fn btree_storage_bytes<K, V>(entries: usize) -> usize {
     // Rust's alloc/collections/btree/node.rs uses eleven-slot nodes and a five-entry non-root minimum:
     // https://doc.rust-lang.org/src/alloc/collections/btree/node.rs.html
     const CAPACITY: usize = 11;
@@ -446,6 +448,40 @@ impl Program {
         self.matches_with(budget, predicates, tokens, session, Some(graph))
     }
 
+    fn span_constraints_hold(
+        &self,
+        candidate: &Candidate,
+        start: usize,
+        spans: &[crate::token_match::SentenceSpan],
+    ) -> bool {
+        use crate::fsm::compiler::model::SpanPosition;
+        self.definition.span_constraints.iter().all(|path| {
+            spans.iter().any(|leaf| {
+                let mut current = Some(leaf);
+                path.nodes.iter().all(|operand| {
+                    let Some(span) = current else {
+                        return false;
+                    };
+                    current = span.governor.and_then(|id| spans.get(id));
+                    let range = match operand.capture {
+                        Some(id) => candidate.slots[id.index()],
+                        None => Some((start, candidate.position)),
+                    };
+                    span.kind == path.kind
+                        && operand
+                            .label
+                            .as_ref()
+                            .is_none_or(|l| span.label.as_ref() == Some(l))
+                        && range.is_some_and(|(a, b)| match operand.position {
+                            SpanPosition::Inside => a < b && span.start <= a && b <= span.end,
+                            SpanPosition::Whole => (a, b) == (span.start, span.end),
+                            SpanPosition::Head => span.head == Some(a) && b - a == 1,
+                        })
+                })
+            })
+        })
+    }
+
     fn matches_with<S: TokenSequence + ?Sized, A: AssertionLookup>(
         &self,
         budget: &mut MatchBudget,
@@ -455,6 +491,17 @@ impl Program {
         enhanced_graph: Option<&EnhancedGraph>,
     ) -> Result<Vec<ProgramMatch>, MatchResourceError> {
         budget.output.check()?;
+        let spans = tokens.spans();
+        let constraint_count = self
+            .definition
+            .span_constraints
+            .iter()
+            .map(|path| path.nodes.len().saturating_sub(1).max(1))
+            .sum::<usize>();
+        if constraint_count > 0 && spans.is_empty() {
+            return Ok(Vec::new());
+        }
+        let span_probes = spans.len().saturating_mul(constraint_count);
         let mut matches = Vec::new();
         let mut captured_negative_observation = None;
         for start in 0..tokens.len() {
@@ -480,6 +527,12 @@ impl Program {
                     )
                 })
                 .map(|candidate| {
+                    if span_probes > 0 {
+                        budget.work(&self.definition.name, span_probes)?;
+                        if !self.span_constraints_hold(&candidate, start, spans) {
+                            return Ok((candidate, Vec::new()));
+                        }
+                    }
                     let assignments = self.enhanced_assignments(
                         budget,
                         &candidate,

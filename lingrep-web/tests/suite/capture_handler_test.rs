@@ -308,6 +308,7 @@ fn outer_capture_fragment(site: OuterCaptureSite, payload: &str) -> String {
         OuterCaptureSite::Text => capture.text = payload.into(),
     }
     HitDetailFragment {
+        interpretations: &[],
         overlaps: Vec::new(),
         reference_ordinal: 0,
         workbench_id: "wb",
@@ -330,6 +331,7 @@ fn outer_capture_fragment(site: OuterCaptureSite, payload: &str) -> String {
 #[test]
 fn hit_detail_renders_typed_graph_bindings() {
     let html = HitDetailFragment {
+        interpretations: &[],
         overlaps: Vec::new(),
         reference_ordinal: 0,
         workbench_id: "wb",

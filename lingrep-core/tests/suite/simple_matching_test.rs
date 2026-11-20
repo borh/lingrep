@@ -65,6 +65,7 @@ fn scalar_predicates_distinguish_absent_empty_equal_and_unequal_values(tc: hegel
                         end: start + 1,
                         captures: Box::default(),
                         graph_bindings: Box::default(),
+                        interpretations: Box::default(),
                         lexical: None,
                     });
                 }

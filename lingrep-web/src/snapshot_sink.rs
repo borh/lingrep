@@ -352,11 +352,11 @@ impl SnapshotSink {
     /// Joins one match's surface into the scratch, keeping the prefix
     /// distinct.
     ///
-    /// The join is `lingrep_core::utils::join_orth` over the matched tokens' `text`,
-    /// which is exactly how `inspection::kwic_orth_split` builds the KWIC key
-    /// a reader clicks. Two derivations of one string is a hazard, and it is
-    /// the reason both go through `join_orth`: a divergence would silently
-    /// leave a selectable variation with no counted row.
+    /// The join is `lingrep_core::token_match::push_display_text`, and
+    /// `inspection::kwic_orth_split` builds the KWIC key a reader clicks from
+    /// the same per-token texts and spaces. Two derivations of one string is a
+    /// hazard: a divergence would silently leave a selectable variation with
+    /// no counted row.
     fn stage_surface(
         &mut self,
         pattern: PatternKey,
@@ -369,10 +369,7 @@ impl SnapshotSink {
         let (slot_pattern, joined) = &mut self.surface_scratch[self.surface_used];
         *slot_pattern = pattern;
         joined.clear();
-        lingrep_core::utils::join_orth_into(
-            joined,
-            span.filter_map(|index| lingrep_core::token_match::display_surface(sentence, index)),
-        );
+        lingrep_core::token_match::push_display_text(joined, sentence, span);
         // A sentence carrying one surface of one pattern twice is one
         // sentence, which is the unit the section table counts in.
         let duplicate = self.surface_scratch[..self.surface_used]
@@ -428,6 +425,7 @@ impl SnapshotSink {
                 end: chain.end,
                 captures: Box::default(),
                 graph_bindings: Box::default(),
+                interpretations: Box::default(),
                 lexical: None,
             });
         }
@@ -516,6 +514,7 @@ impl SnapshotSink {
             pattern_key,
             captures: captures.into_boxed_slice(),
             graph_bindings: matched.graph_bindings.clone(),
+            interpretations: matched.interpretations.clone(),
             lexical: matched
                 .lexical
                 .as_ref()
@@ -730,6 +729,11 @@ fn reference_bytes(reference: &MatchRef) -> usize {
         + std::mem::size_of_val(reference.captures.as_ref())
         + std::mem::size_of_val(reference.graph_bindings.as_ref())
         + reference
+            .interpretations
+            .iter()
+            .map(lingrep_core::fsm::Interpretation::retained_bytes)
+            .sum::<usize>()
+        + reference
             .graph_bindings
             .iter()
             .map(|binding| match binding {
@@ -904,6 +908,7 @@ impl MatchSink for SnapshotSink {
                 end: record.end,
                 captures: record.components.clone(),
                 graph_bindings: record.raw.graph_bindings.clone(),
+                interpretations: record.raw.interpretations.clone(),
                 lexical: record.raw.lexical.clone(),
             })
             .collect::<Vec<_>>();
@@ -951,6 +956,7 @@ mod tests {
             end: span.end,
             captures: Box::default(),
             graph_bindings: Box::default(),
+            interpretations: Box::default(),
             lexical: None,
         }
     }
@@ -962,6 +968,7 @@ mod tests {
             end: 1,
             captures: Box::default(),
             graph_bindings: Box::default(),
+            interpretations: Box::default(),
             lexical: None,
         }
     }
@@ -991,6 +998,7 @@ mod tests {
             }]
             .into_boxed_slice(),
             graph_bindings: Box::default(),
+            interpretations: Box::default(),
             lexical: None,
         }
     }

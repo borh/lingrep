@@ -19,11 +19,23 @@ pub struct SentenceMatcher<'a> {
 /// Batch-scoped scheduler for schema-bound token storage.
 pub struct BoundSentenceMatcher<'a> {
     matcher: &'a BoundCatalog,
+    cancel: Option<&'a crate::execution::CancellationFlag>,
 }
 
 impl<'a> BoundSentenceMatcher<'a> {
     pub fn new(matcher: &'a BoundCatalog) -> Self {
-        Self { matcher }
+        Self {
+            matcher,
+            cancel: None,
+        }
+    }
+
+    pub(crate) fn with_cancellation(
+        mut self,
+        cancel: &'a crate::execution::CancellationFlag,
+    ) -> Self {
+        self.cancel = Some(cancel);
+        self
     }
 
     pub fn match_all(
@@ -31,7 +43,7 @@ impl<'a> BoundSentenceMatcher<'a> {
         pool: &rayon::ThreadPool,
         sentences: &[BoundSentenceInput],
     ) -> Result<Vec<Vec<Match>>, BoundExecutionError> {
-        let output = Arc::new(OutputBudget::default());
+        let output = Arc::new(OutputBudget::default().with_cancellation(self.cancel));
         output
             .reserve_buffer::<Result<Vec<Match>, BoundExecutionError>>(
                 sentences.len().saturating_mul(4),
@@ -75,7 +87,7 @@ impl<'a> BoundSentenceMatcher<'a> {
         }
         let stride = reach.len();
         debug_assert_eq!(links.len(), sentences.len() * stride);
-        let output = Arc::new(OutputBudget::default());
+        let output = Arc::new(OutputBudget::default().with_cancellation(self.cancel));
         output
             .reserve_buffer::<Result<Vec<Match>, BoundExecutionError>>(
                 targets.len().saturating_mul(4),

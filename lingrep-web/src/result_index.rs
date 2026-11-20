@@ -652,6 +652,7 @@ mod tests {
                 },
             ]
             .into(),
+            interpretations: Box::default(),
             lexical: Some(LexicalMatchRef {
                 term: "語彙".into(),
                 matched_by: vec!["lemma".into(), "norm".into()].into(),

@@ -150,6 +150,7 @@ fn matched(pattern: &str, start: usize, end: usize, captures: &[(&str, usize, us
             .collect::<Vec<_>>()
             .into_boxed_slice(),
         graph_bindings: Box::default(),
+        interpretations: Box::default(),
         lexical: None,
     }
 }

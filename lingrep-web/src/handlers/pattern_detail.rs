@@ -101,7 +101,7 @@ async fn hit_detail(
         pattern_key,
         reference_ordinal,
         &view,
-        &reference.graph_bindings,
+        reference,
         provenance_view,
         overlaps,
         format!(
@@ -117,7 +117,7 @@ fn render_hit_detail(
     pattern_key: usize,
     reference_ordinal: usize,
     inspection: &MatchInspection,
-    graph_bindings: &[GraphBinding],
+    reference: &crate::snapshot::MatchRef,
     provenance: Option<HitProvenance>,
     overlaps: Vec<crate::inspection::OverlapCandidate>,
     read: String,
@@ -170,7 +170,12 @@ fn render_hit_detail(
         tokens: inspection.tokens.iter().map(token_data).collect(),
         capture_lanes,
         captures,
-        graph_bindings: graph_bindings.iter().map(graph_binding_data).collect(),
+        interpretations: &reference.interpretations,
+        graph_bindings: reference
+            .graph_bindings
+            .iter()
+            .map(graph_binding_data)
+            .collect(),
         provenance,
         read,
     };

@@ -14,6 +14,7 @@ fn repeated_text_matches_every_occurrence_in_order() {
             end: start + 1,
             captures: Box::default(),
             graph_bindings: Box::default(),
+            interpretations: Box::default(),
             lexical: None,
         })
         .collect::<Vec<_>>();
@@ -61,6 +62,7 @@ fn trailing_line_endings_preserve_matches() {
         end: 1,
         captures: Box::default(),
         graph_bindings: Box::default(),
+        interpretations: Box::default(),
         lexical: None,
     }];
     for ending in ["", "\n", "\r\n", "\r"] {

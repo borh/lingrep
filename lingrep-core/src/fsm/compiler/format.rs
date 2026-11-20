@@ -79,6 +79,7 @@ struct Leaf<'a> {
     text: &'a str,
     start: usize,
     end: usize,
+    needs_leading_space: bool,
     is_comment: bool,
     /// Indentation to supply if this leaf opens a line and the author supplied
     /// none, in two-space units. Derived from the parse tree, which is what
@@ -87,7 +88,7 @@ struct Leaf<'a> {
     fallback_indent: usize,
 }
 
-/// A block whose body is written one level in: `defaults`, `schema`, `policy`.
+/// A block whose entries are indented one level.
 ///
 /// The block keyword and the closing `end` are direct token children of the
 /// block node and stay at the block's own level; everything between them is a
@@ -95,7 +96,7 @@ struct Leaf<'a> {
 fn is_block(node: Node<'_>) -> bool {
     matches!(
         node.kind(),
-        "defaults_block" | "schema_block" | "policy_block"
+        "defaults_block" | "bundle_block" | "schema_block" | "policy_block"
     )
 }
 
@@ -136,7 +137,9 @@ fn render(root: Node<'_>, source: &str) -> String {
                     output.push('\n');
                 }
                 output.push_str(&indentation_for(original_gap, leaf));
-            } else if needs_space(previous.text, leaf.text, next, leaf.is_comment) {
+            } else if leaf.needs_leading_space
+                || needs_space(previous.text, leaf.text, next, leaf.is_comment)
+            {
                 output.push(' ');
             }
         }
@@ -179,7 +182,7 @@ fn indentation_for(original_gap: &str, leaf: Leaf<'_>) -> String {
 /// would open if the author supplied none.
 ///
 /// Three levels exist and no more, because lingrep patterns nests no further: a statement at
-/// the document level, a statement inside a `defaults`/`schema`/`policy` block,
+/// the document level, a statement inside a block,
 /// and a continuation line of either. A comment is a tree-sitter extra and so
 /// sits where it was written — beside a statement, or inside one — and picks up
 /// that position's level for free.
@@ -266,6 +269,11 @@ fn push_leaf<'source>(
         text,
         start,
         end,
+        needs_leading_space: text == "{"
+            && node
+                .parent()
+                .and_then(|map| map.parent())
+                .is_some_and(|p| p.kind() == "interpret_entry"),
         is_comment,
         fallback_indent,
     });
@@ -623,6 +631,12 @@ mod tests {
         assert_eq!(
             formatted("policy\nresolve all rank: [longest, start, end, pattern].\nend\n"),
             "policy\n  resolve all rank: [longest, start, end, pattern].\nend\n"
+        );
+        assert_eq!(
+            formatted(
+                "bundle family\nslot: \"one\"\nend\nuse @family\noverride slot: \"two\"\np := x.\n"
+            ),
+            "bundle family\n  slot: \"one\"\nend\nuse @family\noverride slot: \"two\"\np := x.\n"
         );
         // A closer belongs one level back out, so a multi-line set literal does
         // not acquire an indent on the line that ends it.

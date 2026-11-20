@@ -37,7 +37,7 @@ const DOCUMENTS: &str = "\
 {\"text\":\"猫が猫を見る。犬。\",\"metadata\":{\"genre\":\"novel\",\"tags\":[\"x\",\"y\"],\"year\":2001}}
 {\"text\":\"猫。\",\"metadata\":{\"genre\":\"essay\",\"tags\":[\"x\"],\"year\":2002}}
 {\"text\":\"犬が鳥を見る。\",\"metadata\":{\"genre\":\"novel\",\"year\":2001}}
-{\"text\":\"猫と犬。\",\"metadata\":{\"genre\":\"poem\",\"tags\":[\"y\"],\"year\":2004}}
+{\"text\":\"猫 と犬。\",\"metadata\":{\"genre\":\"poem\",\"tags\":[\"y\"],\"year\":2004}}
 {\"text\":\"鳥。\",\"metadata\":{\"genre\":\"essay\",\"tags\":[\"z\",\"x\"],\"year\":2003}}
 {\"text\":\"猫。猫。\",\"metadata\":{\"tags\":[\"y\"],\"year\":2003}}
 {\"text\":\"犬。鳥。猫。\",\"metadata\":{\"genre\":\"novel\",\"tags\":[\"z\"],\"year\":2005}}
@@ -1804,6 +1804,11 @@ fn an_entry_profile_equals_ling_table_and_its_lines_equal_ling_matches() {
         .iter()
         .map(|pattern| (*pattern, entries(&server, pattern)))
         .collect::<BTreeMap<_, _>>();
+    let spaced = groups["pair"]
+        .iter()
+        .find(|group| group_text(group) == "猫 と")
+        .unwrap();
+    check_lines(&server, &fixture, "pair", spaced, &Conditions::new(), 2);
     let named = |pairs: &[(&'static str, Condition)]| pairs.iter().cloned().collect::<Conditions>();
     let cat = groups["cat"][0].clone();
     for conditions in [

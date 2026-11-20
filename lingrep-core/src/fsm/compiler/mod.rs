@@ -251,6 +251,7 @@ pub(crate) struct DefinitionAccumulator {
     labels: Vec<model::ParsedLabelDeclaration>,
     sources: SourceRegistry,
     stats: CompilerStats,
+    bundle_copy_bytes: usize,
     /// Every non-fatal lowering diagnostic contributed so far.
     ///
     /// Accumulated like the definitions and for the same reason: the catalog is
@@ -285,6 +286,7 @@ impl DefinitionAccumulator {
             labels: Vec::new(),
             sources: SourceRegistry::default(),
             stats: CompilerStats::default(),
+            bundle_copy_bytes: 0,
             lowering_warnings: Vec::new(),
             policies: Vec::new(),
         }
@@ -295,7 +297,10 @@ impl DefinitionAccumulator {
         source: PatternSource<'_>,
         limits: &CompileLimits,
     ) -> Result<(), CompileError> {
-        let lowered = lower_definition_with_stats(&source, limits)?;
+        let lowered = lower_definition_with_stats(
+            &source,
+            &limits.after_bundle_copies(self.bundle_copy_bytes),
+        )?;
         let mut definition = lowered.definition;
         let source_label = lowered.sources.source_label(SourceId::new(0));
         let single = ParsedProgram {
@@ -328,6 +333,7 @@ impl DefinitionAccumulator {
         self.near.extend(lowered.near);
         self.lowering_warnings.extend(lowered.warnings);
         self.stats = next_stats;
+        self.bundle_copy_bytes += lowered.bundle_copy_bytes;
         Ok(())
     }
 
@@ -336,7 +342,10 @@ impl DefinitionAccumulator {
         source: PatternSource<'_>,
         limits: &CompileLimits,
     ) -> Result<(), CompileError> {
-        let lowered = lower_document_with_stats(&source, limits)?;
+        let lowered = lower_document_with_stats(
+            &source,
+            &limits.after_bundle_copies(self.bundle_copy_bytes),
+        )?;
         let mut program = lowered.program;
         let source_label = program.sources.source_label(SourceId::new(0));
         let increment = measure_program(&program, lowered.source_bytes, lowered.metadata_bytes)?;
@@ -382,6 +391,7 @@ impl DefinitionAccumulator {
             }));
         self.lowering_warnings.extend(lowered.warnings);
         self.stats = next_stats;
+        self.bundle_copy_bytes += lowered.bundle_copy_bytes;
         Ok(())
     }
 
@@ -455,7 +465,7 @@ fn compile_program(
     mut lowering_warnings: Vec<Diagnostic>,
     vectors: Option<&dyn WordVectors>,
 ) -> Result<CompileOutput, CompileError> {
-    lowering_warnings.extend(text_key::folded_set_warnings(&program));
+    lowering_warnings.extend(text_key::check_set_references(&program)?);
     resolve_near(&mut program, vectors);
     let near_tests: Vec<model::NearTest> = program
         .near
@@ -1028,13 +1038,27 @@ fn second_policy_block(
 
 fn remap_definition_source(definition: &mut ParsedDefinition, source: SourceId) {
     definition.span = definition.span.with_source(source);
+    if let Some(recipe) = &mut definition.interpretation {
+        for role in recipe.captures.values_mut() {
+            role.span = role.span.with_source(source);
+        }
+        if let Some((_, span)) = &mut recipe.classify_by {
+            *span = span.with_source(source);
+        }
+    }
     if let Some(key) = &mut definition.key {
         key.source_span = key.source_span.with_source(source);
         for span in key.attribute_spans.iter_mut().flatten() {
             *span = span.with_source(source);
         }
     }
-    if let model::ParsedDefinitionBody::Pattern { expr, .. } = &mut definition.body {
+    if let model::ParsedDefinitionBody::Pattern {
+        expr, span_paths, ..
+    } = &mut definition.body
+    {
+        for operand in span_paths.iter_mut().flat_map(|path| &mut path.operands) {
+            operand.source = operand.source.with_source(source);
+        }
         remap_expr_source(expr, source);
     }
 }

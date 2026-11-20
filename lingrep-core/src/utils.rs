@@ -59,65 +59,43 @@ fn is_spaced_script_letter(character: char) -> bool {
     character.is_alphabetic() && !is_cjk_or_fullwidth(character)
 }
 
-/// Join token orthographies for display.
+/// Whether two adjacent token texts are both written in a script that puts
+/// spaces between words: `before` ends, and `after` begins, with a letter
+/// outside the Japanese and fullwidth ranges.
 ///
-/// Japanese and fullwidth runs concatenate. A single space is inserted only
-/// between adjacent alphabetic tokens outside those ranges. Empty values are
-/// transparent and preserve the preceding boundary character.
-pub fn join_orth<'a>(orths: impl IntoIterator<Item = &'a str>) -> String {
-    let mut joined = String::new();
-    join_orth_into(&mut joined, orths);
-    joined
-}
-
-/// [`join_orth`] appending into a caller-owned buffer.
-///
-/// The same function; the buffer is the point. A caller joining one surface
-/// per match over a whole corpus would otherwise allocate per match, and
-/// clearing a reused `String` keeps its capacity. `joined` is appended to
-/// rather than cleared, so the caller decides.
-pub fn join_orth_into<'a>(joined: &mut String, orths: impl IntoIterator<Item = &'a str>) {
-    let mut previous_last = joined.chars().next_back();
-    for orth in orths {
-        if let (Some(previous), Some(first)) = (previous_last, orth.chars().next())
-            && is_spaced_script_letter(previous)
-            && is_spaced_script_letter(first)
-        {
-            joined.push(' ');
-        }
-        joined.push_str(orth);
-        if let Some(last) = orth.chars().next_back() {
-            previous_last = Some(last);
-        }
-    }
+/// [`crate::token_match::display_space_before`] uses this only when a sentence
+/// carries no source spans. Spans answer the question exactly; this guess is
+/// wrong wherever an analyzer splits a Latin word into several tokens.
+pub(crate) fn spaced_script_boundary(before: &str, after: &str) -> bool {
+    matches!(
+        (before.chars().next_back(), after.chars().next()),
+        (Some(last), Some(first))
+            if is_spaced_script_letter(last) && is_spaced_script_letter(first)
+    )
 }
 
 #[cfg(test)]
-mod join_orth_tests {
-    use super::join_orth;
+mod spaced_script_boundary_tests {
+    use super::spaced_script_boundary;
 
     #[test]
-    fn joins_japanese_without_spaces_and_latin_with_spaces() {
-        assert_eq!(join_orth(["今日", "は"]), "今日は");
-        assert_eq!(join_orth(["machine", "learning"]), "machine learning");
-        assert_eq!(join_orth(["を", "DNA"]), "をDNA");
-    }
-
-    #[test]
-    fn empty_values_are_transparent() {
-        assert_eq!(join_orth(["alpha", "", "beta"]), "alpha beta");
-        assert_eq!(join_orth(["", "解析", ""]), "解析");
-    }
-
-    #[test]
-    fn digits_punctuation_and_fullwidth_letters_do_not_insert_spaces() {
-        assert_eq!(join_orth(["model", "2"]), "model2");
-        assert_eq!(join_orth(["alpha", "。", "beta"]), "alpha。beta");
-        assert_eq!(join_orth(["Ａ", "Ｂ"]), "ＡＢ");
-    }
-
-    #[test]
-    fn extension_b_han_concatenates_with_bmp_han() {
-        assert_eq!(join_orth(["𠀀", "漢"]), "𠀀漢");
+    fn only_two_letters_of_a_spaced_script_form_a_boundary() {
+        for (before, after, spaced) in [
+            ("machine", "learning", true),
+            ("今日", "は", false),
+            ("を", "DNA", false),
+            ("model", "2", false),
+            ("alpha", "。", false),
+            ("Ａ", "Ｂ", false),
+            ("𠀀", "漢", false),
+            ("alpha", "", false),
+            ("", "beta", false),
+        ] {
+            assert_eq!(
+                spaced_script_boundary(before, after),
+                spaced,
+                "{before:?} then {after:?}"
+            );
+        }
     }
 }

@@ -131,11 +131,14 @@ def declared_model_profile(
         schema = MORPHOLOGY_SCALARS + tuple(
             {"key": key, "kind": "string_set"} for key in feature_keys
         )
+        morphology_processors = tuple(
+            name for name in PROCESSOR_ORDER if name in package_map
+        )
         selections["morphology/input"] = _declared_selection(
-            package_map, PROCESSOR_ORDER, "input", schema
+            package_map, morphology_processors, "input", schema
         )
         selections["morphology/analyzer"] = _declared_selection(
-            package_map, PROCESSOR_ORDER, "analyzer", schema
+            package_map, morphology_processors, "analyzer", schema
         )
     return {
         "format": PROFILE_FORMAT,
@@ -197,14 +200,20 @@ def _declared_selection(
     schema: Sequence[Mapping[str, str]],
 ) -> dict[str, Any]:
     boundary = "input-v1" if segmentation == "input" else "stanza:tokenize:v1"
-    alignment = "identity-v1" if tuple(schema) == TOKENIZE_SCHEMA else "stanza-mwt/v1"
+    profile = "tokenize" if tuple(schema) == TOKENIZE_SCHEMA else "morphology"
     return {
         "processors": list(processors),
         "packages": {name: packages[name] for name in processors},
         "boundary_policy": boundary,
-        "alignment_policy": alignment,
+        "alignment_policy": _alignment_policy(profile, processors),
         "schema": list(schema),
     }
+
+
+def _alignment_policy(profile: str, processors: Sequence[str]) -> str:
+    if profile == "morphology" and "mwt" in processors:
+        return "stanza-mwt/v1"
+    return "identity-v1"
 
 
 def _validate_model_selection(
@@ -230,6 +239,13 @@ def _validate_model_selection(
         use_gpu=False,
         verbose=False,
     )
+    loaded = list(pipeline.processors)
+    if loaded != list(processors):
+        raise ValueError(
+            f"Stanza loaded processors {','.join(loaded)} for the requested "
+            f"{','.join(processors)}; pass a --package for each loaded "
+            "processor, such as --package mwt=PACKAGE"
+        )
     document = pipeline(probe_text)
     sentences = list(document.sentences)
     if not sentences or not any(sentence.tokens for sentence in sentences):
@@ -257,21 +273,21 @@ def _validate_selection(name: str, value: Any) -> None:
     }:
         raise ValueError("Stanza selection has the wrong shape")
     profile, segmentation = name.split("/")
-    expected = list(PROCESSOR_ORDER)
-    if profile == "tokenize":
-        expected = value["processors"]
-        if expected not in (["tokenize"], ["tokenize", "mwt"]):
-            raise ValueError("Stanza tokenize processor closure is invalid")
-    if value["processors"] != expected:
+    processors = value["processors"]
+    allowed = (
+        (["tokenize"], ["tokenize", "mwt"])
+        if profile == "tokenize"
+        else (list(PROCESSOR_ORDER), ["tokenize", "pos", "lemma"])
+    )
+    if processors not in allowed:
         raise ValueError("Stanza selection processor closure is invalid")
     packages = _validate_packages(value["packages"], allow_tokenize_mwt=True)
-    if set(packages) != set(expected):
+    if set(packages) != set(processors):
         raise ValueError("Stanza selection packages differ from its processors")
     expected_boundary = "input-v1" if segmentation == "input" else "stanza:tokenize:v1"
-    expected_alignment = "identity-v1" if profile == "tokenize" else "stanza-mwt/v1"
     if value["boundary_policy"] != expected_boundary:
         raise ValueError("Stanza boundary policy is invalid")
-    if value["alignment_policy"] != expected_alignment:
+    if value["alignment_policy"] != _alignment_policy(profile, processors):
         raise ValueError("Stanza alignment policy is invalid")
     _validate_schema(value["schema"], profile)
 
@@ -330,11 +346,14 @@ def _validate_packages(
         if name not in PROCESSOR_ORDER or not isinstance(package, str) or not package:
             raise ValueError("Stanza package has an unknown processor or empty package")
         result[name] = package
-    allowed = ({"tokenize"}, set(PROCESSOR_ORDER))
+    allowed = ({"tokenize"}, {"tokenize", "pos", "lemma"}, set(PROCESSOR_ORDER))
     if allow_tokenize_mwt:
         allowed += ({"tokenize", "mwt"},)
     if set(result) not in allowed:
-        raise ValueError("Stanza morphology requires tokenize,mwt,pos,lemma processors")
+        raise ValueError(
+            "Stanza packages must name tokenize alone, or tokenize, pos and "
+            "lemma, with mwt when the language has an mwt model"
+        )
     return result
 
 

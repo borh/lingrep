@@ -249,6 +249,14 @@ pub enum ExecutionError {
         corpus_sentence_ordinal: u64,
         token_index: usize,
     },
+    #[error(
+        "cannot group a multi-token surface without character offsets at {source_name}, corpus sentence {corpus_sentence_ordinal}, before token {token_index}"
+    )]
+    MissingSurfaceOffsets {
+        source_name: String,
+        corpus_sentence_ordinal: u64,
+        token_index: usize,
+    },
     /// The independently observed ordered logical-name stream disagreed with
     /// completed discovery.
     #[error(

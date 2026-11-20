@@ -81,7 +81,7 @@ fn bound_reader_preserves_positions_but_reuses_blocks_and_projects_columns() {
     assert!(
         out.iter()
             .flatten()
-            .flatten()
+            .flat_map(|sentence| sentence.iter())
             .all(|token| token.pos().is_none())
     );
     assert_eq!(bound.decoded_block_count(), 1);

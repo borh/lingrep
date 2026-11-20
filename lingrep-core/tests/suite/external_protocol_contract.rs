@@ -5,10 +5,6 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering};
 
 use lingrep_core::analysis::{ExternalProtocolLimits, ExternalTranscript, InputUnitId};
-use lingrep_core::execution::{
-    ExecutionBatch, ExecutionLimits, ExternalAttestation, OfflineExternalSource,
-    SentenceBatchSource,
-};
 use lingrep_core::token_match::{AttributeOrdinal, AttributeValueRef};
 
 const ZERO: &str = "0000000000000000000000000000000000000000000000000000000000000000";
@@ -388,43 +384,6 @@ fn warnings_are_preserved_but_not_interpreted() {
 }
 
 #[test]
-fn offline_source_flattens_only_a_committed_attested_batch() {
-    let attestation = ExternalAttestation::new("research-import", [9; 32]).unwrap();
-    let mut source = OfflineExternalSource::open(
-        Cursor::new(valid_transcript().into_bytes()),
-        attestation,
-        ExternalProtocolLimits::default(),
-    )
-    .unwrap();
-    assert_eq!(source.trust_class(), "externally-attested");
-    assert!(!source.wants_lookahead());
-
-    let batch = source
-        .next_batch(&ExecutionLimits::default())
-        .unwrap()
-        .unwrap();
-    let ExecutionBatch::BoundTokenized { sentences, charges } = batch else {
-        panic!("offline morphology must yield schema-bound sentences");
-    };
-    assert_eq!(sentences.len(), 1);
-    assert_eq!(sentences[0].location.corpus_sentence_ordinal, 0);
-    assert_eq!(sentences[0].location.document_id.get(), 9);
-    assert_eq!(
-        sentences[0].location.source_name.as_ref(),
-        "research-import"
-    );
-    assert_eq!(sentences[0].value.words().len(), 2);
-    assert_eq!(charges.len(), 1);
-    assert!(
-        source
-            .next_batch(&ExecutionLimits::default())
-            .unwrap()
-            .is_none()
-    );
-    assert!(source.whole_file_digest().is_some());
-}
-
-#[test]
 fn empty_batches_and_globally_reordered_input_ids_are_rejected() {
     let empty = concat!(
         "{\"record\":\"batch_begin\",\"batch_id\":0,\"document_count\":0}\n",
@@ -547,25 +506,4 @@ fn every_wire_limit_owner_rejects_its_own_overage() {
         let error = result.unwrap_err();
         assert_eq!(error.category(), "limit", "wrong category for {field}");
     }
-}
-
-#[test]
-fn offline_source_applies_execution_input_record_limit_to_document_records() {
-    let attestation = ExternalAttestation::new("bounded-import", [3; 32]).unwrap();
-    let mut source = OfflineExternalSource::open(
-        Cursor::new(valid_transcript().into_bytes()),
-        attestation,
-        ExternalProtocolLimits::default(),
-    )
-    .unwrap();
-    let limits = ExecutionLimits {
-        max_sentence_bytes: 100,
-        max_input_record_bytes: 100,
-        max_stage_sentences: 4,
-        max_stage_input_bytes: 100,
-        max_tokenized_bytes: 4096,
-    };
-    let error = source.next_batch(&limits).unwrap_err();
-    assert!(error.to_string().contains("input record bytes"));
-    assert!(source.next_batch(&ExecutionLimits::default()).is_err());
 }

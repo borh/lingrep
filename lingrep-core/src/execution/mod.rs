@@ -11,7 +11,6 @@ mod sampling;
 // `clippy -D warnings` there.
 #[cfg(unix)]
 mod external_process;
-mod external_source;
 mod limits;
 mod native_source;
 mod policy_sink;
@@ -26,9 +25,6 @@ pub use external_process::{
     DiagnosticCallback, ExternalAdapterCancellation, ExternalAdapterCommand,
     ExternalAdapterProcess, ExternalProcessError, VerifiedAdapterManifest,
 };
-#[cfg(unix)]
-pub use external_source::LiveExternalSource;
-pub use external_source::{ExternalAttestation, OfflineExternalSource};
 pub use limits::{
     DEFAULT_MAX_INPUT_RECORD_BYTES, DEFAULT_MAX_SENTENCE_BYTES, DEFAULT_MAX_STAGE_INPUT_BYTES,
     DEFAULT_MAX_STAGE_SENTENCES, DEFAULT_MAX_TOKENIZED_BYTES, ExecutionError, ExecutionLimits,
@@ -47,7 +43,7 @@ pub use source::{
     BoundSentenceInput, EnhancedGraphInput, ExecutionBatch, ExecutionSentence,
     FallibleTextIteratorSource, FallibleTokenizedIteratorSource, OversizedSentenceOmissions,
     SentenceBatchSource, SentenceLocation, TextIteratorSource, TokenizedAdmission,
-    cached_run_attributes,
+    cached_run_attributes, surface_group,
 };
 pub use windows::explain_in_windows;
 pub(crate) use windows::{WindowLinks, window_at};

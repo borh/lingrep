@@ -10,7 +10,7 @@ use lingrep_core::execution::{
 use lingrep_core::fsm::{CompiledCatalog, Match};
 
 use super::TaskHandle;
-use crate::direct_source::matched_surface;
+use crate::direct_source::displayed_text;
 use crate::interactive_execution::InteractiveExecution;
 use crate::tui::message::ExplorerMessage;
 use crate::tui::paged_store::PagedStoreWriter;
@@ -125,10 +125,10 @@ impl MatchSink for KwicSink {
             let before = matched.start.saturating_sub(KWIC_CONTEXT_SIZE)..matched.start;
             let after = matched.end..(matched.end + KWIC_CONTEXT_SIZE).min(sentence.len());
             let line = KwicLine {
-                pre: matched_surface(sentence, before, location).map_err(ExecutionError::from)?,
-                key: matched_surface(sentence, matched.start..matched.end, location)
+                pre: displayed_text(sentence, before, location).map_err(ExecutionError::from)?,
+                key: displayed_text(sentence, matched.start..matched.end, location)
                     .map_err(ExecutionError::from)?,
-                post: matched_surface(sentence, after, location).map_err(ExecutionError::from)?,
+                post: displayed_text(sentence, after, location).map_err(ExecutionError::from)?,
                 match_start: matched.start,
                 match_end: matched.end,
             };

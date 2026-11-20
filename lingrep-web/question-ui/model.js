@@ -1,5 +1,9 @@
 /** The token's exact source text where the corpus carries `surface`, else its `text`. */
 export const surfaceOf = (token) => { const surface = token.attributes.surface; return typeof surface === 'string' ? surface : token.attributes.text; };
+/** The tokens as one text: their surfaces, with a space before each token after the first that the source separates from the one before it. */
+export const textOf = (tokens) => tokens.map((token, at) => (at && token.space_before ? ' ' : '') + surfaceOf(token)).join('');
+/** A sentence's text before, inside and after the tokens `start..end`. The three concatenate to `textOf(tokens)`: a space at either edge of the span belongs to the text outside it. */
+export const textAround = (tokens, start, end) => [textOf(tokens.slice(0, start)) + (start > 0 && start < end && tokens[start]?.space_before ? ' ' : ''), textOf(tokens.slice(start, end)), (end > start && tokens[end]?.space_before ? ' ' : '') + textOf(tokens.slice(end))];
 export const attributeMembers = (value) => value === undefined ? [] : typeof value === 'string' ? [value] : value;
 /** A run's failure text, translated when the server reports a known failure code. */
 export const runError = (run, t) => run.error_code === 'analysis_changed' ? t('analysisChanged') : run.error_code === 'result_limit' ? t('resultLimit') : run.error;
@@ -16,7 +20,7 @@ export function runningSnapshot(id, question) {
 const objectValue = (value) => typeof value === 'object' && value !== null && !Array.isArray(value);
 const finiteNumber = (value) => typeof value === 'number' && Number.isFinite(value);
 const stringMap = (value) => objectValue(value) && Object.values(value).every(value => typeof value === 'string');
-const tokenValue = (value) => objectValue(value) && Number.isSafeInteger(value.index) && Number(value.index) >= 0 && objectValue(value.attributes) && typeof value.attributes.text === 'string' && Object.values(value.attributes).every(v => typeof v === 'string' || Array.isArray(v) && v.every(member => typeof member === 'string'));
+const tokenValue = (value) => objectValue(value) && Number.isSafeInteger(value.index) && Number(value.index) >= 0 && objectValue(value.attributes) && typeof value.attributes.text === 'string' && (value.space_before === undefined || typeof value.space_before === 'boolean') && Object.values(value.attributes).every(v => typeof v === 'string' || Array.isArray(v) && v.every(member => typeof member === 'string'));
 function diagnosticValue(value) {
     if (!objectValue(value) || value.schema !== 'lingrep.diagnostic/v1' || value.type !== 'diagnostic' || !objectValue(value.data))
         return false;
@@ -102,6 +106,16 @@ export function definitionOffset(source, name) {
 export function parseStoredSentence(value) {
     if (!objectValue(value) || typeof value.analysis_identity !== 'string' || !Number.isSafeInteger(value.sentence) || Number(value.sentence) < 0 || !Array.isArray(value.tokens) || !value.tokens.every(tokenValue))
         throw new Error('The stored token analysis could not be read.');
+    if (value.spans !== undefined) {
+        const spans = value.spans, length = value.tokens.length;
+        const validIndex = (index, limit) => Number.isSafeInteger(index) && Number(index) >= 0 && Number(index) < limit;
+        if (!Array.isArray(spans) || !spans.every(span => objectValue(span) && typeof span.kind === 'string'
+            && validIndex(span.start, length) && validIndex(span.end, length + 1) && Number(span.end) > Number(span.start)
+            && (span.head == null || validIndex(span.head, Number(span.end)) && Number(span.head) >= Number(span.start))
+            && (span.label == null || typeof span.label === 'string') && (span.governor == null || validIndex(span.governor, spans.length)))) {
+            throw new Error('The stored sentence spans could not be read.');
+        }
+    }
     return value;
 }
 /** Returns definitions with counts at least half the largest positive count. */

@@ -127,9 +127,14 @@ pub fn expand_pattern_definition(
         return Ok(None);
     };
 
+    let mut authored = String::new();
+    for line in &entry.analytical_entries {
+        authored.push_str(line);
+        authored.push('\n');
+    }
     let mut state = Expansion {
         subject: entry.name,
-        out: String::with_capacity(entry.declaration.len()),
+        out: authored.clone(),
         path: vec![entry.name],
         references: Vec::new(),
         max_reference_depth: usize::MAX,
@@ -146,13 +151,14 @@ pub fn expand_pattern_definition(
             .to_owned()
     });
 
-    let expanded_source = expanded.as_deref().unwrap_or(entry.declaration);
+    authored.push_str(entry.declaration);
+    let expanded_source = expanded.as_deref().unwrap_or(&authored);
     let diagram = render_definition_diagram(expanded_source);
 
     Ok(Some(DefinitionExpansion {
         name: entry.name.to_owned(),
         kind: entry.kind,
-        declaration: entry.declaration.to_owned(),
+        declaration: authored,
         expanded,
         references: state.references.into_boxed_slice(),
         diagram,
@@ -166,6 +172,7 @@ struct Entry<'tree, 'source> {
     kind: ExpandedDefinitionKind,
     /// The authored text of the whole declaration.
     declaration: &'source str,
+    analytical_entries: Vec<&'source str>,
     /// The declaration's own node, which is what the renderer walks: a
     /// reference is resolved by descending into the referent's subtree, so the
     /// tree has to outlive the index.
@@ -177,9 +184,14 @@ fn index_definitions<'tree, 'source>(
     text: &'source str,
 ) -> Vec<Entry<'tree, 'source>> {
     let mut entries = Vec::new();
+    let mut analytical_entries = Vec::new();
     let mut cursor = root.walk();
     for child in root.children(&mut cursor) {
         let kind = match child.kind() {
+            "interpret_entry" | "classify_entry" => {
+                analytical_entries.push(slice(text, span(child)));
+                continue;
+            }
             "pattern_definition" => pattern_kind(child, text),
             "lexicon_definition" => ExpandedDefinitionKind::Lexicon,
             "set_definition" => ExpandedDefinitionKind::Set,
@@ -195,6 +207,7 @@ fn index_definitions<'tree, 'source>(
             name,
             kind,
             declaration: slice(text, span(child)),
+            analytical_entries: std::mem::take(&mut analytical_entries),
             node: child,
         });
     }
@@ -570,6 +583,26 @@ mod tests {
         // First-appearance order, each once: `OUTER` is reached first even
         // though `INNER` is the deeper of the two.
         assert_eq!(&*expansion.references, ["OUTER", "INNER"]);
+    }
+
+    #[test]
+    fn expanding_a_pattern_preserves_only_its_own_analytical_preamble() {
+        let source = concat!(
+            "interpret $old as helper {unused: true}\nbase := (?<old> [text=x]).\n",
+            "interpret $ending as tense {past: true}\nnote: \"description\"\nclassify by tense\n",
+            "p := (?<ending> @base).\n"
+        );
+        let expanded = expansion(source, "p");
+        let preamble = "interpret $ending as tense {past: true}\nclassify by tense\n";
+        assert!(expanded.declaration.starts_with(preamble));
+        let text = expanded.expanded.unwrap();
+        assert!(text.starts_with(preamble));
+        assert!(!text.contains("as helper"));
+        compile_catalog(
+            PatternSource::named("expansion", &text),
+            CompileLimits::default(),
+        )
+        .unwrap();
     }
 
     /// The output is lingrep patterns, not a description of it. This is the property the

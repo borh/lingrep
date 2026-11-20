@@ -576,6 +576,7 @@ async fn reader_fixture() -> (reading_support::ArtifactFixture, FixtureServer) {
     .await
     .unwrap();
     let hit = HitDetailFragment {
+        interpretations: &[],
         overlaps: Vec::new(),
         reference_ordinal: 0,
         workbench_id: "reading-browser",
@@ -4161,6 +4162,7 @@ fn provenance_fixture_html() -> String {
     );
     for ordinal in 0..2 {
         html.push_str(&HitDetailFragment {
+        interpretations: &[],
         overlaps: Vec::new(),
             reference_ordinal: ordinal, workbench_id: "wb", revision: 1, pattern_key: 0,
             id_prefix: format!("provenance-{ordinal}"), tokens: Vec::new(), capture_lanes: Vec::new(), captures: Vec::new(), graph_bindings: Vec::new(),

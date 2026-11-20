@@ -178,6 +178,7 @@ fn match_at(pattern: &str, start: usize, end: usize) -> lingrep_core::fsm::Match
         end,
         captures: Box::default(),
         graph_bindings: Box::default(),
+        interpretations: Box::default(),
         lexical: None,
     }
 }

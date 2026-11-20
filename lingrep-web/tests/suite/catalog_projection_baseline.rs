@@ -263,19 +263,19 @@ fn expected_projection(catalog: &str) -> Option<Projection> {
         // The two transitive orders collapse to one of six result names.
         // `frame` is unique per result, so inherited status is the grouping.
         "patterns/ud-valency.lx" => (Some("status".to_owned()), vec![field("status", 6)]),
-        // Both ヲ格 definitions carry the same seven descriptive keys, so
+        // The ヲ格 definitions carry the same seven descriptive keys, so
         // every field collapses to one value and the browser groups on the
         // first key in sort order.
         "patterns/wo-predicate-dep.lx" => (
             Some("category".to_owned()),
             vec![
-                field("category", 2),
-                field("collocate", 2),
-                field("head", 2),
-                field("relation", 2),
-                field("role", 2),
-                field("source", 2),
-                field("status", 2),
+                field("category", 3),
+                field("collocate", 3),
+                field("head", 3),
+                field("relation", 3),
+                field("role", 3),
+                field("source", 3),
+                field("status", 3),
             ],
         ),
         "scripts/test/test_metadata.lx" => (None, vec![]),

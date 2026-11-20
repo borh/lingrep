@@ -174,6 +174,7 @@ fn matched(pattern: &str, start: usize, end: usize) -> Match {
         end,
         captures: Box::default(),
         graph_bindings: Box::default(),
+        interpretations: Box::default(),
         lexical: None,
     }
 }
@@ -320,4 +321,198 @@ fn fragment_capture_paths_are_hygienic_per_reference_occurrence() {
             .collect::<Vec<_>>(),
         vec![("p/F#1/unit", 0, 1), ("p/F#2/unit", 1, 2)]
     );
+}
+
+#[test]
+fn interpretations_preserve_joint_assignments_across_repeated_alternatives() {
+    let annotation = r#"interpret $a as ending {tense: "past", complete: true}
+interpret $b as ending {tense: "nonpast", complete: false}
+classify by ending"#;
+    let pattern = "pattern t := ((?<a> [text=x]) | (?<b> [text=x])){2}.";
+    let words = vec![token_with(&[(TokenAttributeIndex::Orth, "x")]); 2];
+    let mut base = compile_many(&[pattern]).find_matches(&words);
+    let mut actual = compile_many(&[annotation, pattern]).find_matches(&words);
+    let alternatives = std::mem::take(&mut actual[0].interpretations);
+    assert_eq!(actual, base);
+    assert_eq!(alternatives.len(), 4);
+    for interpretation in &alternatives {
+        assert_eq!(interpretation.roles.len(), 2);
+        for (start, occurrence) in interpretation.roles.iter().enumerate() {
+            assert_eq!(
+                (occurrence.role.as_str(), occurrence.start, occurrence.end),
+                ("ending", start, start + 1)
+            );
+            assert_eq!(
+                occurrence.labels["complete"] == lingrep_core::fsm::AnalyticalValue::Boolean(true),
+                occurrence.labels["tense"]
+                    == lingrep_core::fsm::AnalyticalValue::String("past".into())
+            );
+        }
+    }
+    base[0].interpretations = alternatives;
+    assert_eq!(
+        compile_many(&[annotation, pattern]).find_matches(&words),
+        base
+    );
+}
+
+#[test]
+fn interpreted_optional_and_greedy_captures_keep_prioritized_ordinary_records() {
+    let inputs = [
+        "pattern p := (?<piece> []?) [].",
+        "pattern p := []? (?<piece> []?) [].",
+        "pattern p := ((?<piece> []{1,2}) | [])+.",
+        "fragment H := (?<piece> []).\npattern p := @H @H.",
+        "test gap := text=y.\nskip: @gap\npattern p := (?<piece> [text=x]) [text=x].",
+    ];
+    for source in inputs {
+        let interpreted = source.replace(
+            "pattern p :=",
+            "interpret $piece as part {selected: true}\npattern p :=",
+        );
+        let plain = compile_many(&[source]);
+        let analytical = compile_many(&[&interpreted]);
+        for mask in 0..16 {
+            let words = (0..4)
+                .map(|i| {
+                    token_with(&[(
+                        TokenAttributeIndex::Orth,
+                        if mask & (1 << i) == 0 { "x" } else { "y" },
+                    )])
+                })
+                .collect::<Vec<_>>();
+            let mut records = analytical.find_matches(&words);
+            for record in &mut records {
+                assert!(!record.interpretations.is_empty());
+                record.interpretations = Box::default();
+            }
+            assert_eq!(records, plain.find_matches(&words), "{source} on {mask}");
+        }
+    }
+}
+
+#[test]
+fn interpreted_assignments_equal_finite_role_products_under_helper_and_branch_reordering() {
+    use lingrep_core::fsm::{AnalyticalValue, Interpretation, RoleOccurrence};
+    use std::collections::{BTreeMap, BTreeSet};
+    let projections = r#"
+        interpret $x as slot {kind: "x", value: 1}
+        interpret $any as slot {kind: "any", value: 0}
+        classify by slot"#;
+    let bodies = [
+        (
+            "fragment F := ((?<x> [text=x]) | (?<any> []) | []).",
+            "pattern p := @F{2}.",
+        ),
+        (
+            "fragment F := ([] | (?<any> []) | (?<x> [text=x])).",
+            "pattern p := @F{2}.",
+        ),
+        (
+            "fragment F := ((?<x> [text=x]) | (?<any> []) | []).\nfragment G := @F.",
+            "pattern p := @G @G.",
+        ),
+    ];
+    for (helper, pattern) in bodies {
+        let analytical = compile_many(&[helper, projections, pattern]);
+        for first in ["x", "y"] {
+            for second in ["x", "y"] {
+                let words =
+                    [first, second].map(|text| token_with(&[(TokenAttributeIndex::Orth, text)]));
+                let mut records = analytical.find_matches(&words);
+                let got = std::mem::take(&mut records[0].interpretations);
+                assert_eq!(
+                    records,
+                    compile_many(&[helper, pattern]).find_matches(&words)
+                );
+                let choices = |word| {
+                    if word == "x" {
+                        vec![None, Some(("any", 0)), Some(("x", 1))]
+                    } else {
+                        vec![None, Some(("any", 0))]
+                    }
+                };
+                let mut expected = BTreeSet::new();
+                for a in choices(first) {
+                    for b in choices(second) {
+                        let mut roles = Vec::new();
+                        let mut classification: BTreeMap<_, BTreeSet<_>> = BTreeMap::new();
+                        for (i, pair) in [a, b].into_iter().enumerate() {
+                            if let Some((kind, value)) = pair {
+                                let labels: BTreeMap<compact_str::CompactString, _> =
+                                    BTreeMap::from([
+                                        ("kind".into(), AnalyticalValue::String(kind.into())),
+                                        ("value".into(), AnalyticalValue::Integer(value)),
+                                    ]);
+                                for (k, v) in &labels {
+                                    classification
+                                        .entry(k.clone())
+                                        .or_default()
+                                        .insert(v.clone());
+                                }
+                                roles.push(RoleOccurrence {
+                                    role: "slot".into(),
+                                    start: i,
+                                    end: i + 1,
+                                    labels,
+                                });
+                            }
+                        }
+                        expected.insert(Interpretation {
+                            roles: roles.into_boxed_slice(),
+                            classification: classification
+                                .into_iter()
+                                .map(|(k, v)| (k, v.into_iter().collect()))
+                                .collect(),
+                        });
+                    }
+                }
+                assert_eq!(
+                    got,
+                    expected.into_iter().collect(),
+                    "{helper} on {first} {second}"
+                );
+            }
+        }
+    }
+}
+
+#[test]
+fn interpretation_limits_do_not_truncate_an_unambiguous_analysis() {
+    let matcher = compile_many(&[
+        "interpret $x as slot {seen: true}",
+        "p := (?<x> [text=a]) ([text=x] | [text=x])* [text=z].",
+    ]);
+    let mut words = vec![token_with(&[(TokenAttributeIndex::Orth, "x")]); 1500];
+    words[0] = token_with(&[(TokenAttributeIndex::Orth, "a")]);
+    words[1499] = token_with(&[(TokenAttributeIndex::Orth, "z")]);
+    assert!(
+        matches!(matcher.try_find_matches(&words), Err(lingrep_core::fsm::MatchResourceError::Sentence {resource, ..}) if resource.starts_with("interpretation"))
+    );
+}
+
+#[test]
+fn interpretation_admission_identifies_unknown_roles_and_unsupported_expressions() {
+    use lingrep_core::fsm::DiagnosticCode;
+    for source in [
+        "interpret $absent as part {}\np := (?<a> []).",
+        "classify by missing\np := [].",
+        "interpret $a as part {}\nclassify by missing\np := (?<a> []).",
+        "interpret $a as part {}\np := (?<a> []) followed_by([]).",
+        "interpret $a as part {}\np := ((?<a> []) & []).",
+        "interpret $a as part {}\np := (?<a> []) (?<b> []) where $a -[obj]-> $b.",
+        "interpret $a as part {}\np := (?<a> []) (?<b> []) where $a -[enhanced obj]-> $b.",
+    ] {
+        let error = compile_catalog(
+            PatternSource::named("roles.lx", source),
+            CompileLimits::default(),
+        )
+        .err()
+        .expect("unsupported interpretation must be rejected");
+        assert_eq!(
+            error.diagnostics[0].code(),
+            DiagnosticCode::InvalidInterpretation,
+            "{source}"
+        );
+    }
 }

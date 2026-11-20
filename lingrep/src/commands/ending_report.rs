@@ -275,6 +275,7 @@ mod tests {
             end: 2,
             captures: Box::new([]),
             graph_bindings: Box::new([]),
+            interpretations: Box::default(),
             lexical: None,
         };
         let mut report = EndingReport::default();

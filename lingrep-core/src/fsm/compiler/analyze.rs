@@ -49,6 +49,24 @@ pub(crate) fn analyze_program(
                 "one definition may use only one capture identity for span equality",
             ));
         }
+        for operand in definition
+            .span_constraints
+            .iter()
+            .flat_map(|path| &path.nodes)
+        {
+            if let (super::model::SpanPosition::Head, Some(id), Some(source)) =
+                (operand.position, operand.capture, operand.source)
+                && let Some(width) = capture_widths.get(&id)
+                && (width.min > 1 || width.max == Some(0))
+            {
+                diagnostics.push(diagnostic(
+                    sources,
+                    source,
+                    DiagnosticCode::WhereCaptureNotSingleToken,
+                    "a span head requires a capture that can cover one token",
+                ));
+            }
+        }
         for relation in &definition.relations {
             let mut operands = vec![(relation.head, relation.head_span)];
             if let RelationTarget::Captured { capture, span, .. } = &relation.target {
@@ -272,7 +290,8 @@ pub(crate) fn analyze_program(
             ExecutionCapability::Intersection
         } else if contains_any_order(&definition.expr) {
             ExecutionCapability::AnyOrder
-        } else if !definition.relations.is_empty()
+        } else if !definition.span_constraints.is_empty()
+            || !definition.relations.is_empty()
             || !definition.enhanced_relations.is_empty()
             || !definition.orders.is_empty()
         {

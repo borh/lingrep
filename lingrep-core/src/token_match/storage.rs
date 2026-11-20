@@ -116,6 +116,10 @@ impl CharSpan {
 }
 
 pub trait TokenSequence {
+    fn spans(&self) -> &[super::SentenceSpan] {
+        &[]
+    }
+
     fn len(&self) -> usize;
 
     /// This token's sentence-relative code-point span, when the source

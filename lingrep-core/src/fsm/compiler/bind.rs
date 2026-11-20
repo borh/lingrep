@@ -294,6 +294,7 @@ pub(super) fn bind(
                 relations,
                 enhanced_relations,
                 orders,
+                span_paths,
             } => {
                 let (expr, relations, enhanced_relations, used_sets, used_tests) = bind_definition(
                     expr,
@@ -319,6 +320,7 @@ pub(super) fn bind(
                         relations,
                         enhanced_relations,
                         orders,
+                        span_paths,
                     },
                     used_sets,
                     used_tests,
@@ -337,6 +339,7 @@ pub(super) fn bind(
             test_uses.insert(id, used_tests);
         }
         bound_definitions.push(BoundDefinition {
+            interpretation: definition.interpretation,
             id,
             source: definition.span.source(),
             name: definition.name,
@@ -1992,6 +1995,7 @@ mod tests {
 
     fn definition(name: &str, expr: ParsedExpr, source: u32, start: usize) -> ParsedDefinition {
         ParsedDefinition {
+            interpretation: None,
             name: name.into(),
             body: ParsedDefinitionBody::Pattern {
                 visibility: DefinitionVisibility::Pattern,
@@ -1999,6 +2003,7 @@ mod tests {
                 relations: Box::default(),
                 enhanced_relations: Box::default(),
                 orders: Box::default(),
+                span_paths: Box::default(),
             },
             metadata: metadata(),
             key: None,
@@ -2014,12 +2019,14 @@ mod tests {
         start: usize,
     ) -> ParsedDefinition {
         ParsedDefinition {
+            interpretation: None,
             body: ParsedDefinitionBody::Pattern {
                 visibility: DefinitionVisibility::Fragment,
                 expr,
                 relations: Box::default(),
                 enhanced_relations: Box::default(),
                 orders: Box::default(),
+                span_paths: Box::default(),
             },
             ..definition(name, token(), source, start)
         }
@@ -2185,6 +2192,7 @@ mod tests {
     fn preserves_shared_metadata_and_reused_definition_edges_without_expansion() {
         let shared_metadata = metadata();
         let root = ParsedDefinition {
+            interpretation: None,
             name: "root".into(),
             body: ParsedDefinitionBody::Pattern {
                 visibility: DefinitionVisibility::Pattern,
@@ -2192,6 +2200,7 @@ mod tests {
                 relations: Box::default(),
                 enhanced_relations: Box::default(),
                 orders: Box::default(),
+                span_paths: Box::default(),
             },
             metadata: shared_metadata.clone(),
             key: None,
@@ -2401,6 +2410,7 @@ mod set_sharing_tests {
             )
         };
         let definition = |name: &str, expr: ParsedExpr, start: usize| ParsedDefinition {
+            interpretation: None,
             name: name.into(),
             body: ParsedDefinitionBody::Pattern {
                 visibility: DefinitionVisibility::Pattern,
@@ -2408,6 +2418,7 @@ mod set_sharing_tests {
                 relations: Box::default(),
                 enhanced_relations: Box::default(),
                 orders: Box::default(),
+                span_paths: Box::default(),
             },
             metadata: metadata(),
             key: None,
@@ -2434,6 +2445,7 @@ mod set_sharing_tests {
                     name: "S".into(),
                     members: vec!["a".into(), "b".into(), "c".into()],
                     exact_members: vec!["a".into(), "b".into(), "c".into()],
+                    normalized_literals: Vec::new(),
                     span: span(0, 3),
                 }],
                 groups: Vec::new(),

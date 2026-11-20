@@ -112,14 +112,6 @@ fn run_event(output: &Output) -> Value {
         .expect("every run publishes a run record")
 }
 
-/// The offsets address the sentence's own text, and the run says whether it
-/// has any.
-///
-/// The slice-equals-surface assertion is the whole feature stated as one
-/// property, and it is asserted against the sentence text rather than against
-/// `surface`: `surface` concatenates token text with no separator, so for any
-/// space-separated language it is *not* the original substring and comparing
-/// against it would pass while the offsets were wrong.
 #[test]
 fn char_offsets_address_the_sentence_text_and_the_run_declares_them() {
     const SENTENCE: &str = "\u{5148}\u{751f}\u{306e}\u{7406}\u{60f3}\u{306f}\u{9650}\u{308a}\u{306a}\u{304f}\u{9ad8}\u{3044}\u{3002}";
@@ -362,6 +354,64 @@ fn enhanced_graph_assignments_are_identical_direct_and_prepared() {
     assert_eq!(data["graph_bindings"][1]["name"], "role");
     assert_eq!(data["graph_bindings"][1]["relation"], "nsubj");
     assert_eq!(data["key"][0]["value"], "2.1");
+}
+
+#[test]
+fn joint_interpretations_survive_preparation_and_count_as_one_match() {
+    let dir = TempDir::new().unwrap();
+    let input =
+        Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/ud-ja-gsd-sample.conllu");
+    let artifact = dir.path().join("ja-gsd.lingcorpus");
+    let catalog = r#"
+        interpret $particle as link {reading: "case"}
+        interpret $genitive as link {reading: "genitive"}
+        classify by link
+        linker := ((?<particle> [text=の]) | (?<genitive> [lemma=の])).
+        plain := [text=の].
+    "#;
+    let path = dir.path().join("roles.lx");
+    std::fs::write(&path, catalog).unwrap();
+    lingrep()
+        .args(["corpus", "build", "--output"])
+        .arg(&artifact)
+        .arg(&input)
+        .assert()
+        .success();
+    let run = |command, prepared| {
+        let mut cli = lingrep();
+        cli.args(["--json", command, "--patterns"]).arg(&path);
+        if prepared {
+            cli.arg("--corpus").arg(&artifact);
+        } else {
+            cli.arg(&input);
+        }
+        cli.assert().success().get_output().clone()
+    };
+    let direct = run("matches", false);
+    validate_query_jsonl(&direct.stdout).unwrap();
+    let matches = match_events(&direct);
+    assert_eq!(matches, match_events(&run("matches", true)));
+    assert_eq!(matches.len(), 2);
+    assert_eq!(matches[0]["data"]["pattern"], "linker");
+    let expected = ["case", "genitive"].map(|reading| {
+        serde_json::json!({
+            "roles": [{"role": "link", "start": 1, "end": 2, "labels": {"reading": reading}}],
+            "classification": {"reading": [reading]}
+        })
+    });
+    assert_eq!(
+        matches[0]["data"]["interpretations"],
+        serde_json::json!(expected)
+    );
+    assert_eq!(matches[1]["data"]["pattern"], "plain");
+    assert!(matches[1]["data"].get("interpretations").is_none());
+    let summary = parse_jsonl(&run("summarize", true).stdout);
+    let counts = summary
+        .iter()
+        .filter(|e| e["type"] == "summary")
+        .map(|e| &e["data"]["count"])
+        .collect::<Vec<_>>();
+    assert_eq!(counts, [&Value::from(1), &Value::from(1)]);
 }
 
 #[test]
@@ -1198,6 +1248,68 @@ fn human_conllu_matches_preserve_word_spacing_direct_and_prepared() {
                 );
                 assert_eq!(String::from_utf8(output.stdout).unwrap(), expected);
             }
+        }
+    }
+}
+
+/// Whitespace between tokens is not a token; the concordance line shows it
+/// from the tokens' source spans, over direct text and over the artifact
+/// built from it.
+#[test]
+fn human_matches_keep_the_spaces_the_source_has_between_tokens() {
+    let directory = TempDir::new().unwrap();
+    let dictionary = MiniDictionary::new();
+    for (name, text, pattern, expected) in [
+        (
+            "english",
+            "I saw NHK news today\n",
+            "[surface=NHK].",
+            "I saw ⟦NHK⟧ news today\n",
+        ),
+        (
+            "mixed",
+            "猫 NHK news を鳥\n",
+            "[surface=NHK] [].",
+            "猫 ⟦NHK news⟧ を鳥\n",
+        ),
+        ("japanese", "猫犬を鳥\n", "[text=犬] [].", "猫 ⟦犬を⟧ 鳥\n"),
+    ] {
+        let input = directory.path().join(format!("{name}.txt"));
+        std::fs::write(&input, text).unwrap();
+        let artifact = directory.path().join(format!("{name}.lingcorpus"));
+        let build = lingrep()
+            .args(["corpus", "build", "--dict-path"])
+            .arg(dictionary.path())
+            .arg("--output")
+            .arg(&artifact)
+            .arg(&input)
+            .output()
+            .unwrap();
+        assert!(
+            build.status.success(),
+            "{}",
+            String::from_utf8_lossy(&build.stderr)
+        );
+        for source in [&input, &artifact] {
+            let mut command = lingrep();
+            command.args(["matches", "--color", "never", "--pattern", pattern]);
+            if source == &artifact {
+                command.arg("--corpus");
+            } else {
+                command.arg("--dict-path").arg(dictionary.path());
+            }
+            let output = command.arg(source).output().unwrap();
+            assert!(
+                output.status.success(),
+                "{}",
+                String::from_utf8_lossy(&output.stderr)
+            );
+            assert_eq!(
+                String::from_utf8(output.stdout).unwrap(),
+                expected,
+                "{name} over {}",
+                source.display()
+            );
         }
     }
 }
@@ -3625,6 +3737,25 @@ fn prepared_multiword_offsets_preserve_enclosures_and_sentence_wide_absence() {
         let complete = parse_jsonl(&output.stdout).pop().unwrap();
         assert_eq!(complete["data"]["counters"]["offsets_omitted"], 1);
     }
+    let summarize = lingrep()
+        .args([
+            "summarize",
+            "--pattern",
+            "phrase := [] [] [].",
+            "--json",
+            "--corpus",
+        ])
+        .arg(&artifact)
+        .output()
+        .unwrap();
+    crate::support::assert_success(&summarize);
+    let rows: Vec<_> = parse_jsonl(&summarize.stdout)
+        .into_iter()
+        .filter(|event| event["type"] == "summary")
+        .collect();
+    assert_eq!(rows.len(), 1);
+    assert_eq!(rows[0]["data"]["group"]["value"], "can't go");
+    assert_eq!(rows[0]["data"]["count"], 2);
 }
 
 #[test]
@@ -3813,4 +3944,116 @@ fn standalone_tei_directory_preserves_generic_block_and_ruby_queries() {
     assert_eq!(records.len(), 2);
     assert_eq!(records[0]["data"]["corpus_sentence_ordinal"], 1);
     assert_eq!(records[1]["data"]["corpus_sentence_ordinal"], 2);
+}
+
+#[test]
+fn direct_and_prepared_outputs_distinguish_spaced_surface_groups() {
+    let directory = TempDir::new().unwrap();
+    let input = directory.path().join("words.conllu");
+    let artifact = directory.path().join("words.lingcorpus");
+    let sentence = |misc| {
+        format!(
+            "1\tNHK\t_\tPROPN\t_\t_\t0\troot\t_\t{misc}\n2\tnews\t_\tNOUN\t_\t_\t1\tdep\t_\t_\n\n"
+        )
+    };
+    std::fs::write(&input, sentence("_") + &sentence("SpaceAfter=No")).unwrap();
+    let build = lingrep()
+        .args(["corpus", "build", "--output"])
+        .arg(&artifact)
+        .arg(&input)
+        .output()
+        .unwrap();
+    assert!(
+        build.status.success(),
+        "{}",
+        String::from_utf8_lossy(&build.stderr)
+    );
+
+    for prepared in [false, true] {
+        let query = |format: &str, command: &str| {
+            let mut cmd = lingrep();
+            cmd.args([command, format, "--pattern", "p := (?<both> [] [])."]);
+            if prepared {
+                cmd.arg("--corpus").arg(&artifact);
+            } else {
+                cmd.arg(&input);
+            }
+            let output = cmd.output().unwrap();
+            assert!(
+                output.status.success(),
+                "{}",
+                String::from_utf8_lossy(&output.stderr)
+            );
+            output
+        };
+        let events = match_events(&query("--json", "matches"));
+        assert_eq!(events.len(), 2);
+        assert_eq!(events[0]["data"]["surface"], "NHK news");
+        assert_eq!(events[1]["data"]["surface"], "NHKnews");
+        let tsv = String::from_utf8(query("--tsv", "matches").stdout).unwrap();
+        let surfaces: Vec<_> = tsv
+            .lines()
+            .map(|row| row.split('\t').nth(9).unwrap())
+            .collect();
+        assert_eq!(surfaces, ["NHK news", "NHKnews"]);
+        let groups: Vec<_> = parse_jsonl(&query("--json", "summarize").stdout)
+            .into_iter()
+            .filter(|event| event["type"] == "summary")
+            .map(|event| {
+                (
+                    event["data"]["group"]["value"].clone(),
+                    event["data"]["count"].clone(),
+                )
+            })
+            .collect();
+        assert_eq!(
+            groups,
+            [
+                (Value::from("NHK news"), Value::from(1)),
+                (Value::from("NHKnews"), Value::from(1))
+            ]
+        );
+    }
+}
+
+#[test]
+fn a_surface_key_requires_alignment_only_between_tokens() {
+    let directory = TempDir::new().unwrap();
+    let input = directory.path().join("unaligned.conllu");
+    let artifact = directory.path().join("words.lingcorpus");
+    let table = directory.path().join("words.lingtable");
+    std::fs::write(&input, "# text = mismatch\n1\tNHK\t_\tPROPN\t_\t_\t0\troot\t_\t_\n2\tnews\t_\tNOUN\t_\t_\t1\tdep\t_\t_\n\n").unwrap();
+    let build = lingrep()
+        .args(["corpus", "build", "--output"])
+        .arg(&artifact)
+        .arg(input)
+        .output()
+        .unwrap();
+    crate::support::assert_success(&build);
+    let run = |args: &[&str]| {
+        lingrep()
+            .args(args)
+            .arg("--corpus")
+            .arg(&artifact)
+            .output()
+            .unwrap()
+    };
+    let output = run(&["matches", "--json", "--pattern", "p := [] []."]);
+    crate::support::assert_success(&output);
+    let events = match_events(&output);
+    assert_eq!(events[0]["data"]["surface"], "NHKnews");
+    assert!(events[0]["data"]["char_span"].is_null());
+    crate::support::assert_success(&run(&["summarize", "--pattern", "p := []."]));
+    let refused = run(&[
+        "summarize",
+        "--json",
+        "--pattern",
+        "p := [] [].",
+        "--write-table",
+        table.to_str().unwrap(),
+    ]);
+    assert!(!refused.status.success());
+    let diagnostic = assert_post_run_diagnostic(&refused, "missing_surface_offsets", "matching");
+    assert_eq!(diagnostic["data"]["location"]["token_index"], 1);
+    assert!(!table.exists());
 }

@@ -12,7 +12,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Every token carries `surface`, the exact source text it covers: the source
   slice for Vibrato, Sudachi and external analyzers, and FORM as written for
   CoNLL-U words and empty nodes. `[surface=ｶﾞﾗｽ]` matches that spelling
-  only. `surface` literals are compared exactly, without NFC.
+  only. `surface` literals are compared exactly, without NFC. A named set
+  compared only with `surface` does not report `literal_normalized`.
 - `literal_folded` warns when a `text` literal matches as a different folded
   spelling, such as `[text=ＮＨＫ]` matching as `NHK`. `regex_not_folded`
   warns when a regex on `text` contains a character that never occurs in the
@@ -33,8 +34,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Every analyzer reads a folded view of the source, and its token boundaries
   are mapped back to the source. An ideographic variation sequence such as
   葛 U+E0100 is no longer split into a separate symbol token, and half-width
-  ｶﾞﾗｽ is analyzed as ガラス. Vibrato keeps a CJK compatibility ideograph
-  where the dictionary lists a word containing it, such as 臭氣 with U+FA5C.
+  ｶﾞﾗｽ is analyzed as ガラス. Vibrato and Sudachi keep a CJK compatibility
+  ideograph where the dictionary lists a word containing it, such as 臭氣
+  with U+FA5C.
 - `--normalization` defaults to `none` for every analyzer, so `surface` and
   `char_span` address the source text exactly. `--normalization nfc` still
   composes the source before analysis.
@@ -44,6 +46,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - lingrep-web shows each token's `surface` in KWIC lines, the inspector,
   frequency lines and exports, and labels `text` 照合形 (match form) and
   `surface` 表層形 (exact source text).
+- lingrep-web and the KWIC view of `ling explore` display one space wherever
+  the source has whitespace between two tokens, as human `ling matches` output
+  already did. `I saw NHK news` was displayed as `IsawNHKnews` in the question
+  page and the explorer; the workbench and frequency lines guessed spaces from
+  the script and displayed `N H K` where the dictionary splits `NHK` into
+  letters. Text without whitespace between tokens is displayed as before. A
+  KWIC line's left context ends, and its right context begins, with the space
+  that separates it from the hit, in exported XLSX cells too. Token rows of
+  the question API carry `space_before: true` on a token the source separates
+  from the one before it. `surface` in JSONL and TSV output and the
+  `summarize` surface key are unchanged: the tokens' surfaces with nothing
+  between them.
 - Sudachi is loaded without its input-text plugins, so `rewrite.def` and
   `sudachi.json` do not affect analysis; the folded view widens half-width
   katakana and composes decomposed kana instead. The 0.8 documentation said
@@ -56,6 +70,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   After `ling corpus build`, `ling corpus prune` lists the 0.8.x corpus of
   the same source as superseded and deletes it, with the count tables bound
   only to it.
+
+### Removed
+
+- The library types `lingrep_core::execution::OfflineExternalSource`,
+  `LiveExternalSource` and `ExternalAttestation`. They published the
+  adapter's own `text` without `surface`, so folded `text` literals did not
+  find fold-changed spellings over them, and no `ling` or lingrep-web
+  command used them. Run an adapter through `ExternalAnalyzerSession`, which
+  publishes `surface` and the folded `text`.
 
 
 ### Added
@@ -90,6 +113,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- `ling analyzer prepare stanza` accepts `tokenize`, `pos` and `lemma` without
+  `mwt`, so a language for which Stanza has no multi-word token model, such as
+  Japanese, can be prepared. Its profile declares the `identity-v1` alignment
+  policy in place of `stanza-mwt/v1`. Preparation now fails, naming the missing
+  package, when Stanza loads an `mwt` model that `--package` did not name;
+  such an analyzer previously failed at its first query. Analyzers prepared
+  with `mwt` keep their identity.
 - On Windows through WSL 2, `ling corpus build --output` under `/mnt/c`
   failed with "Permission denied (os error 13)" in 0.8.1, although the 0.8.1
   release notes said it worked there. `ling` held the staged artifact's files

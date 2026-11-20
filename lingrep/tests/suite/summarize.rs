@@ -4121,3 +4121,69 @@ fn grouping_coverage_counts_post_policy_records_and_rejects_incomplete_runs() {
         String::from_utf8_lossy(&output.stderr).contains("--grouping-coverage requires --json")
     );
 }
+
+#[test]
+fn bunsetsu_ids_and_summary_surfaces_survive_preparation() {
+    let directory = tempfile::tempdir().unwrap();
+    let input = directory.path().join("spans.conllu");
+    let patterns = directory.path().join("spans.lx");
+    let corpus = directory.path().join("corpus");
+    fs::write(&input, "1\t猫\t猫\tNOUN\t_\t_\t3\tnsubj\t_\tBunsetuBILabel=B\n2\tが\tが\tADP\t_\t_\t1\tcase\t_\tBunsetuBILabel=I\n3\t寝る\t寝る\tVERB\t_\t_\t0\troot\t_\tBunsetuBILabel=B\n\n").unwrap();
+    fs::write(
+        &patterns,
+        "pattern word := [].\npattern boundary := [text=が] [text=寝る].\n",
+    )
+    .unwrap();
+    assert_success(
+        &lingrep_without_dictionary()
+            .args(["corpus", "build", "--input-format", "conllu", "--output"])
+            .arg(&corpus)
+            .arg(&input)
+            .output()
+            .unwrap(),
+    );
+    for prepared in [false, true] {
+        let run = |args: &[&str]| {
+            let mut command = lingrep_without_dictionary();
+            command
+                .arg("--json")
+                .args(args)
+                .arg("--patterns")
+                .arg(&patterns);
+            if prepared {
+                command.arg("--corpus").arg(&corpus);
+            } else {
+                command.args(["--input-format", "conllu"]).arg(&input);
+            }
+            let output = command.output().unwrap();
+            assert_success(&output);
+            validate_query_jsonl(&output.stdout).unwrap();
+            parse_jsonl(&output.stdout)
+        };
+        let matches = run(&["matches", "--evidence"]);
+        let records = matches
+            .iter()
+            .filter(|record| record["type"] == "match")
+            .map(|record| &record["data"])
+            .collect::<Vec<_>>();
+        assert_eq!(records.len(), 4);
+        assert_eq!(
+            records[0]["evidence"]["spans"],
+            serde_json::json!([
+                {"kind":"bunsetsu","start":0,"end":2,"head":0,"label":null,"governor":1},
+                {"kind":"bunsetsu","start":2,"end":3,"head":2,"label":null,"governor":null}
+            ])
+        );
+        assert_eq!(records[0]["span_ids"], serde_json::json!([0]));
+        assert_eq!(records[1]["span_ids"], serde_json::json!([0]));
+        assert!(records[2].get("span_ids").is_none());
+        assert_eq!(records[3]["span_ids"], serde_json::json!([1]));
+        let summary = run(&["summarize", "--by-span", "bunsetsu"]);
+        assert_eq!(event(&summary, "run")["data"]["by_span"], "bunsetsu");
+        let rows = summary_events(&summary);
+        assert_eq!(rows.len(), 2);
+        assert_eq!(rows[0]["data"]["group"]["value"], "猫 が");
+        assert_eq!(rows[0]["data"]["count"], 2);
+        assert_eq!(rows[1]["data"]["group"]["value"], "寝る");
+    }
+}

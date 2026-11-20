@@ -2,9 +2,14 @@ export type Locale = 'en' | 'ja';
 export type Behavior = 'keep' | 'live' | 'compare';
 export interface Question { readonly source: string; readonly dataset: string; readonly where: string; }
 export type AttributeValue = string | readonly string[];
-export interface Token { readonly index: number; readonly attributes: Readonly<Record<string, AttributeValue>> & {readonly text:string}; }
+/** `space_before` is set where the source separates the token from the one before it in its sentence. */
+export interface Token { readonly index: number; readonly attributes: Readonly<Record<string, AttributeValue>> & {readonly text:string}; readonly space_before?: boolean; }
 /** The token's exact source text where the corpus carries `surface`, else its `text`. */
 export const surfaceOf = (token:Token):string => { const surface=token.attributes.surface; return typeof surface==='string'?surface:token.attributes.text; };
+/** The tokens as one text: their surfaces, with a space before each token after the first that the source separates from the one before it. */
+export const textOf = (tokens:readonly Token[]):string => tokens.map((token,at)=>(at&&token.space_before?' ':'')+surfaceOf(token)).join('');
+/** A sentence's text before, inside and after the tokens `start..end`. The three concatenate to `textOf(tokens)`: a space at either edge of the span belongs to the text outside it. */
+export const textAround = (tokens:readonly Token[],start:number,end:number):readonly [string,string,string] => [textOf(tokens.slice(0,start))+(start>0&&start<end&&tokens[start]?.space_before?' ':''),textOf(tokens.slice(start,end)),(end>start&&tokens[end]?.space_before?' ':'')+textOf(tokens.slice(end))];
 export const attributeMembers = (value:AttributeValue|undefined):readonly string[] => value===undefined?[]:typeof value==='string'?[value]:value;
 export interface GraphNode { readonly node_kind: string; readonly token_index?: number; }
 export type GraphBinding = { readonly binding_kind: 'node'; readonly name: string; readonly node: GraphNode } | { readonly binding_kind: 'edge'; readonly name: string; readonly head: GraphNode; readonly dependent: GraphNode; readonly relation: string };
@@ -62,7 +67,8 @@ export interface QuestionSettings { metadata: Record<string, MetadataCondition>;
 export interface QuestionControls { state: QuestionSettings; /** Disables the example count while the displayed search found no lines; the count stays as the reader set it. */ examplesFound(found:number|null): void; where(): string; entries(): Record<string, string | number>; localize(): void; restore(params: URLSearchParams): void; }
 export interface Field { key: string; list: boolean; numeric: boolean; min: number; max: number; present: number; }
 export interface MetadataResult { fields: Field[]; documents: number; values: { value: MetadataValue; label: string; documents: number }[]; next: string | null; }
-export interface StoredSentence { analysis_identity: string; sentence: number; tokens: readonly Token[]; }
+export interface SentenceSpan { kind:string; start:number; end:number; head:number|null; label:string|null; governor:number|null; }
+export interface StoredSentence { spans?:readonly SentenceSpan[]; analysis_identity: string; sentence: number; tokens: readonly Token[]; }
 export interface DocumentSummary { ordinal: number; title: string; author: string; matches: number; }
 export interface DocumentPage { landmarks: DocumentSummary[]; after: number; start: number; matches_total: number; previous: number | null; documents_total: number; documents_offset: number; selected: DocumentSummary | null; position: number | null; previous_document: number | null; next_document: number | null; documents: DocumentSummary[]; rows: MatchRecord[]; next: number | null; document: number | null; }
 export interface DocumentView { request: {document:number|null;after:number;documentsOffset:number|null;scopeDocument:number|null;limit:number}|null; scopeDocument: number | null; returnAfter: number; landmarks: DocumentSummary[]; start: number; matchesTotal: number; query: string; documentsTotal: number; documentsOffset: number; selectedDoc: DocumentSummary | null; position: number | null; previousDoc: number | null; nextDoc: number | null; documents: DocumentSummary[] | null; document: number | null; rows: MatchRecord[]; after: number; next: number | null; previousAfter: number | null; loading: boolean; error: string | null; epoch: number; limit: number; }
@@ -87,7 +93,7 @@ export interface SearchUpdate {
 const objectValue = (value: unknown): value is Record<string, unknown> => typeof value === 'object' && value !== null && !Array.isArray(value);
 const finiteNumber = (value: unknown): value is number => typeof value === 'number' && Number.isFinite(value);
 const stringMap = (value: unknown): boolean => objectValue(value) && Object.values(value).every(value => typeof value === 'string');
-const tokenValue = (value: unknown): boolean => objectValue(value) && Number.isSafeInteger(value.index) && Number(value.index)>=0 && objectValue(value.attributes) && typeof value.attributes.text==='string' && Object.values(value.attributes).every(v=>typeof v==='string'||Array.isArray(v)&&v.every(member=>typeof member==='string'));
+const tokenValue = (value: unknown): boolean => objectValue(value) && Number.isSafeInteger(value.index) && Number(value.index)>=0 && objectValue(value.attributes) && typeof value.attributes.text==='string' && (value.space_before===undefined||typeof value.space_before==='boolean') && Object.values(value.attributes).every(v=>typeof v==='string'||Array.isArray(v)&&v.every(member=>typeof member==='string'));
 function diagnosticValue(value:unknown):boolean {
   if(!objectValue(value)||value.schema!=='lingrep.diagnostic/v1'||value.type!=='diagnostic'||!objectValue(value.data))return false;
   const data=value.data;
@@ -152,6 +158,16 @@ export function definitionOffset(source:string, name:string):number {
 }
 export function parseStoredSentence(value:unknown):StoredSentence {
   if(!objectValue(value)||typeof value.analysis_identity!=='string'||!Number.isSafeInteger(value.sentence)||Number(value.sentence)<0||!Array.isArray(value.tokens)||!value.tokens.every(tokenValue))throw new Error('The stored token analysis could not be read.');
+  if (value.spans !== undefined) {
+    const spans = value.spans, length = value.tokens.length;
+    const validIndex = (index:unknown, limit:number) => Number.isSafeInteger(index) && Number(index)>=0 && Number(index)<limit;
+    if (!Array.isArray(spans) || !spans.every(span => objectValue(span) && typeof span.kind === 'string'
+      && validIndex(span.start,length) && validIndex(span.end,length+1) && Number(span.end)>Number(span.start)
+      && (span.head == null || validIndex(span.head,Number(span.end)) && Number(span.head)>=Number(span.start))
+      && (span.label == null || typeof span.label === 'string') && (span.governor == null || validIndex(span.governor,spans.length)))) {
+      throw new Error('The stored sentence spans could not be read.');
+    }
+  }
   return value as unknown as StoredSentence;
 }
 

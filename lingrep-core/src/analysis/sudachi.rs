@@ -9,17 +9,18 @@ use compact_str::CompactString;
 use sudachi::{
     analysis::{Mode, mlist::MorphemeList, stateful_tokenizer::StatefulTokenizer},
     config::{Config, PathResolver},
-    dic::dictionary::JapaneseDictionary,
+    dic::{dictionary::JapaneseDictionary, subset::InfoSubset},
+    error::SudachiResult,
 };
 
-use crate::token_match::{BoundProjection, BoundTokenSentence, TokenSchema};
+use crate::token_match::{BoundProjection, BoundTokenSentence, SentenceSpan, TokenSchema};
 
 use super::{
     AnalysisError, AnalyzedInput, AnalyzedSentence, AnalyzerDescriptor, AnalyzerFamily,
     AnalyzerPlan, AnalyzerSession, ExtractionProfile, JapaneseSegmentationPolicy,
     NormalizationPolicy, SegmentationMode, SemanticAnalysisIdentity, SourceBoundaries,
-    SurfaceToken, TEXT_KEY_REVISION, TextUnit, TextUnitKind, UNPROTECTED, ValidatedAnalysisBatch,
-    ViewFold, analyzer::sealed, declared_token_schema, text_key,
+    SurfaceToken, TEXT_KEY_REVISION, TextUnit, TextUnitKind, ValidatedAnalysisBatch, ViewFold,
+    analyzer::sealed, declared_token_schema, text_key,
 };
 
 const SUDACHI_REVISION: &[u8] = b"5de0410b6edfd428fc510cc9763440772e9619d5";
@@ -72,7 +73,7 @@ fn dictionary_container(path: &Path) -> Option<DictionaryContainer> {
         .then_some(DictionaryContainer::HeaderVersioned)
 }
 
-const ADAPTER_REVISION: &[u8] = b"lingrep.sudachi-adapter/v3";
+const ADAPTER_REVISION: &[u8] = b"lingrep.sudachi-adapter/v5";
 const MAPPING_REVISION: &[u8] = b"lingrep.sudachi-pos-mapping/v1";
 const ALIGNMENT_REVISION: &[u8] = b"lingrep.sudachi-byte-alignment/v2";
 
@@ -295,11 +296,17 @@ pub enum SudachiLoadError {
     ContentIo { path: PathBuf, message: String },
     #[error("Sudachi {0} content digest does not match its configured identity")]
     ContentMismatch(&'static str),
+    #[error("cannot enumerate the lexicon of Sudachi dictionary {}: {message}", .dictionary.display())]
+    LexiconEnumeration {
+        dictionary: PathBuf,
+        message: String,
+    },
 }
 
 #[derive(Clone)]
 pub struct SudachiPlan {
     dictionary: Arc<JapaneseDictionary>,
+    fold: ViewFold,
     schema: TokenSchema,
     descriptor: AnalyzerDescriptor,
     split: SudachiSplit,
@@ -331,8 +338,14 @@ impl SudachiPlan {
                 _ => error.to_string(),
             })
         })?;
+        let fold =
+            dictionary_fold(&dictionary).map_err(|error| SudachiLoadError::LexiconEnumeration {
+                dictionary: config.dictionary_path.clone(),
+                message: error.to_string(),
+            })?;
         Ok(Self {
             dictionary: Arc::new(dictionary),
+            fold,
             schema: config.schema,
             descriptor: config.descriptor,
             split: config.split,
@@ -345,6 +358,21 @@ impl SudachiPlan {
     pub const fn descriptor(&self) -> &AnalyzerDescriptor {
         &self.descriptor
     }
+}
+
+/// The fold that protects the headwords of the system and user lexicons of
+/// `dictionary`.
+fn dictionary_fold(dictionary: &JapaneseDictionary) -> SudachiResult<ViewFold> {
+    let lexicon = dictionary.lexicon();
+    let mut failure = None;
+    let fold = ViewFold::from_dictionary_surfaces(lexicon.word_ids().map_while(|word_id| {
+        let headword = word_id.and_then(|word_id| {
+            let entry = lexicon.get_word_info_subset(word_id, InfoSubset::HEADWORD)?;
+            lexicon.get_string(word_id, entry.headword_strptr())
+        });
+        headword.map_err(|error| failure = Some(error)).ok()
+    }));
+    failure.map_or(Ok(fold), Err)
 }
 
 impl sealed::Plan for SudachiPlan {}
@@ -379,8 +407,9 @@ impl AnalyzerPlan for SudachiPlan {
 
     fn create_session(&self) -> Self::Session {
         SudachiSession {
-            tokenizer: StatefulTokenizer::new(Arc::clone(&self.dictionary), self.split.mode()),
+            tokenizer: StatefulTokenizer::new(Arc::clone(&self.dictionary), Mode::C),
             results: MorphemeList::empty(Arc::clone(&self.dictionary)),
+            fold: self.fold.clone(),
             schema: self.schema.clone(),
             split: self.split,
             segmentation: self.segmentation,
@@ -392,6 +421,7 @@ impl AnalyzerPlan for SudachiPlan {
 pub struct SudachiSession {
     tokenizer: StatefulTokenizer<Arc<JapaneseDictionary>>,
     results: MorphemeList<Arc<JapaneseDictionary>>,
+    fold: ViewFold,
     schema: TokenSchema,
     split: SudachiSplit,
     segmentation: SegmentationMode,
@@ -443,11 +473,12 @@ impl AnalyzerSession for SudachiSession {
                 let sentence_text = input
                     .slice(sentence_range)
                     .map_err(|_| AnalysisError::InvalidSourceRange)?;
-                let view = UNPROTECTED.fold(sentence_text);
+                let view = self.fold.fold(sentence_text);
                 let mut boundaries = SourceBoundaries::new(sentence_text, &view);
                 let view_text = view.text();
                 let mut values = Vec::new();
                 let mut surfaces = Vec::new();
+                let mut spans = Vec::new();
                 let mut chunk_start = 0;
                 while chunk_start < view_text.len() {
                     let remaining = view_text
@@ -457,7 +488,6 @@ impl AnalyzerSession for SudachiSession {
                     let chunk = remaining
                         .get(..length)
                         .ok_or(AnalysisError::InvalidSourceRange)?;
-                    self.tokenizer.set_mode(self.split.mode());
                     self.tokenizer.reset().push_str(chunk);
                     self.tokenizer
                         .do_tokenize()
@@ -473,36 +503,61 @@ impl AnalyzerSession for SudachiSession {
                             .checked_mul(fields.len())
                             .ok_or(AnalysisError::ResourceAccounting)?,
                     );
-                    let word_offset = surfaces.len();
-                    for (word_index, morpheme) in self.results.iter().enumerate() {
-                        let view_start = chunk_start + morpheme.begin();
-                        let view_end = chunk_start + morpheme.end();
-                        if view_text.get(view_start..view_end) != Some(morpheme.surface().as_ref())
-                        {
-                            return Err(AnalysisError::InvalidAlignment);
+                    let mut fine = self.results.empty_clone();
+                    let mut middle = self.results.empty_clone();
+                    for coarse in self.results.iter() {
+                        fine.clear();
+                        coarse
+                            .split_into(self.split.mode(), &mut fine)
+                            .map_err(AnalysisError::provider)?;
+                        let start_word = surfaces.len();
+                        let count = fine.len().max(1);
+                        for index in 0..count {
+                            let morpheme = if count == 1 {
+                                &coarse
+                            } else {
+                                &fine.get(index)
+                            };
+                            let view_start = chunk_start + morpheme.begin();
+                            let view_end = chunk_start + morpheme.end();
+                            if view_text.get(view_start..view_end)
+                                != Some(morpheme.surface().as_ref())
+                            {
+                                return Err(AnalysisError::InvalidAlignment);
+                            }
+                            let start = boundaries.source_byte(view_start);
+                            let end = boundaries.source_byte(view_end);
+                            let surface = sentence_text
+                                .get(start..end)
+                                .ok_or(AnalysisError::InvalidAlignment)?;
+                            let sentence_start = sentence_range.start() as usize;
+                            let source_range = input
+                                .source_range(sentence_start + start, sentence_start + end)
+                                .map_err(|_| AnalysisError::InvalidSourceRange)?;
+                            let word_start = u32::try_from(surfaces.len())
+                                .map_err(|_| AnalysisError::ResourceAccounting)?;
+                            surfaces.push(SurfaceToken::new(
+                                source_range,
+                                word_start,
+                                word_start
+                                    .checked_add(1)
+                                    .ok_or(AnalysisError::ResourceAccounting)?,
+                            ));
+                            let pos = needs_pos.then(|| morpheme.part_of_speech());
+                            values.extend(fields.iter().map(|field| {
+                                Some(field.value(morpheme, pos.unwrap_or(&[]), surface))
+                            }));
                         }
-                        let start = boundaries.source_byte(view_start);
-                        let end = boundaries.source_byte(view_end);
-                        let surface = sentence_text
-                            .get(start..end)
-                            .ok_or(AnalysisError::InvalidAlignment)?;
-                        let sentence_start = sentence_range.start() as usize;
-                        let source_range = input
-                            .source_range(sentence_start + start, sentence_start + end)
-                            .map_err(|_| AnalysisError::InvalidSourceRange)?;
-                        let word_start = u32::try_from(word_offset + word_index)
-                            .map_err(|_| AnalysisError::ResourceAccounting)?;
-                        surfaces.push(SurfaceToken::new(
-                            source_range,
-                            word_start,
-                            word_start
-                                .checked_add(1)
-                                .ok_or(AnalysisError::ResourceAccounting)?,
-                        ));
-                        let pos = needs_pos.then(|| morpheme.part_of_speech());
-                        values.extend(fields.iter().map(|field| {
-                            Some(field.value(&morpheme, pos.unwrap_or(&[]), surface))
-                        }));
+                        if self.split != SudachiSplit::C {
+                            spans.push(split_span("sudachi.c", start_word, surfaces.len()));
+                        }
+                        if self.split == SudachiSplit::A {
+                            middle.clear();
+                            coarse
+                                .split_into(Mode::B, &mut middle)
+                                .map_err(AnalysisError::provider)?;
+                            append_b_spans(&mut spans, start_word, &fine, &middle);
+                        }
                     }
                     chunk_start += length;
                 }
@@ -514,12 +569,59 @@ impl AnalyzerSession for SudachiSession {
                     u32::try_from(ordinal).map_err(|_| AnalysisError::ResourceAccounting)?,
                     sentence_range,
                     surfaces.into_boxed_slice(),
-                    words,
+                    words
+                        .with_spans(spans)
+                        .map_err(AnalysisError::ProviderFailure)?,
                 )?);
             }
             analyzed_inputs.push(AnalyzedInput::new(input, sentences, self.segmentation)?);
         }
         ValidatedAnalysisBatch::new(analyzed_inputs)
+    }
+}
+
+fn append_b_spans(
+    spans: &mut Vec<SentenceSpan>,
+    start_word: usize,
+    fine: &MorphemeList<Arc<JapaneseDictionary>>,
+    middle: &MorphemeList<Arc<JapaneseDictionary>>,
+) {
+    if middle.len() <= 1 {
+        spans.push(split_span(
+            "sudachi.b",
+            start_word,
+            start_word + fine.len().max(1),
+        ));
+        return;
+    }
+    let mut start = 0;
+    for unit in middle.iter() {
+        let mut end = start;
+        while end < fine.len() && fine.get(end).end() <= unit.end() {
+            end += 1;
+        }
+        if end > start
+            && fine.get(start).begin() == unit.begin()
+            && fine.get(end - 1).end() == unit.end()
+        {
+            spans.push(split_span(
+                "sudachi.b",
+                start_word + start,
+                start_word + end,
+            ));
+        }
+        start = end;
+    }
+}
+
+fn split_span(kind: &str, start: usize, end: usize) -> SentenceSpan {
+    SentenceSpan {
+        kind: kind.into(),
+        start,
+        end,
+        head: None,
+        label: None,
+        governor: None,
     }
 }
 

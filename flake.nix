@@ -713,6 +713,22 @@
             url = "https://huggingface.co/stanfordnlp/stanza-fr/resolve/v1.14.0/models/pretrain/conll17.pt";
             hash = "sha256-yMRWwaSPujLUq4J659P+xARX9Y6tfhl3tiZ6/DdHSjw=";
           };
+          stanzaJaGsdTokenize = pkgs.fetchurl {
+            url = "https://huggingface.co/stanfordnlp/stanza-ja/resolve/v1.14.0/models/tokenize/gsd.pt";
+            hash = "sha256-nyOGdgvzN/QFycBxQ9hnoe4ApPetpMiLkavtW5Q9wHg=";
+          };
+          stanzaJaGsdPos = pkgs.fetchurl {
+            url = "https://huggingface.co/stanfordnlp/stanza-ja/resolve/v1.14.0/models/pos/gsd_nocharlm.pt";
+            hash = "sha256-RhtFTR+cqzakVUwtStP2Mr7KLtuC/kaSgYLHqUaKnYQ=";
+          };
+          stanzaJaGsdLemma = pkgs.fetchurl {
+            url = "https://huggingface.co/stanfordnlp/stanza-ja/resolve/v1.14.0/models/lemma/gsd_nocharlm.pt";
+            hash = "sha256-vmgfsxlLDRUgCqE5pCjudqWAC84BQGORpijTAyiMxhQ=";
+          };
+          stanzaJaConll17Pretrain = pkgs.fetchurl {
+            url = "https://huggingface.co/stanfordnlp/stanza-ja/resolve/v1.14.0/models/pretrain/conll17.pt";
+            hash = "sha256-6w/4g9jGJLU8u5DqAE3ZM+ShcAr+Hu6jlZCQpO8FWgo=";
+          };
           stanzaProfilePython = pkgs.python314.withPackages (pythonPackages: [
             pythonPackages.blake3
           ]);
@@ -740,6 +756,37 @@
                     packages={
                         "tokenize": "gsd",
                         "mwt": "gsd",
+                        "pos": "gsd_nocharlm",
+                        "lemma": "gsd_nocharlm",
+                    },
+                )
+                (Path(sys.argv[1]) / "lingrep-stanza-model.json").write_bytes(
+                    canonical_json(profile) + b"\n"
+                )
+                PY
+              '';
+          stanzaModelJaGsdMorphology =
+            pkgs.runCommand "stanza-model-ja-gsd-morphology-1.14.0"
+              {
+                nativeBuildInputs = [ stanzaProfilePython ];
+              }
+              ''
+                model="$out/share/stanza/ja-gsd-morphology"
+                mkdir -p "$model/ja"/{tokenize,pos,lemma,pretrain}
+                cp ${stanzaResources} "$model/resources.json"
+                cp ${stanzaJaGsdTokenize} "$model/ja/tokenize/gsd.pt"
+                cp ${stanzaJaGsdPos} "$model/ja/pos/gsd_nocharlm.pt"
+                cp ${stanzaJaGsdLemma} "$model/ja/lemma/gsd_nocharlm.pt"
+                cp ${stanzaJaConll17Pretrain} "$model/ja/pretrain/conll17.pt"
+                PYTHONPATH=${./python/stanza-adapter/src}:${./python/adapter-protocol/src} python - "$model" <<'PY'
+                import sys
+                from pathlib import Path
+                from lingrep_stanza_adapter.bundle import canonical_json, declared_model_profile
+
+                profile = declared_model_profile(
+                    language="ja",
+                    packages={
+                        "tokenize": "gsd",
                         "pos": "gsd_nocharlm",
                         "lemma": "gsd_nocharlm",
                     },
@@ -887,6 +934,7 @@
             spacy-analyzer-en-core-web-sm = spacyEnglishAnalyzer;
             spacy-model-en-core-web-sm = spacyModelEnCoreWebSm;
             stanza-model-fr-gsd-morphology = stanzaModelFrGsdMorphology;
+            stanza-model-ja-gsd-morphology = stanzaModelJaGsdMorphology;
           }
           # The OCI images stuff host `pkgs` into a Linux image, so on darwin
           # they would package Mach-O binaries rather than cross-compile.

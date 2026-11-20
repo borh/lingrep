@@ -352,6 +352,7 @@ mod tests {
                 end: 3,
                 captures: Box::default(),
                 graph_bindings: Box::default(),
+                interpretations: Box::default(),
                 lexical: None,
             }]
         );

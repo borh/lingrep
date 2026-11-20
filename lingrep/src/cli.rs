@@ -817,6 +817,16 @@ pub struct SummarizeArgs {
     #[arg(long, conflicts_with = "json", help_heading = "Output")]
     pub tsv: bool,
 
+    /// Group matches by the surface of the smallest enclosing span of KIND.
+    /// Count matches outside every such span as unkeyed.
+    #[arg(
+        long,
+        value_name = "KIND",
+        conflicts_with = "write_table",
+        help_heading = "Output"
+    )]
+    pub by_span: Option<String>,
+
     /// Count each group per admitted document, and publish each document's
     /// admitted sentences and tokens as a `document` record (requires --json).
     #[arg(long, help_heading = "Output")]

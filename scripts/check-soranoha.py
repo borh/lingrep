@@ -6,6 +6,7 @@ import io
 import json
 import re
 import subprocess
+import sys
 import tempfile
 import time
 import urllib.parse
@@ -44,18 +45,16 @@ def matches(binary, *input_args):
         "--source-metadata",
         "@document.release",
     )
-    found = [
-        r["data"]
-        for line in records.splitlines()
-        if (r := json.loads(line))["type"] == "match"
-    ]
+    records = [json.loads(line) for line in records.splitlines()]
+    analyzer = next(r["data"]["analyzer"] for r in records if r["type"] == "run")
+    found = [r["data"] for r in records if r["type"] == "match"]
     assert found, "Soranoha query produced no matches"
     for match in found:
         metadata = match["source_metadata"]["document"]
         assert re.fullmatch(r"\d{6}_\d{6}", metadata["identifier"]), metadata
         assert isinstance(metadata["ndc"], list), metadata
         assert metadata["release"], metadata
-    return found
+    return analyzer, found
 
 
 def check_web(binary, corpus, table, catalog, scratch):
@@ -148,7 +147,14 @@ def check_web(binary, corpus, table, catalog, scratch):
 
 
 def main():
-    parser = argparse.ArgumentParser(description=__doc__)
+    parser = argparse.ArgumentParser(
+        description=__doc__,
+        usage="%(prog)s binary (--corpus CORPUS | --archive ARCHIVE"
+        " [-- ANALYZER_OPTION ...])",
+        epilog="With --archive, the options after -- select the analyzer. They are"
+        " passed unchanged to the direct `ling matches` run and to `ling corpus"
+        " build`, for example: -- --analyzer sudachi --sudachi-dict system_core.dic",
+    )
     parser.add_argument("binary", type=lambda p: str(Path(p).resolve()))
     inputs = parser.add_mutually_exclusive_group(required=True)
     inputs.add_argument(
@@ -159,17 +165,29 @@ def main():
         type=Path,
         help="Real Soranoha plaintext ZIP to prepare and validate",
     )
-    args = parser.parse_args()
+    argv = sys.argv[1:]
+    analyzer_options = []
+    if "--" in argv:
+        split = argv.index("--")
+        argv, analyzer_options = argv[:split], argv[split + 1 :]
+    args = parser.parse_args(argv)
+    if args.corpus and analyzer_options:
+        parser.error(
+            "analyzer options require --archive: a prepared corpus records its analyzer"
+        )
     with tempfile.TemporaryDirectory(prefix="ling-soranoha-") as directory:
         scratch = Path(directory)
         corpus = args.corpus.resolve() if args.corpus else scratch / "sample.lingcorpus"
         if not args.corpus:
             archive = args.archive.resolve()
-            direct = matches(args.binary, "--input-format", "soranoha", archive)
+            direct = matches(
+                args.binary, *analyzer_options, "--input-format", "soranoha", archive
+            )
             run(
                 args.binary,
                 "corpus",
                 "build",
+                *analyzer_options,
                 "--input-format",
                 "soranoha",
                 "--output",
@@ -177,7 +195,7 @@ def main():
                 archive,
             )
             assert direct == matches(args.binary, "--corpus", corpus), (
-                "Direct/prepared match records differ"
+                "Direct/prepared analyzer or match records differ"
             )
         else:
             matches(args.binary, "--corpus", corpus)
