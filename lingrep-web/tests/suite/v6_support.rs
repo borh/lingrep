@@ -299,17 +299,11 @@ pub struct MarkdownFixture {
     pub sidecar: PathBuf,
 }
 
-/// Builds a [`MarkdownFixture`] from `documents`, `(file name, Markdown)`
-/// pairs in file-name order.
-pub async fn markdown_fixture(documents: &[(&str, &str)]) -> MarkdownFixture {
+pub async fn prepare_source(
+    root: &Path,
+    dictionary: &lingrep_core::testing::MiniDictionary,
+) -> (ReadyCorpus, lingrep_core::corpus::MarkdownReaderConfig) {
     use clap::Parser;
-    let directory = tempfile::tempdir().unwrap();
-    let root = directory.path().join("papers");
-    std::fs::create_dir(&root).unwrap();
-    for (name, text) in documents {
-        std::fs::write(root.join(name), text).unwrap();
-    }
-    let dictionary = lingrep_core::testing::MiniDictionary::new();
     let args = lingrep_web::Args::try_parse_from([
         "lingrep-web".as_ref(),
         "--dict-path".as_ref(),
@@ -332,6 +326,20 @@ pub async fn markdown_fixture(documents: &[(&str, &str)]) -> MarkdownFixture {
     })
     .await
     .unwrap();
+    (ready, markdown)
+}
+
+/// Builds a [`MarkdownFixture`] from `documents`, `(file name, Markdown)`
+/// pairs in file-name order.
+pub async fn markdown_fixture(documents: &[(&str, &str)]) -> MarkdownFixture {
+    let directory = tempfile::tempdir().unwrap();
+    let root = directory.path().join("papers");
+    std::fs::create_dir(&root).unwrap();
+    for (name, text) in documents {
+        std::fs::write(root.join(name), text).unwrap();
+    }
+    let dictionary = lingrep_core::testing::MiniDictionary::new();
+    let (ready, markdown) = prepare_source(&root, &dictionary).await;
     let artifact = lingrep_corpus::canonical_artifact_path(
         &root,
         ready.artifact.analysis_identity(),

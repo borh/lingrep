@@ -8,7 +8,6 @@ use std::time::Duration;
 use clap::Parser;
 use lingrep_core::corpus::DocumentId;
 use lingrep_core::execution::CancellationFlag;
-use lingrep_core::token_match::TokenInfo;
 use lingrep_corpus::{
     CorpusArtifact, CountTableWriter, DocumentTotals, GroupKind, GroupSchema, ReadingSidecar,
     ReadingSidecarKey,
@@ -130,13 +129,25 @@ fn plain_words() -> Vec<Vec<Vec<String>>> {
     vec![
         (0..6)
             .map(|sentence| {
-                let middle = if sentence % 2 == 0 { "猫" } else { "犬" };
-                ["その", middle, "が", "眠る", "。"]
-                    .map(str::to_owned)
-                    .to_vec()
+                let subject = if sentence % 2 == 0 { "猫" } else { "犬" };
+                [subject, "が", "眠る", "。"].map(str::to_owned).to_vec()
             })
             .collect(),
     ]
+}
+
+async fn plain_fixture() -> support::ArtifactFixture {
+    let directory = tempfile::tempdir().unwrap();
+    let source = directory.path().join("work.txt");
+    let sentences: Vec<_> = plain_words()[0]
+        .iter()
+        .map(|words| words.concat())
+        .collect();
+    std::fs::write(&source, sentences.join("\n")).unwrap();
+    let dictionary = lingrep_core::testing::MiniDictionary::new();
+    let (ready, _) = support::prepare_source(&source, &dictionary).await;
+    let path = ready.artifact.directory().to_owned();
+    support::ArtifactFixture { directory, path }
 }
 
 struct Served {
@@ -275,20 +286,7 @@ async fn a_line_opens_its_document_and_returning_restores_the_lines() -> WebDriv
     let text = paper();
     let markdown =
         support::markdown_fixture(&[("a.md", &text), ("b.md", "# 別\n\n犬が鳴く。\n")]).await;
-    let plain = support::build_artifact(vec![(
-        "work.txt",
-        0,
-        false,
-        plain_words()[0]
-            .iter()
-            .map(|words| {
-                words
-                    .iter()
-                    .map(|word| TokenInfo::default().with_orth(word))
-                    .collect()
-            })
-            .collect(),
-    )]);
+    let plain = plain_fixture().await;
     let served = serve(&markdown, &plain, true).await;
 
     driver.goto(entry(&served, "default")).await?;
@@ -653,20 +651,7 @@ async fn analysis_tools_open_the_workbench_on_the_pattern_being_read() -> WebDri
         return Ok(());
     };
     let markdown = support::markdown_fixture(&[("a.md", "# 猫\n\n猫が鳴く。\n")]).await;
-    let plain = support::build_artifact(vec![(
-        "work.txt",
-        0,
-        false,
-        plain_words()[0]
-            .iter()
-            .map(|words| {
-                words
-                    .iter()
-                    .map(|word| TokenInfo::default().with_orth(word))
-                    .collect()
-            })
-            .collect(),
-    )]);
+    let plain = plain_fixture().await;
     let served = serve(&markdown, &plain, false).await;
     let result: WebDriverResult<()> = async {
         let edited = "pattern dog := [text=犬] [text=が].\n";

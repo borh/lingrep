@@ -43,4 +43,4 @@ fi
 
 export LINGREP_WEB_LAYOUT_CHROMEDRIVER_URL="http://127.0.0.1:$driver_port"
 export LINGREP_WEB_LAYOUT_REQUIRE_DRIVER=1
-"$repo_root/scripts/cargo-test-selected.py" -p lingrep-web --test browser -- --test-threads=1 --nocapture
+"$repo_root/scripts/cargo-test-selected.py" --config .cargo/test.toml -p lingrep-web --test browser -- --test-threads=1 --nocapture

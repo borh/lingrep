@@ -120,7 +120,9 @@ fn complete_after_the_shell_is_ready(
     const ATTEMPTS: usize = 4;
 
     for _ in 0..ATTEMPTS {
-        let screen = runtime.complete(input, term).unwrap();
+        let screen = runtime
+            .complete(input, term)
+            .unwrap_or_else(|error| panic!("running {shell} for {input:?}: {error}"));
         if screen.contains(SHELL_PROMPT) {
             return screen;
         }
@@ -194,7 +196,7 @@ fn generated_scripts_complete_real_commands_in_supported_shells() {
 
     let fish_script = temp.path().join("ling.fish");
     std::fs::write(&fish_script, completion_script("fish")).unwrap();
-    let fish = std::env::var("LINGREP_FISH_PATH").expect("Nix dev shell sets LINGREP_FISH_PATH");
+    let fish = std::env::var_os("LINGREP_FISH_PATH").unwrap_or_else(|| "fish".into());
     for (input, expected) in [
         ("ling contr", "contracts"),
         ("ling contracts lingrep.", "lingrep.query/v2"),

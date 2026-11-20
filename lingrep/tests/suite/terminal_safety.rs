@@ -264,7 +264,8 @@ fn matches_exits_one_when_writing_a_requested_policy_report_to_closed_stderr_fai
 }
 
 #[cfg(unix)]
-fn open_pty() -> (fs::File, fs::File) {
+fn capture_pty() -> (fs::File, impl FnOnce() -> String) {
+    use std::io::Write;
     use std::os::fd::FromRawFd;
 
     let (mut master, mut slave) = (-1, -1);
@@ -280,18 +281,25 @@ fn open_pty() -> (fs::File, fs::File) {
         },
         0
     );
-    unsafe { (fs::File::from_raw_fd(master), fs::File::from_raw_fd(slave)) }
-}
-
-/// Everything the child wrote to a pty, with the line discipline's `\r\n`
-/// mapped back to `\n`. Reading ends with `EIO` once no slave is open.
-#[cfg(unix)]
-fn read_pty(mut master: fs::File) -> String {
-    let mut bytes = Vec::new();
-    let _ = master.read_to_end(&mut bytes);
-    String::from_utf8(bytes)
-        .expect("pty output is UTF-8")
-        .replace("\r\n", "\n")
+    let master = unsafe { fs::File::from_raw_fd(master) };
+    let slave = unsafe { fs::File::from_raw_fd(slave) };
+    let mut end_marker = slave.try_clone().expect("retain the PTY slave");
+    let reader = std::thread::spawn(move || {
+        let mut bytes = Vec::new();
+        BufReader::new(master)
+            .read_until(0, &mut bytes)
+            .expect("read captured PTY output");
+        assert_eq!(bytes.pop(), Some(0));
+        String::from_utf8(bytes)
+            .expect("PTY output is UTF-8")
+            .replace("\r\n", "\n")
+    });
+    // Darwin discards unread output on the last slave close. These CLI text
+    // formats contain no NUL, so a marker delimits the output while it is open.
+    (slave, move || {
+        end_marker.write_all(&[0]).expect("end the PTY capture");
+        reader.join().expect("join the PTY reader")
+    })
 }
 
 /// A stdout stream with its run id and elapsed times removed.
@@ -388,25 +396,25 @@ fn progress_output_follows_mode_format_delivery_and_terminals_without_changing_s
                         .env("TERM", term)
                         .env("NO_COLOR", "1");
                     let stdout_pty = stdout_terminal.then(|| {
-                        let (master, slave) = open_pty();
+                        let (slave, finish) = capture_pty();
                         command.stdout(slave);
-                        master
+                        finish
                     });
                     let stderr_pty = stderr_terminal.then(|| {
-                        let (master, slave) = open_pty();
+                        let (slave, finish) = capture_pty();
                         command.stderr(slave);
-                        master
+                        finish
                     });
                     let output = command.output().unwrap();
                     drop(command);
                     assert!(output.status.success(), "{label}: {output:?}");
                     let stdout = stdout_pty.map_or_else(
                         || String::from_utf8(output.stdout.clone()).unwrap(),
-                        read_pty,
+                        |finish| finish(),
                     );
                     let stderr = stderr_pty.map_or_else(
                         || String::from_utf8(output.stderr.clone()).unwrap(),
-                        read_pty,
+                        |finish| finish(),
                     );
 
                     let transient = format.is_none()
@@ -505,8 +513,8 @@ fn a_build_warning_written_during_transient_status_starts_on_an_erased_line() {
         lingrep_corpus::TrustClass::LocallyExecuted,
     ))
     .unwrap();
-    let (stdout_master, stdout_slave) = open_pty();
-    let (stderr_master, stderr_slave) = open_pty();
+    let (stdout_slave, finish_stdout) = capture_pty();
+    let (stderr_slave, finish_stderr) = capture_pty();
     let mut command = lingrep_std();
     command
         .args(["corpus", "build", "--progress", "always"])
@@ -518,8 +526,8 @@ fn a_build_warning_written_during_transient_status_starts_on_an_erased_line() {
     let output = command.output().unwrap();
     drop(command);
     assert!(output.status.success(), "{output:?}");
-    drop(read_pty(stdout_master));
-    let stderr = read_pty(stderr_master);
+    drop(finish_stdout());
+    let stderr = finish_stderr();
     assert!(
         stderr.starts_with(&format!(
             "{ERASE}identity pass: read 1 sources{ERASE}warning: ignoring unreadable artifact at "

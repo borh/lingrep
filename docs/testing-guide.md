@@ -91,6 +91,11 @@ Before pushing changes, run bounded validation:
 `-p lingrep-perf --features screen` forms, because `cargo doc --no-deps` selects
 targets rather than features and so cannot see a feature-gated module at all.
 
+On Unix, the CI lanes run each `lingrep-web` test executable with a soft and
+hard open-file limit of at most 256. The server runs under the harness limits,
+and each child CLI process inherits them. To reproduce this locally, run
+`cargo test --config .cargo/test.toml -p lingrep-web`.
+
 Run `./ci.sh --full` before finishing a branch. It adds the complete
 integration inventory, the matcher correctness gate, the adapter suites, and
 the browser layout checks. The browser checks need Chromium and ChromeDriver on

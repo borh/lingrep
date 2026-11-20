@@ -122,9 +122,9 @@ assert_full_contract() {
     assert_has "cargo:build -p lingrep-perf --bin lingrep-perf --quiet"
     assert_has "warmup-estimator:$temporary/target/debug/lingrep-perf"
     [[ $(grep -Fxc "python3:-m unittest scripts/test/test_perf_measure.py" "$LINGREP_CI_TEST_LOG") -eq 1 ]]
-    assert_has "cargo:test --workspace --tests --quiet"
+    assert_has "cargo:test --config .cargo/test.toml --workspace --tests --quiet"
     assert_has "script:cargo-test-selected.py"
-    [[ $(grep -Fxc "cargo:test --workspace --tests --quiet" "$LINGREP_CI_TEST_LOG") -eq 1 ]]
+    [[ $(grep -Fxc "cargo:test --config .cargo/test.toml --workspace --tests --quiet" "$LINGREP_CI_TEST_LOG") -eq 1 ]]
     assert_has "script:run_lingrep_web_layout_e2e.sh"
     assert_has "script:test_matcher_correctness.sh"
     assert_has "script:check-live-launchers.py"
@@ -162,12 +162,12 @@ assert_has "script:test_ci_modes.sh"
 assert_has "script:test_fuzz_smoke.sh"
 assert_has "cargo:fmt --check --all"
 assert_has "cargo:clippy --workspace --all-targets --all-features -- -D warnings"
-assert_has "cargo:test --workspace --lib --bins --quiet"
+assert_has "cargo:test --config .cargo/test.toml --workspace --lib --bins --quiet"
 assert_has "python3:lingrep-web/question-ui/build.py --check"
 assert_has "python3:lingrep-web/question-ui/build_test.py"
 assert_has "node:--test lingrep-web/js-tests/*.test.mjs lingrep-web/question-ui/*.test.mjs"
 assert_has "cargo:test --workspace --doc"
-assert_lacks_prefix "cargo:test --workspace --tests"
+assert_lacks_prefix "cargo:test --config .cargo/test.toml --workspace --tests"
 assert_lacks_prefix "script:run_lingrep_web_layout_e2e.sh"
 assert_lacks_prefix "script:run_fuzz_smoke.sh"
 assert_lacks_prefix "cargo:bench "
@@ -200,7 +200,7 @@ for failure in \
     check-test-consolidation.sh \
     cargo-test-selected.py \
     'cargo:fmt --check --all' \
-    'cargo:test --workspace --tests --quiet' \
+    'cargo:test --config .cargo/test.toml --workspace --tests --quiet' \
     test_matcher_correctness.sh
 do
     export LINGREP_CI_FAIL_STEP=$failure

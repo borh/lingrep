@@ -75,7 +75,7 @@ run_common_checks() {
     python -m unittest scripts/test/test_huggingface_dataset.py scripts/test/test_wo_predicate_export.py \
         scripts/test/test_test_reference_guards.py scripts/test/test_fs_capability_seam_guard.py \
         scripts/test/test_lx_catalog_guard.py \
-        scripts/test/test_cargo_test_selected.py \
+        scripts/test/test_cargo_test_selected.py scripts/test/test_web_file_limit.py \
         scripts/test/test_corpus_pressure.py scripts/test/test_release_notices.py
 
     if ! command -v python3 >/dev/null; then
@@ -118,12 +118,12 @@ run_shared_tests() {
 
 run_fast_tests() {
     echo "Running workspace library and binary unit tests"
-    cargo test --workspace --lib --bins --quiet 2>&1 | tee "${TMPDIR:-/tmp}/cargo-test-fast.log"
+    cargo test --config .cargo/test.toml --workspace --lib --bins --quiet 2>&1 | tee "${TMPDIR:-/tmp}/cargo-test-fast.log"
 }
 
 run_full_tests_and_extras() {
     echo "Running complete workspace Rust test inventory"
-    cargo test --workspace --tests --quiet 2>&1 | tee "${TMPDIR:-/tmp}/cargo-test-full.log"
+    cargo test --config .cargo/test.toml --workspace --tests --quiet 2>&1 | tee "${TMPDIR:-/tmp}/cargo-test-full.log"
 
     echo "Running real native portable-catalog realizations"
     scripts/cargo-test-selected.py -p lingrep-core --test suite -- \

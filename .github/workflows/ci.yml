@@ -97,17 +97,12 @@ jobs:
           target/debug/ling dictionary install
           echo "LINGREP_DICTIONARY_PATH=$HOME/.local/share/lingrep/dictionaries/unidic-cwj-202512.dic" >> "$GITHUB_ENV"
 
-      # The integration suite uses util-linux flock. Beads issue
-      # vibrato-pipe-t9ro.7 tracks the three macOS skips.
       - name: Test
         run: |
-          brew install util-linux
+          brew install util-linux elvish fish
           PATH="$(brew --prefix util-linux)/bin:$PATH"
-          cargo test --workspace --lib --bins
-          cargo test -p lingrep --tests -- \
-            --skip completions::generated_scripts_complete_real_commands_in_supported_shells \
-            --skip terminal_safety::a_build_warning_written_during_transient_status_starts_on_an_erased_line \
-            --skip terminal_safety::progress_output_follows_mode_format_delivery_and_terminals_without_changing_stdout
+          cargo test --config .cargo/test.toml --workspace --lib --bins
+          cargo test -p lingrep --tests
 
       - name: Build the release binary
         run: cargo build --release -p lingrep
