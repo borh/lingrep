@@ -144,23 +144,30 @@ split modes and the other Sudachi options.
 
 ### Python
 
-Install the matching `ling` CLI using the [installer](#install). With `ling`
-on your PATH, install the Python package and Japanese dictionary:
+The Python package includes the Vibrato tokenizer. With the tokenizer command
+installed, pass a sentence as an argument, or pipe one sentence per line:
 
 ```bash
-python3 -m venv .venv
-. .venv/bin/activate
-python -m pip install lingrep==0.9.0
-ling dictionary install
-python -c 'from lingrep import Tokenizer; print(Tokenizer().tokenize("猫が眠る。"))'
+uvx lingrep tokenize '猫が眠る。'
+printf '猫が眠る。\n犬が走る。\n' | uvx lingrep tokenize --workers 4
 ```
 
-The last command prints `['猫', 'が', '眠る', '。']`. For a source checkout,
-use `pip install ./python/lingrep` in the development shell. `Tokenizer` opens
-the same Vibrato dictionary as `ling`. Pass `dict_path=` to select another
-UniDic dictionary. Each input to
-`pipe` is one sentence of at most 1 MiB of UTF-8, the default record limit of
-`ling`, and results arrive in input order.
+Each output line is a JSON array of token surfaces. The first command prints
+`["猫", "が", "眠る", "。"]`. For the Python API, use `uv add lingrep` or
+`pip install lingrep`. To try the development version from this checkout, use
+`uvx --from ./python/lingrep lingrep tokenize '猫が眠る。'` in the development
+shell.
+
+On first use, `Tokenizer()` and the tokenizer command download the default
+UniDic CWJ dictionary when it is missing. They verify its BLAKE3 digest and
+store the dictionary (about 1.3 GB) in the same data directory as
+`ling dictionary install`. Subsequent tokenization works offline. To use an
+existing dictionary, pass `dict_path=` in Python, pass `--dict-path` to
+`tokenize`, or set `LINGREP_DICTIONARY_PATH`.
+
+Each input to `Tokenizer.pipe` is one sentence of at most 1 MiB of UTF-8.
+Results arrive in input order. For `Ling.search` and `Ling.check`, install
+the matching [full CLI](#install).
 
 ```python
 from lingrep import Ling, Query, Tokenizer

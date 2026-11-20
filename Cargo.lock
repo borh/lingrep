@@ -2618,8 +2618,12 @@ dependencies = [
 name = "lingrep-cli-common"
 version = "0.9.0"
 dependencies = [
+ "blake3",
  "clap",
  "lingrep-core",
+ "reqwest 0.13.5",
+ "tempfile",
+ "zstd",
 ]
 
 [[package]]

@@ -159,7 +159,7 @@ dictionary and reports a mismatch as a notice, never an error.
 
 `DICTIONARIES.md` catalogs the seven UniDic 202512 dictionaries. Each is a
 `.dic.zst` on the `unidic-202512` GitHub release, which both
-`ling dictionary install` (`lingrep/src/packaged_dictionaries.rs`) and the
+`ling dictionary install` (`lingrep-cli-common/src/packaged_dictionaries.rs`) and the
 `.#vibrato-dict-*` packages download; `.#vibrato-dictionaries-from-source`
 converts the NINJAL archives. Every binary resolves `--dict-path`, then
 `LINGREP_DICTIONARY_PATH` (which the dev shell exports), then the installed

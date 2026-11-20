@@ -10,7 +10,7 @@ ALLOWLISTED = (
     "lingrep-corpus/src/fs_capability.rs",
     "lingrep-core/src/dictionary.rs",
     "lingrep-perf/src/campaign.rs",
-    "lingrep/src/packaged_dictionaries.rs",
+    "lingrep-cli-common/src/packaged_dictionaries.rs",
 )
 
 

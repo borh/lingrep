@@ -1,8 +1,8 @@
-pub(crate) const DEFAULT_DOWNLOAD_BASE: &str = "https://github.com/borh/lingrep/releases/download";
+pub const DEFAULT_DOWNLOAD_BASE: &str = "https://github.com/borh/lingrep/releases/download";
 
 /// Rejects HTTP error statuses and removes credentials, queries and fragments
 /// from error URLs.
-pub(crate) fn get(
+pub fn get(
     client: &reqwest::blocking::Client,
     url: &str,
 ) -> Result<reqwest::blocking::Response, reqwest::Error> {

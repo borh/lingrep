@@ -1,5 +1,7 @@
 mod args;
 mod markdown_args;
+pub mod packaged_dictionaries;
+pub mod release_download;
 mod safe_text;
 mod terminal;
 

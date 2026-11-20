@@ -3,7 +3,8 @@ mod query;
 use std::path::PathBuf;
 use std::sync::Arc;
 
-use lingrep_cli_common::{DictArgs, MISSING_DICTIONARY_HINT};
+use lingrep_cli_common::packaged_dictionaries::{DEFAULT, install, install_directory};
+use lingrep_cli_common::{DictArgs, release_download::DEFAULT_DOWNLOAD_BASE};
 use lingrep_core::analysis::ValidatedAnalysisBatch;
 use lingrep_core::analysis::{
     AnalyzerLanes, AnalyzerPlan, AnalyzerSession, InputUnitId, NormalizationPolicy, TextUnit,
@@ -72,9 +73,16 @@ impl Engine {
             return Err(invalid("workers must be positive"));
         }
         py.detach(move || {
-            let path = DictArgs { dict_path }
-                .resolve()
-                .ok_or_else(|| PyOSError::new_err(MISSING_DICTIONARY_HINT))?;
+            let path = if let Some(path) = (DictArgs { dict_path }).resolve() {
+                path
+            } else {
+                let directory = install_directory().ok_or_else(|| {
+                    PyOSError::new_err("set XDG_DATA_HOME or HOME, or pass dict_path")
+                })?;
+                let base = std::env::var("LING_DOWNLOAD_BASE")
+                    .unwrap_or_else(|_| DEFAULT_DOWNLOAD_BASE.to_owned());
+                install(DEFAULT, &directory, &base)?.path
+            };
             let (tokenizer, digest) = create_tokenizer_with_identity(
                 path.to_str()
                     .ok_or_else(|| invalid("dictionary path must be UTF-8"))?,

@@ -21,7 +21,7 @@ pub(crate) mod policy_report;
 mod prepared_source;
 pub mod presentation;
 pub mod protocol;
-mod release_download;
+use lingrep_cli_common::release_download;
 mod section_diagnostics;
 mod soranoha_seam;
 pub mod summary;

@@ -11,6 +11,9 @@ license-files = ["LICENSE"]
 description = "Japanese tokenization with Vibrato and corpus search with lingrep"
 readme = "README.md"
 
+[project.scripts]
+lingrep = "lingrep.__main__:main"
+
 [project.urls]
 Repository = "https://github.com/borh/lingrep"
 

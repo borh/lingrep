@@ -206,6 +206,7 @@ jobs:
             uv venv --clear --python "$version" "$RUNNER_TEMP/wheel-env"
             py="$RUNNER_TEMP/wheel-env/bin/python"
             uv pip install --python "$py" "$wheel"
+            "$RUNNER_TEMP/wheel-env/bin/lingrep" tokenize '猫が眠る。' | "$py" -c 'import json,sys; assert json.load(sys.stdin) == ["猫", "が", "眠る", "。"]'
             "$py" -I -c 'from lingrep import Tokenizer; assert Tokenizer().tokenize("猫が眠る。") == ["猫", "が", "眠る", "。"]'
             uv pip install --python "$py" "${wheel}[polars,arrow]" mypy typing-extensions
             "$py" -I -c 'import polars, pyarrow'

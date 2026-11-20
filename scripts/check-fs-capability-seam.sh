@@ -15,7 +15,7 @@ allowlist=$(cat <<'ALLOWLIST'
 lingrep-corpus/src/fs_capability.rs|*|the seam itself
 lingrep-core/src/dictionary.rs|rename|replaces a regular cache file in its own directory, which every supported filesystem permits; a failure is a cache miss
 lingrep-perf/src/campaign.rs|rename|replaces a regular campaign file in its own directory, which every supported filesystem permits
-lingrep/src/packaged_dictionaries.rs|persist|replaces a regular dictionary file in its own directory, which every supported filesystem permits
+lingrep-cli-common/src/packaged_dictionaries.rs|persist|replaces a regular dictionary file in its own directory, which every supported filesystem permits
 ALLOWLIST
 )
 
