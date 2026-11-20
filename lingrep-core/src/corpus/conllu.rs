@@ -139,7 +139,7 @@ pub fn analyzer_descriptor() -> crate::analysis::AnalyzerDescriptor {
         DECODER_REVISION,
         [0; 32],
         conllu_projection_digest(),
-        *blake3::hash(b"lingrep.conllu-word-alignment/v1").as_bytes(),
+        *blake3::hash(b"lingrep.conllu-word-alignment/v2").as_bytes(),
         [0; 32],
         *blake3::hash(b"lingrep.conllu-output/v1").as_bytes(),
         schema.digest(),
@@ -577,8 +577,8 @@ pub struct Sentence {
     enhanced_graph: EnhancedGraphObservation,
     sent_id: Option<String>,
     newdoc: Option<NewdocBoundary>,
-    /// Each token's code-point span within `text`, or `None` when a supplied
-    /// `# text` disagreed with what the rows reconstruct.
+    /// Each token's code-point span within `text`, or `None` when the forms
+    /// do not occur in a supplied `# text`.
     char_offsets: Option<Box<[CharSpan]>>,
 }
 
@@ -598,8 +598,9 @@ impl Sentence {
     /// Each token's sentence-relative code-point span, when they are
     /// derivable.
     ///
-    /// `None` means the sentence declared a `# text` the rows do not
-    /// reconstruct, so no offset here can be trusted to address it.
+    /// `None` means the sentence declared a `# text` in which the forms do
+    /// not occur in order with only whitespace between them, so no offset
+    /// addresses it.
     #[must_use]
     pub fn char_offsets(&self) -> Option<&[CharSpan]> {
         self.char_offsets.as_deref()
@@ -1066,13 +1067,13 @@ fn parse_sentence(
         ));
     }
     let (reconstructed, derived_offsets) = reconstruct_with_offsets(&words, &multiword);
-    // `# text` is authoritative when present, so offsets derived from the rows
-    // describe it only when the two agree. UD requires that they do; this
-    // reader has never verified it, and an offset into a string it does not
-    // describe points confidently at the wrong characters. Absent beats wrong,
-    // so a disagreement withdraws the offsets and leaves matching untouched.
+    // `# text` is the sentence text when present. Offsets derived from the
+    // rows address it only when the two are equal; otherwise the forms are
+    // located in it, and offsets are withdrawn when they are not all there.
     let char_offsets = match text.as_deref() {
-        Some(supplied) if supplied != reconstructed => None,
+        Some(declared) if declared != reconstructed => {
+            locate_in_declared_text(declared, &words, &multiword)
+        }
         _ => Some(derived_offsets),
     };
     let text = text.unwrap_or(reconstructed);
@@ -1260,15 +1261,35 @@ fn split_set(value: &str, separator: char) -> Box<[CompactString]> {
     }
 }
 
-/// The sentence text, and each token's code-point span within it.
-///
-/// One pass, because the two answers are the same walk and computing them
-/// apart is how they drift: an offset is only meaningful against the exact
-/// string this returns.
+/// The surface forms of a sentence in order: each multiword token once, and
+/// each word outside one. Yields the form, the index after the last word it
+/// covers, and whether a space follows it by `SpaceAfter`.
+fn surface_forms<'a>(
+    words: &'a [Word],
+    multiword: &'a [(std::ops::Range<usize>, String, bool)],
+) -> impl Iterator<Item = (&'a str, usize, bool)> {
+    let mut index = 0;
+    let mut ranges = multiword.iter().peekable();
+    std::iter::from_fn(move || {
+        let word = words.get(index)?;
+        let surface = match ranges.next_if(|(range, _, _)| range.start == index) {
+            Some((range, form, separator)) => (form.as_str(), range.end, *separator),
+            None => (
+                word.form.as_str(),
+                index + 1,
+                !word.misc.iter().any(|entry| entry == "SpaceAfter=No"),
+            ),
+        };
+        index = surface.1;
+        Some(surface)
+    })
+}
+
+/// The sentence text the rows state, and each token's code-point span within
+/// it.
 ///
 /// The separator is removed only when one was appended, so the final
-/// character of a sentence whose last token carries `SpaceAfter=No` — the
-/// ordinary shape of Japanese CoNLL-U without a `# text` comment — is kept.
+/// character of a sentence whose last token carries `SpaceAfter=No` is kept.
 fn reconstruct_with_offsets(
     words: &[Word],
     multiword: &[(std::ops::Range<usize>, String, bool)],
@@ -1277,28 +1298,11 @@ fn reconstruct_with_offsets(
     let mut spans = Vec::with_capacity(words.len());
     let mut chars: u32 = 0;
     let mut trailing_separator = false;
-    let mut index = 0;
-    let mut ranges = multiword.iter().peekable();
-    while index < words.len() {
-        let (form, word_end, separator) = if ranges
-            .peek()
-            .is_some_and(|(range, _, _)| range.start == index)
-        {
-            let (range, form, separator) = ranges.next().expect("peeked matching multiword range");
-            (form.as_str(), range.end, *separator)
-        } else {
-            let word = &words[index];
-            (
-                word.form.as_str(),
-                index + 1,
-                !word.misc.iter().any(|entry| entry == "SpaceAfter=No"),
-            )
-        };
+    for (form, word_end, separator) in surface_forms(words, multiword) {
         let start = chars;
         text.push_str(form);
         chars = chars.saturating_add(u32::try_from(form.chars().count()).unwrap_or(u32::MAX));
         spans.resize(word_end, CharSpan::new(start, chars));
-        index = word_end;
         trailing_separator = separator;
         if trailing_separator {
             text.push(' ');
@@ -1309,6 +1313,30 @@ fn reconstruct_with_offsets(
         text.pop();
     }
     (text, spans.into_boxed_slice())
+}
+
+/// Each token's code-point span within `declared`, a `# text` comment, when
+/// the surface forms occur in it in order with only whitespace before, between
+/// and after them. `SpaceAfter` is not consulted.
+fn locate_in_declared_text(
+    declared: &str,
+    words: &[Word],
+    multiword: &[(std::ops::Range<usize>, String, bool)],
+) -> Option<Box<[CharSpan]>> {
+    let count = |text: &str| u32::try_from(text.chars().count()).unwrap_or(u32::MAX);
+    let mut spans = Vec::with_capacity(words.len());
+    let mut rest = declared;
+    let mut chars: u32 = 0;
+    for (form, word_end, _) in surface_forms(words, multiword) {
+        let leading = rest.chars().take_while(|c| c.is_whitespace()).count();
+        let start = chars.saturating_add(u32::try_from(leading).unwrap_or(u32::MAX));
+        rest = rest.trim_start().strip_prefix(form)?;
+        chars = start.saturating_add(count(form));
+        spans.resize(word_end, CharSpan::new(start, chars));
+    }
+    rest.trim_start()
+        .is_empty()
+        .then(|| spans.into_boxed_slice())
 }
 
 fn invalid(source_name: &str, line_number: usize, message: &str) -> io::Error {
@@ -1437,6 +1465,41 @@ mod tests {
     }
 
     #[test]
+    fn a_bunsetsu_governor_cycle_projects_without_governors() {
+        let input = concat!(
+            "1\t先生\t_\tNOUN\t_\t_\t3\tnsubj\t_\tBunsetuBILabel=B|BunsetuPositionType=SEM_HEAD|LUWBILabel=B|LUWPOS=名詞\n",
+            "2\t方\t_\tNOUN\t_\t_\t0\troot\t_\tBunsetuBILabel=I|LUWBILabel=I\n",
+            "3\t行く\t_\tVERB\t_\t_\t2\tdep\t_\tBunsetuBILabel=B|LUWBILabel=B|LUWPOS=動詞\n\n"
+        );
+        let sentence = Reader::new(input.as_bytes(), "cycle.conllu")
+            .next()
+            .unwrap()
+            .unwrap();
+        let projection = token_schema()
+            .bind_projection([AttributeKey::new("text").unwrap()])
+            .unwrap();
+        let words = sentence.project(&projection).unwrap();
+        let span =
+            |kind: &str, start, end, head, label: Option<&str>| crate::token_match::SentenceSpan {
+                kind: kind.into(),
+                start,
+                end,
+                head,
+                label: label.map(str::to_owned),
+                governor: None,
+            };
+        assert_eq!(
+            words.spans(),
+            [
+                span("bunsetsu", 0, 2, Some(0), None),
+                span("bunsetsu", 2, 3, Some(2), None),
+                span("luw", 0, 2, None, Some("名詞")),
+                span("luw", 2, 3, None, Some("動詞")),
+            ]
+        );
+    }
+
+    #[test]
     fn multiword_words_address_the_enclosing_surface_token() {
         let input = "# text = can't go\n1-2\tcan't\t_\t_\t_\t_\t_\t_\t_\t_\n1\tca\tcan\tAUX\tMD\t_\t3\taux\t_\t_\n2\tn't\tnot\tPART\tRB\t_\t3\tadvmod\t_\tSpaceAfter=No\n3\tgo\tgo\tVERB\tVB\t_\t0\troot\t_\t_\n\n";
         let sentence = Reader::new(input.as_bytes(), "mwt.conllu")
@@ -1485,19 +1548,63 @@ mod tests {
         assert_eq!(offsets[1], CharSpan::new(1, 2));
     }
 
-    /// A `# text` the rows do not reconstruct withdraws the offsets rather
-    /// than publishing ones that address a different string.
-    #[test]
-    fn disagreeing_declared_text_withdraws_offsets_but_not_the_sentence() {
-        let input = "# text = \u{592a}\u{90ce}\u{304c}\u{8d70}\u{308b}\n1\t\u{592a}\u{90ce}\t_\tPROPN\t_\t_\t2\tnsubj\t_\tSpaceAfter=No\n2\t\u{8d70}\u{308b}\t_\tVERB\t_\t_\t0\troot\t_\tSpaceAfter=No\n\n";
-        let sentence = Reader::new(input.as_bytes(), "disagreeing.conllu")
+    fn text_and_offsets(input: &str) -> (String, Option<Vec<(u32, u32)>>) {
+        let sentence = Reader::new(input.as_bytes(), "text.conllu")
             .next()
             .expect("one sentence")
             .expect("parses");
-        // The declared text carries a \u{304c} the rows do not.
-        assert_eq!(sentence.text(), "\u{592a}\u{90ce}\u{304c}\u{8d70}\u{308b}");
-        assert_eq!(sentence.char_offsets(), None);
-        assert_eq!(sentence.len(), 2);
+        let offsets = sentence
+            .char_offsets()
+            .map(|spans| spans.iter().map(|span| (span.start, span.end)).collect());
+        (sentence.text().to_owned(), offsets)
+    }
+
+    #[test]
+    fn forms_found_in_a_differing_declared_text_take_their_offsets_from_it() {
+        // No `SpaceAfter=No`, although the text has no space before the comma.
+        assert_eq!(
+            text_and_offsets(
+                "# text = Hi, you\n1\tHi\t_\tX\t_\t_\t0\troot\t_\t_\n2\t,\t_\tX\t_\t_\t1\tdep\t_\t_\n3\tyou\t_\tX\t_\t_\t1\tdep\t_\t_\n\n"
+            ),
+            ("Hi, you".to_owned(), Some(vec![(0, 2), (2, 3), (4, 7)]))
+        );
+        // `SpaceAfter=No`, although the text has a space.
+        assert_eq!(
+            text_and_offsets(
+                "# text = a b\n1\ta\t_\tX\t_\t_\t0\troot\t_\tSpaceAfter=No\n2\tb\t_\tX\t_\t_\t1\tdep\t_\t_\n\n"
+            ),
+            ("a b".to_owned(), Some(vec![(0, 1), (2, 3)]))
+        );
+        // Whitespace around the forms and a run between them; the words of the
+        // multiword token share its span.
+        assert_eq!(
+            text_and_offsets(
+                "# text =  can't \t go \n1-2\tcan't\t_\t_\t_\t_\t_\t_\t_\t_\n1\tca\tcan\tAUX\tMD\t_\t3\taux\t_\t_\n2\tn't\tnot\tPART\tRB\t_\t3\tadvmod\t_\t_\n3\tgo\tgo\tVERB\tVB\t_\t0\troot\t_\t_\n\n"
+            ),
+            (
+                " can't \t go ".to_owned(),
+                Some(vec![(1, 6), (1, 6), (9, 11)])
+            )
+        );
+    }
+
+    /// Offsets into a text that lacks the forms would address other
+    /// characters, so there are none.
+    #[test]
+    fn a_declared_text_without_the_forms_keeps_the_text_and_has_no_offsets() {
+        for declared in [
+            // A character between the forms, after them, and a missing form.
+            "\u{592a}\u{90ce}\u{304c}\u{8d70}\u{308b}",
+            "\u{592a}\u{90ce}\u{8d70}\u{308b}\u{3002}",
+            "\u{592a}\u{90ce}",
+        ] {
+            assert_eq!(
+                text_and_offsets(&format!(
+                    "# text = {declared}\n1\t\u{592a}\u{90ce}\t_\tPROPN\t_\t_\t2\tnsubj\t_\tSpaceAfter=No\n2\t\u{8d70}\u{308b}\t_\tVERB\t_\t_\t0\troot\t_\tSpaceAfter=No\n\n"
+                )),
+                (declared.to_owned(), None)
+            );
+        }
     }
 
     #[test]

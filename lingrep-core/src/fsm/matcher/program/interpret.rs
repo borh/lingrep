@@ -55,9 +55,17 @@ impl<S: TokenSequence + ?Sized> Replay<'_, '_, S> {
     }
 
     fn add(&mut self, states: &mut Vec<State>, next: State) -> Result<(), MatchResourceError> {
+        let compare_slots = self.program.has_node_or_span_filters();
         for old in states.iter() {
-            self.charge(1 + old.events.len().min(next.events.len()), 0)?;
-            if old.position == next.position && old.events == next.events {
+            self.charge(
+                1 + old.events.len().min(next.events.len())
+                    + if compare_slots { old.slots.len() } else { 0 },
+                0,
+            )?;
+            if old.position == next.position
+                && old.events == next.events
+                && (!compare_slots || old.slots == next.slots)
+            {
                 return Ok(());
             }
         }
@@ -252,9 +260,21 @@ impl Program {
         budget: &mut MatchBudget,
         predicates: &PredicateSession<'_>,
         tokens: &S,
-        start: usize,
-        end: usize,
+        range: std::ops::Range<usize>,
     ) -> Result<(Box<[Capture]>, Box<[Interpretation]>), MatchResourceError> {
+        self.interpreted_candidates(recipe, budget, predicates, tokens, range, |_, _| Ok(true))
+    }
+
+    pub(super) fn interpreted_candidates<S: TokenSequence + ?Sized>(
+        &self,
+        recipe: &InterpretationRecipe,
+        budget: &mut MatchBudget,
+        predicates: &PredicateSession<'_>,
+        tokens: &S,
+        range: std::ops::Range<usize>,
+        mut accept: impl FnMut(&Candidate, &mut MatchBudget) -> Result<bool, MatchResourceError>,
+    ) -> Result<(Box<[Capture]>, Box<[Interpretation]>), MatchResourceError> {
+        let (start, end) = (range.start, range.end);
         let mut replay = Replay {
             budget,
             program: self,
@@ -276,12 +296,15 @@ impl Program {
             .into_iter()
             .filter(|state| state.position == end)
         {
+            let candidate = Candidate {
+                position: end,
+                slots: state.slots,
+                any_order_branches: Vec::new(),
+            };
+            if !accept(&candidate, replay.budget)? {
+                continue;
+            }
             if captures.is_none() {
-                let candidate = Candidate {
-                    position: end,
-                    slots: state.slots,
-                    any_order_branches: Vec::new(),
-                };
                 captures = Some(self.public_captures(&candidate, &replay.budget.output)?);
             }
             let comparisons = histories.len().max(1).ilog2() as usize + 1;

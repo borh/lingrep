@@ -49,23 +49,106 @@ pub(crate) fn materialize_program(
             &mut BTreeMap::new(),
         )?;
         let relations = state.resolve_relations(definition.relations(), &expr)?;
-        let (enhanced_relations, orders, graph_bindings) = state.resolve_enhanced_relations(
-            definition.enhanced_relations(),
-            definition.orders(),
-            &expr,
-        )?;
-        let constrained = !relations.is_empty()
-            || !enhanced_relations.is_empty()
-            || !orders.is_empty()
-            || !definition.span_paths().is_empty()
-            || definition.metadata.contains_key("within_span")
-            || definition.metadata.contains_key("span_dependency");
-        output.push(ExecutionDefinition {
-            interpretation: state.interpretation(
-                definition.interpretation.as_ref(),
+        let (enhanced_relations, node_constraints, graph_bindings) = state
+            .resolve_enhanced_relations(
+                definition.enhanced_relations(),
+                definition.node_constraints(),
                 &expr,
-                constrained,
-            )?,
+            )?;
+        for relation in &relations {
+            if let RelationTarget::Predicate {
+                requirement, span, ..
+            } = &relation.target
+                && let Some(name) = requirement.binding()
+                && graph_bindings.iter().any(|decl| match decl {
+                    super::model::ExecutionGraphBindingDecl::Node(other)
+                    | super::model::ExecutionGraphBindingDecl::Edge(other) => other == name,
+                })
+            {
+                return Err(state.at(
+                    *span,
+                    DiagnosticCode::EnhancedGraphBindingDuplicate,
+                    &format!("duplicate count binding `${name}`"),
+                ));
+            }
+        }
+        use super::model::{ExecutionGraphBindingDecl, MeasureSource, NamedMeasure};
+        let mut names = BTreeSet::new();
+        let mut captures = BTreeMap::new();
+        if !definition.measures.is_empty() {
+            collect_capture_names(&expr, &mut captures);
+            names.extend(captures.keys().copied());
+            names.extend(graph_bindings.iter().map(|b| match b {
+                ExecutionGraphBindingDecl::Node(n) | ExecutionGraphBindingDecl::Edge(n) => {
+                    n.as_str()
+                }
+            }));
+            names.extend(relations.iter().filter_map(|r| match &r.target {
+                RelationTarget::Predicate { requirement, .. } => {
+                    requirement.binding().map(CompactString::as_str)
+                }
+                _ => None,
+            }));
+        }
+        let mut measures = Vec::new();
+        for m in &definition.measures {
+            if !names.insert(m.name.as_str()) {
+                return Err(state.at(
+                    m.span,
+                    DiagnosticCode::EnhancedGraphBindingDuplicate,
+                    &format!("duplicate measurement binding `${}`", m.name),
+                ));
+            }
+            let mut bytes =
+                size_of::<super::model::ExecutionMeasure>().saturating_add(m.name.len());
+            if let Some(test) = m.source.test() {
+                let label = bound.sources.source_label(m.span.source());
+                for predicate in test {
+                    bytes =
+                        bytes.saturating_add(super::nfa::predicate_owned_bytes(predicate, &label)?);
+                }
+            }
+            if let MeasureSource::Links {
+                labels: RelationLabels::Listed(labels),
+                ..
+            } = &m.source
+            {
+                for label in labels {
+                    bytes =
+                        bytes.saturating_add(std::mem::size_of_val(label) + label.authored().len());
+                }
+            }
+            state.owned_bytes = state.owned_bytes.saturating_add(bytes);
+            if state.owned_bytes > limits.max_generated_owned_bytes() {
+                return Err(state.at(
+                    m.span,
+                    DiagnosticCode::LimitExceeded,
+                    "occurrence measurements exceed the generated owned byte limit",
+                ));
+            }
+            let source = match &m.source {
+                MeasureSource::Tree(l, s) => MeasureSource::Tree(*l, *s),
+                MeasureSource::Depth(l, c) => MeasureSource::Depth(
+                    *l,
+                    state.resolve_operand("measure", &captures, c, m.span)?,
+                ),
+                MeasureSource::Words(t) => MeasureSource::Words(t.clone()),
+                MeasureSource::Links { head, labels, test } => MeasureSource::Links {
+                    head: state.resolve_operand("measure", &captures, head, m.span)?,
+                    labels: labels.clone(),
+                    test: test.clone(),
+                },
+            };
+            measures.push(NamedMeasure {
+                name: m.name.clone(),
+                span: m.span,
+                reducer: m.reducer,
+                source,
+            });
+        }
+        output.push(ExecutionDefinition {
+            measures: measures.into_boxed_slice(),
+            interpretation: state.interpretation(definition.interpretation.as_ref(), &expr)?,
             span_constraints: state.span_constraints(
                 &definition.metadata,
                 definition.span_paths(),
@@ -76,7 +159,7 @@ pub(crate) fn materialize_program(
             capability: ExecutionCapability::Plain,
             relations,
             enhanced_relations,
-            orders,
+            node_constraints,
             graph_bindings,
             metadata: definition.metadata.clone(),
             key: definition.key.clone(),
@@ -389,16 +472,15 @@ impl Materializer<'_> {
         &mut self,
         parsed: Option<&super::model::ParsedInterpretation>,
         expr: &ExecutionExpr,
-        constrained: bool,
     ) -> Result<Option<Box<super::model::InterpretationRecipe>>, CompileError> {
         use super::model::InterpretationRecipe;
         let Some(parsed) = parsed else {
             return Ok(None);
         };
         if let Some(first) = parsed.captures.values().next()
-            && (constrained || !supports_interpretation(expr))
+            && !supports_interpretation(expr)
         {
-            return Err(self.at(first.span, DiagnosticCode::InvalidInterpretation, "interpret supports consuming tokens, captures, alternatives, sequences and repetitions; remove the unsupported assertion, intersection, comparison, any_order or where constraint"));
+            return Err(self.at(first.span, DiagnosticCode::InvalidInterpretation, "interpret supports consuming tokens, captures, alternatives, sequences and repetitions; remove the unsupported assertion, intersection, comparison or any_order"));
         }
         let mut names = BTreeMap::new();
         collect_capture_names(expr, &mut names);
@@ -537,6 +619,7 @@ impl Materializer<'_> {
         }
         let mut by_name: BTreeMap<&str, Vec<CaptureId>> = BTreeMap::new();
         collect_capture_names(expr, &mut by_name);
+        let mut count_names = BTreeSet::new();
         let mut resolved = Vec::with_capacity(relations.len());
         for relation in relations {
             let head =
@@ -556,15 +639,27 @@ impl Materializer<'_> {
                     span: *span,
                 },
                 RelationTarget::Predicate {
-                    polarity,
+                    requirement,
                     predicates,
                     span,
                 } => RelationTarget::Predicate {
-                    polarity: *polarity,
+                    requirement: requirement.clone(),
                     predicates: predicates.clone(),
                     span: *span,
                 },
             };
+            if let RelationTarget::Predicate {
+                requirement, span, ..
+            } = &target
+                && let Some(name) = requirement.binding()
+                && (by_name.contains_key(name.as_str()) || !count_names.insert(name.clone()))
+            {
+                return Err(self.at(
+                    *span,
+                    DiagnosticCode::EnhancedGraphBindingDuplicate,
+                    &format!("duplicate count binding `${name}`"),
+                ));
+            }
             // Charged over the *resolved* set, so a `@name` term costs what
             // its members cost rather than what its reference spells. That is
             // the same accounting rule `[x in @S]` follows, and it is what
@@ -581,6 +676,12 @@ impl Materializer<'_> {
             self.owned_bytes = self
                 .owned_bytes
                 .checked_add(label_bytes)
+                .and_then(|bytes| match &target {
+                    RelationTarget::Predicate { requirement, .. } => {
+                        bytes.checked_add(requirement.binding().map_or(0, CompactString::len))
+                    }
+                    _ => Some(bytes),
+                })
                 .ok_or_else(|| self.limit("generated owned bytes overflowed"))?;
             if self.owned_bytes > self.limits.max_generated_owned_bytes() {
                 return Err(self.at(
@@ -603,12 +704,12 @@ impl Materializer<'_> {
     fn resolve_enhanced_relations(
         &mut self,
         relations: &[super::model::BoundEnhancedRelation],
-        orders: &[super::model::OrderConstraint],
+        node_constraints: &[super::model::ParsedNodeConstraint],
         expr: &ExecutionExpr,
     ) -> Result<
         (
             Box<[super::model::ExecutionEnhancedRelation]>,
-            Box<[super::model::ExecutionOrder]>,
+            Box<[super::model::ExecutionNodeConstraint]>,
             Box<[super::model::ExecutionGraphBindingDecl]>,
         ),
         CompileError,
@@ -617,7 +718,7 @@ impl Materializer<'_> {
             BoundEnhancedEndpoint, ExecutionEnhancedEndpoint, ExecutionEnhancedRelation,
             ExecutionGraphBindingDecl,
         };
-        if relations.is_empty() && orders.is_empty() {
+        if relations.is_empty() && node_constraints.is_empty() {
             return Ok((Box::default(), Box::default(), Box::default()));
         }
         let mut captures: BTreeMap<&str, Vec<CaptureId>> = BTreeMap::new();
@@ -762,10 +863,10 @@ impl Materializer<'_> {
                 dependent: resolve(&relation.dependent, self)?,
             });
         }
-        let orders = orders
+        let node_constraints = node_constraints
             .iter()
             .map(|order| {
-                order
+                let operands = order
                     .operands
                     .iter()
                     .map(|(name, span)| {
@@ -777,9 +878,13 @@ impl Materializer<'_> {
                             self,
                         )
                     })
-                    .collect()
+                    .collect::<Result<_, CompileError>>()?;
+                Ok(super::model::NodeConstraint {
+                    operands,
+                    comparison: order.comparison.clone(),
+                })
             })
-            .collect::<Result<_, _>>()?;
+            .collect::<Result<_, CompileError>>()?;
 
         let mut reachable = BTreeSet::new();
         for relation in resolved
@@ -850,7 +955,7 @@ impl Materializer<'_> {
         });
         Ok((
             resolved.into_boxed_slice(),
-            orders,
+            node_constraints,
             declarations
                 .into_iter()
                 .map(|(_, declaration)| declaration)
@@ -864,13 +969,23 @@ impl Materializer<'_> {
         name: &str,
         span: SourceSpan,
     ) -> Result<CaptureId, CompileError> {
+        self.resolve_operand("where", by_name, name, span)
+    }
+
+    fn resolve_operand(
+        &self,
+        clause: &str,
+        by_name: &BTreeMap<&str, Vec<CaptureId>>,
+        name: &str,
+        span: SourceSpan,
+    ) -> Result<CaptureId, CompileError> {
         match by_name.get(name).map(Vec::as_slice) {
             Some([id]) => Ok(*id),
             Some(_) => Err(self.at(
                 span,
                 DiagnosticCode::WhereCaptureUndefined,
                 &format!(
-                    "`where` operand `${name}` resolves to more than one \
+                    "`{clause}` operand `${name}` resolves to more than one \
                      materialized capture; a constraint needs exactly one"
                 ),
             )),
@@ -878,7 +993,7 @@ impl Materializer<'_> {
                 span,
                 DiagnosticCode::WhereCaptureUndefined,
                 &format!(
-                    "`where` operand `${name}` names no capture in this \
+                    "`{clause}` operand `${name}` names no capture in this \
                      definition's expression"
                 ),
             )),

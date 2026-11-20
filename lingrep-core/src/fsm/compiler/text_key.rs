@@ -43,6 +43,9 @@ pub(super) fn check_set_references(
         {
             scan.label = format!("definition `{}`", definition.name);
             scan.expr(expr)?;
+            for test in definition.measures.iter().filter_map(|m| m.source.test()) {
+                scan.test(test)?;
+            }
             for relation in relations {
                 if let ParsedRelationTarget::Predicate { test, .. } = &relation.target {
                     scan.test(test)?;

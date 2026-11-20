@@ -1041,3 +1041,259 @@ fn word_graph_bindings_publish_norm_and_omit_absent_scalars() {
         ])
     );
 }
+
+#[test]
+fn counted_edges_select_heads_and_preserve_unknown_counts() {
+    let source = "p := (?<v> [upos=VERB]) where $v -[*]-> [upos=NOUN]{2}.";
+    let root = "1\tv\tv\tVERB\t_\t_\t0\troot\t_\t_\n";
+    let mut sentence = root.to_owned();
+    for count in 0..=3 {
+        let expected = if count == 2 {
+            vec![matched("p", 0, 1, &[("v", 0, 1)])]
+        } else {
+            Vec::new()
+        };
+        assert_eq!(match_catalog("count.lx", source, &sentence), expected);
+        let measure = "key: [$n]\np := (?<v> [upos=VERB]) where $v -[*]-> [upos=NOUN] as $n.";
+        let mut measured = matched("p", 0, 1, &[("v", 0, 1)]);
+        measured.graph_bindings = Box::new([lingrep_core::fsm::GraphBinding::Count {
+            name: "n".into(),
+            value: Some(count),
+        }]);
+        assert_eq!(match_catalog("counts.lx", measure, &sentence), [measured]);
+        let (rows, _) = publish_over_conllu("counts.lx", measure, &sentence);
+        assert_eq!(rows[0].key.as_ref().unwrap()[0].value, count.to_string());
+        sentence.push_str(&format!("{}\tn\tn\tNOUN\t_\t_\t1\tobj\t_\t_\n", count + 2));
+    }
+    let zero = source.replace("{2}", "{0}");
+    assert_eq!(
+        match_catalog("zero.lx", &zero, root),
+        [matched("p", 0, 1, &[("v", 0, 1)])]
+    );
+    let missing = format!("{root}2\tn\tn\t_\t_\t_\t1\tobj\t_\t_\n");
+    assert!(match_catalog("unknown.lx", &zero, &missing).is_empty());
+    let measure = "key: [$n]\np := (?<v> [upos=VERB]) where $v -[*]-> [upos=NOUN] as $n.";
+    let (rows, stats) = publish_over_conllu("unknown.lx", measure, &missing);
+    assert_eq!(rows.len(), 1);
+    assert_eq!(
+        &*rows[0].raw.graph_bindings,
+        &[lingrep_core::fsm::GraphBinding::Count {
+            name: "n".into(),
+            value: None
+        }]
+    );
+    assert_eq!(rows[0].key, None);
+    assert_eq!(stats.records_unkeyed, 1);
+}
+
+#[test]
+fn comparisons_filter_bound_word_assignments_before_publication() {
+    let source = "p := (?<v> [upos=VERB]) where $v -[nsubj]-> (?<s> []), $v -[obj]-> (?<o> []), $s.lemma = $o.lemma, $s.surface != $o.surface.";
+    let inventory = source
+        .replace(", $s.lemma = $o.lemma, $s.surface != $o.surface", "")
+        .replace(
+            "(?<v> [upos=VERB])",
+            "(?<v> [upos=VERB & surface~/.+/ & lemma~/.+/])",
+        );
+    let sentence = "1\t私\t私\tPRON\t_\t_\t3\tnsubj\t_\t_\n2\tわたし\t私\tPRON\t_\t_\t3\tobj\t_\t_\n3\t見る\t見る\tVERB\t_\t_\t0\troot\t_\t_\n";
+    let expected = match_catalog("inventory.lx", &inventory, sentence);
+    assert_eq!(expected.len(), 1);
+    assert_eq!(match_catalog("compare.lx", source, sentence), expected);
+    for variant in [
+        sentence.replace("わたし\t私", "私\t私"),
+        sentence.replace("わたし\t私", "彼\t彼"),
+        sentence.replace("わたし\t私", "わたし\t_"),
+    ] {
+        assert!(match_catalog("compare.lx", source, &variant).is_empty());
+    }
+}
+
+#[test]
+fn interpreted_readings_must_satisfy_the_published_graph_assignment() {
+    let sentence = "1\ta\ta\tNOUN\t_\t_\t2\tobj\t_\t_\n2\tb\tb\tVERB\t_\t_\t0\troot\t_\t_\n";
+    let annotations = "interpret $left as slot {side: 1}\ninterpret $right as slot {side: 2}\n";
+    let source = format!(
+        "{annotations}p := ((?<left> (?<d> [])) [] | [] (?<right> (?<e> []))) where (?<h> []) -[obj]-> $d."
+    );
+    let hits = match_catalog("readings.lx", &source, sentence);
+    assert_eq!(hits.len(), 1);
+    let hit = &hits[0];
+    assert_eq!(hit.graph_bindings.len(), 1);
+    assert_eq!(hit.interpretations.len(), 1);
+    assert_eq!(hit.interpretations[0].roles.len(), 1);
+    assert_eq!(hit.interpretations[0].roles[0].start, 0);
+}
+
+#[test]
+fn one_edge_per_dependent_makes_pooled_label_counts_additive() {
+    let inventory = "edge := (?<d> []) where (?<v> [upos=VERB]) -[nsubj|obj]-> $d.";
+    let sentence = "1\tv\tv\tVERB\t_\t_\t0\troot\t_\t_\n2\ta\ta\tNOUN\t_\t_\t1\tobj\t_\t_\n3\tb\tb\tNOUN\t_\t_\t1\tnsubj\t_\t_\n4\tc\tc\tNOUN\t_\t_\t1\tobj\t_\t_\n";
+    let pooled = match_catalog("pooled.lx", inventory, sentence);
+    let mut separate = Vec::new();
+    for (label, expected) in [("nsubj", 1), ("obj", 2)] {
+        let hits = match_catalog("label.lx", &inventory.replace("nsubj|obj", label), sentence);
+        assert_eq!(hits.len(), expected);
+        separate.extend(hits);
+    }
+    separate.sort_by_key(|hit| hit.start);
+    assert_eq!(pooled, separate);
+}
+
+#[test]
+fn measures_keep_the_verb_and_its_original_sentence_coordinates() {
+    let source = "test nominal := upos=NOUN.
+        key: [$distance]
+        p := (?<v> [upos=VERB]) measure mean(($v -[*]-> [@nominal]).length) as $distance.";
+    let sentence = "1\tn\tn\tNOUN\t_\t_\t3\tobj\t_\t_\n2\tn\tn\tNOUN\t_\t_\t3\tnsubj\t_\t_\n3\tv\tv\tVERB\t_\t_\t0\troot\t_\t_\n";
+    let (rows, _) = publish_over_conllu("measure.lx", source, sentence);
+    assert_eq!(rows.len(), 1);
+    assert_eq!(rows[0].key.as_ref().unwrap()[0].value, "1.5");
+}
+
+#[test]
+fn invalid_measurements_are_rejected_at_compile_time() {
+    for source in [
+        "fragment f := [] measure count(match.words[]) as $n.",
+        "p := [] measure count(match.words[]) as $n, max(tree(word).nodes.depth) as $n.",
+        "p := (?<v> []) measure count(match.words[]) as $v.",
+        "p := [] measure tree(word).depth($missing) as $n.",
+        "p := (?<v> []+) measure tree(word).depth($v) as $n.",
+        "p := [] measure mean(tree(word).links.depth) as $n.",
+        "p := [] measure max(match.words[]) as $n.",
+        "p := [] measure count(match.words[@undefined]) as $n.",
+    ] {
+        assert!(
+            compile_catalog(
+                PatternSource::named("invalid.lx", source),
+                CompileLimits::default()
+            )
+            .is_err(),
+            "{source}"
+        );
+    }
+}
+
+fn measured(hit: &Match) -> Vec<(&str, Option<f64>, &'static str)> {
+    hit.graph_bindings
+        .iter()
+        .filter_map(|binding| match binding {
+            lingrep_core::fsm::GraphBinding::Measure { name, value } => {
+                Some((name.as_str(), value.number(), value.status()))
+            }
+            _ => None,
+        })
+        .collect()
+}
+
+#[test]
+fn a_word_without_a_set_feature_does_not_hold_it() {
+    let sentence = "1\ta\ta\tNOUN\t_\tCase=Nom\t3\tnsubj\t_\t_\n2\tb\tb\tNOUN\t_\t_\t3\tobj\t_\t_\n3\tv\tv\tVERB\t_\t_\t0\troot\t_\t_\n";
+    let whole = "p := ^ []+ $ measure count(match.words[feat.Case has Nom]) as $words.";
+    assert_eq!(
+        measured(&match_catalog("words.lx", whole, sentence)[0]),
+        [("words", Some(1.0), "ok")]
+    );
+    let verb = "p := (?<v> [upos=VERB]) where $v -[*]-> [feat.Case has Nom] as $n
+        measure count($v -[*]-> [feat.Case has Nom]) as $links.";
+    let hit = &match_catalog("links.lx", verb, sentence)[0];
+    assert_eq!(measured(hit), [("links", Some(1.0), "ok")]);
+    assert!(
+        hit.graph_bindings
+            .contains(&lingrep_core::fsm::GraphBinding::Count {
+                name: "n".into(),
+                value: Some(1)
+            })
+    );
+}
+
+#[test]
+fn a_missing_scalar_leaves_a_count_unknown_only_when_no_alternative_holds() {
+    let source = "p := ^ []+ $ measure count(match.words[upos=NOUN | xpos=NN]) as $n.";
+    let decided = "1\ta\ta\tNOUN\t_\t_\t3\tdep\t_\t_\n2\tb\tb\tX\tNN\t_\t3\tdep\t_\t_\n3\tv\tv\tVERB\tVB\t_\t0\troot\t_\t_\n";
+    assert_eq!(
+        measured(&match_catalog("decided.lx", source, decided)[0]),
+        [("n", Some(2.0), "ok")]
+    );
+    let undecided = format!("{decided}4\tc\tc\tX\t_\t_\t3\tdep\t_\t_\n");
+    assert_eq!(
+        measured(&match_catalog("undecided.lx", source, &undecided)[0]),
+        [("n", None, "unavailable")]
+    );
+}
+
+#[test]
+fn tree_measures_on_every_word_of_a_long_sentence_stay_within_the_budget() {
+    let source =
+        "p := [] measure mean(tree(word).links.length) as $a, mean(tree(word).nodes.depth) as $b,
+        max(tree(word).nodes.depth) as $c, max(tree(word).boundaries.open_links) as $d.";
+    let words = 2_000;
+    let sentence: String = (1..=words)
+        .map(|id| {
+            let relation = if id == 1 { "root" } else { "dep" };
+            format!("{id}\tw\tw\tX\t_\t_\t{}\t{relation}\t_\t_\n", id - 1)
+        })
+        .collect();
+    let hits = match_catalog("long.lx", source, &sentence);
+    assert_eq!(hits.len(), words);
+    assert_eq!(
+        measured(&hits[words - 1]),
+        [
+            ("a", Some(1.0), "ok"),
+            ("b", Some((words - 1) as f64 / 2.0), "ok"),
+            ("c", Some((words - 1) as f64), "ok"),
+            ("d", Some(1.0), "ok")
+        ]
+    );
+}
+
+#[test]
+fn a_root_relation_may_carry_a_subtype() {
+    let sentence = "1\ta\ta\tX\t_\t_\t0\troot:x\t_\t_\n2\tb\tb\tX\t_\t_\t1\tdep\t_\t_\n";
+    let source = "p := ^ []+ $ measure max(tree(word).nodes.depth) as $height.";
+    assert_eq!(
+        measured(&match_catalog("subtype.lx", source, sentence)[0]),
+        [("height", Some(1.0), "ok")]
+    );
+}
+
+#[test]
+fn readings_with_different_measures_are_separate_matches() {
+    let sentence = "1\tn\tn\tNOUN\t_\t_\t3\tobj\t_\t_\n2\tp\tp\tADP\t_\t_\t1\tcase\t_\t_\n3\tv\tv\tVERB\t_\t_\t0\troot\t_\t_\n";
+    let source = "interpret $a as reading {side: 1}\ninterpret $b as reading {side: 2}\n
+        p := ((?<a> [upos=NOUN]) [upos=ADP] | [upos=NOUN] (?<b> [upos=ADP]))
+        measure tree(word).depth($a) as $da, tree(word).depth($b) as $db.";
+    let mut readings: Vec<_> = match_catalog("readings.lx", source, sentence)
+        .iter()
+        .map(|hit| {
+            assert_eq!(hit.interpretations.len(), 1);
+            (hit.interpretations[0].roles[0].start, measured(hit))
+        })
+        .map(|(start, values)| (start, format!("{values:?}")))
+        .collect();
+    readings.sort();
+    assert_eq!(
+        readings,
+        [
+            (
+                0,
+                r#"[("da", Some(1.0), "ok"), ("db", None, "unavailable")]"#.to_owned()
+            ),
+            (
+                1,
+                r#"[("da", None, "unavailable"), ("db", Some(2.0), "ok")]"#.to_owned()
+            )
+        ]
+    );
+}
+
+#[test]
+fn an_undefined_measure_capture_is_reported_against_the_measure_clause() {
+    let error = compile_catalog(
+        PatternSource::named("m.lx", "p := [] measure tree(word).depth($missing) as $n."),
+        CompileLimits::default(),
+    )
+    .err()
+    .expect("an undefined capture does not compile")
+    .to_string();
+    assert!(error.contains("`measure` operand `$missing`"), "{error}");
+}

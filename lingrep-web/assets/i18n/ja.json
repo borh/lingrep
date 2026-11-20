@@ -420,6 +420,8 @@
   "hit.classification": "分類",
   "hit.graph_bindings": "グラフ束縛",
   "hit.graph_edge": "辺",
+  "hit.graph_measure": "測定値",
+  "hit.graph_count": "件数",
   "hit.graph_node": "ノード",
   "hit.graph_relation": "関係",
   "hit.division": "区分",

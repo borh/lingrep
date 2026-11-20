@@ -3,6 +3,14 @@ source: lingrep-core/src/fsm/compiler/metadata_baseline.rs
 expression: baseline
 ---
 {
+    "examples/occurrence-measures.lx": {
+        "pattern bunsetsu_profile": {},
+        "pattern chunk_script": {
+            "within_span": "{\"kind\":\"bunsetsu\",\"position\":\"whole\"}",
+        },
+        "pattern verb_load": {},
+        "pattern word_profile": {},
+    },
     "lingrep-core/tests/fixtures/catalogs/apparatus-depth2.lx": {
         "fragment BRACKETED_1": {},
         "fragment BRACKETED_2": {},
@@ -747,6 +755,10 @@ expression: baseline
         },
     },
     "patterns/psycholinguistics.lx": {
+        "pattern argument_spelling_contrast": {
+            "category": "\"Spelling variation\"",
+            "status": "\"experimental\"",
+        },
         "pattern earlier_dependent": {
             "category": "\"Bunsetsu\"",
             "status": "\"experimental\"",
@@ -769,6 +781,10 @@ expression: baseline
         },
         "pattern katakana_token": {
             "category": "\"Character class\"",
+            "status": "\"experimental\"",
+        },
+        "pattern nominal_load": {
+            "category": "\"Syntactic complexity\"",
             "status": "\"experimental\"",
         },
         "pattern noun_spelling": {

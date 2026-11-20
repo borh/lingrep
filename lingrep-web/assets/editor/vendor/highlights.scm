@@ -188,6 +188,8 @@
 
 ; Quantifiers
 (quantifier) @operator
+(dependent_count) @operator
+(attribute_comparison operator: _ @operator)
 
 (span_constraint "span" @keyword)
 (span_constraint "->" @operator)
@@ -197,3 +199,15 @@
 
 ; Identifiers and literals
 (identifier) @variable
+
+(measure_clause "measure" @keyword)
+(named_measure "as" @keyword)
+(reduction_operator) @function.builtin
+(tree_source "tree" @function.builtin)
+(tree_layer) @constant.builtin
+(tree_items) @property
+(tree_property) @property
+(match_words "match" @keyword "words" @property)
+(link_lengths "length" @property)
+(capture_depth "depth" @property)
+(relation_constraint "as" @keyword)

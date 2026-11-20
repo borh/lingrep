@@ -27,6 +27,8 @@ pub(crate) fn partition<'a>(
     spans
 }
 
+/// Sets each span's head, label and governor from per-word annotations. When
+/// the derived governors do not form a forest, no span receives a governor.
 pub(crate) fn bunsetsu_heads<'a>(
     spans: &mut [SentenceSpan],
     annotation: impl Fn(usize) -> (bool, Option<&'a str>, Option<usize>),
@@ -73,6 +75,12 @@ pub(crate) fn bunsetsu_heads<'a>(
             }
         }
     }
+    let tokens = spans.last().map_or(0, |span| span.end);
+    if SentenceSpan::validate(spans, tokens).is_err() {
+        for span in spans {
+            span.governor = None;
+        }
+    }
 }
 
 #[cfg(test)]
@@ -84,6 +92,38 @@ mod tests {
         for labels in [[Some("B"), None], [Some("I"), Some("B")]] {
             assert!(partition("bunsetsu", labels.into_iter()).is_empty());
         }
+    }
+
+    #[test]
+    fn cyclic_governors_leave_intervals_and_heads_without_governors() {
+        let mut spans = partition("bunsetsu", ["B", "I", "B"].into_iter().map(Some));
+        let rows = [
+            (true, Some("NP"), Some(3)),
+            (false, None, Some(0)),
+            (true, Some("VP"), Some(2)),
+        ];
+        bunsetsu_heads(&mut spans, |word| rows[word]);
+        assert_eq!(
+            spans,
+            [
+                SentenceSpan {
+                    kind: "bunsetsu".into(),
+                    start: 0,
+                    end: 2,
+                    head: Some(0),
+                    label: Some("NP".into()),
+                    governor: None
+                },
+                SentenceSpan {
+                    kind: "bunsetsu".into(),
+                    start: 2,
+                    end: 3,
+                    head: Some(2),
+                    label: Some("VP".into()),
+                    governor: None
+                },
+            ]
+        );
     }
 
     #[test]

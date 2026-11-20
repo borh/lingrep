@@ -341,6 +341,7 @@ const captureClasses = new Map([
   ["comment.documentation", "pattern-comment"],
   ["keyword", "pattern-keyword"],
   ["keyword.operator.definition", "pattern-operator"],
+  ["function.builtin", "pattern-keyword"],
   ["operator", "pattern-operator"],
   ["property", "pattern-property"],
   ["string", "pattern-string"],

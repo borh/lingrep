@@ -65,6 +65,8 @@ pattern earlier_dependent :=
 test nominal := upos in {NOUN, PROPN, PRON}.
 category: "Relative clause"
 key: [$verb.lemma, $head.lemma]
+interpret $verb as gap_candidate {role: "subject"}
+classify by gap_candidate
 pattern subject_gap_candidate :=
   (?<verb> [upos=VERB])
   where (?<head> [@nominal]) -[acl|acl:relcl]-> $verb,
@@ -75,6 +77,8 @@ pattern subject_gap_candidate :=
 
 category: "Relative clause"
 key: [$verb.lemma, $head.lemma]
+interpret $verb as gap_candidate {role: "object"}
+classify by gap_candidate
 pattern object_gap_candidate :=
   (?<verb> [upos=VERB])
   where (?<head> [@nominal]) -[acl|acl:relcl]-> $verb,
@@ -82,3 +86,18 @@ pattern object_gap_candidate :=
         $argument -[case]-> (?<marker> [surface=が]),
         not $verb -[obj]-> _,
         $argument < $marker < $verb < $head.
+
+# Direct nominal dependents per verbal head, including verbs with none.
+category: "Syntactic complexity"
+key: [$nominals]
+pattern nominal_load := (?<v> [upos=VERB])
+  where $v -[*]-> [@nominal] as $nominals.
+
+# Two grammatical arguments of one predicate realize the same lemma with
+# different written forms. Retain each observed subject-object pairing.
+category: "Spelling variation"
+key: [$s.lemma, $s.surface, $o.surface]
+pattern argument_spelling_contrast := (?<v> [upos=VERB])
+  where $v -[nsubj|nsubj:*]-> (?<s> [@nominal]),
+        $v -[obj|obj:*]-> (?<o> [@nominal]),
+        $s.lemma = $o.lemma, $s.surface != $o.surface.

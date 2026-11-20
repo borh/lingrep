@@ -1,9 +1,11 @@
 //! Independent test-only interpreter for validated bound lingrep patterns programs.
 
+mod measure;
+
 use super::model::{
-    BoundExpr, BoundProgram, CaptureId, CaptureProjection, ExecutionDefinition, ExecutionExpr,
-    ExecutionRelation, LookDirection, LookPolarity, RelationLabels, RelationPolarity,
-    RelationTarget,
+    BoundExpr, BoundProgram, CaptureId, CaptureProjection, DependentRequirement,
+    ExecutionDefinition, ExecutionExpr, ExecutionRelation, LookDirection, LookPolarity,
+    RelationLabels, RelationPolarity, RelationTarget,
 };
 use crate::fsm::{AttrValueType, Capture, Match, PositionAssertion};
 use crate::token_match::{AttributeKey, TokenInfoTrait};
@@ -59,6 +61,33 @@ fn execution_oracle_with_spans<T: TokenInfoTrait>(
         let mut paths = evaluate_execution(&definition.expr, tokens, initial);
         paths.retain(|path| path.position > start);
         paths.retain(|path| execution_relations_hold(&definition.relations, path, tokens));
+        paths.retain(|path| {
+            definition.node_constraints.iter().all(|constraint| {
+                use super::model::{ExecutionEnhancedEndpoint, NodeComparison};
+                let positions = constraint
+                    .operands
+                    .iter()
+                    .map(|operand| match operand {
+                        ExecutionEnhancedEndpoint::Surface(id) => {
+                            path.slots.get(id).map(|(start, _)| *start)
+                        }
+                        _ => None,
+                    })
+                    .collect::<Option<Vec<_>>>();
+                let Some(positions) = positions else {
+                    return false;
+                };
+                match &constraint.comparison {
+                    NodeComparison::SourceOrder => {
+                        positions.windows(2).all(|pair| pair[0] < pair[1])
+                    }
+                    NodeComparison::Attributes { keys, equal } => tokens[positions[0]]
+                        .scalar_key(&keys[0])
+                        .zip(tokens[positions[1]].scalar_key(&keys[1]))
+                        .is_some_and(|(a, b)| (a == b) == *equal),
+                }
+            })
+        });
         paths.retain(|path| {
             definition.span_constraints.iter().all(|constraint| {
                 use super::model::SpanPosition;
@@ -125,12 +154,57 @@ fn execution_oracle_with_spans<T: TokenInfoTrait>(
                 })
                 .collect::<Vec<_>>();
             captures.sort_by_key(|capture| (capture.start, capture.end));
+            let mut counts = Vec::new();
+            for relation in &definition.relations {
+                if let RelationTarget::Predicate {
+                    requirement,
+                    predicates,
+                    ..
+                } = &relation.target
+                    && let Some(name) = requirement.binding()
+                {
+                    let (head, _) = selected.slots[&relation.head];
+                    let eligible = (0..tokens.len())
+                        .filter(|&id| execution_relation_matches_token(relation, tokens, id, head))
+                        .collect::<Vec<_>>();
+                    let complete = execution_dependency_observation_is_usable(tokens)
+                        && eligible.iter().all(|&id| {
+                            predicates
+                                .iter()
+                                .flatten()
+                                .all(|atom| tokens[id].value_key(&atom.attr).is_some())
+                        });
+                    counts.push(crate::fsm::GraphBinding::Count {
+                        name: name.clone(),
+                        value: complete.then(|| {
+                            eligible
+                                .into_iter()
+                                .filter(|&id| {
+                                    predicates
+                                        .iter()
+                                        .any(|test| predicate_matches(&tokens[id], test))
+                                })
+                                .count()
+                        }),
+                    });
+                }
+            }
+            counts.extend(
+                definition
+                    .measures
+                    .iter()
+                    .map(|m| crate::fsm::GraphBinding::Measure {
+                        name: m.name.clone(),
+                        value: measure::value(m, tokens, spans, &selected, start),
+                    }),
+            );
+            counts.sort();
             matches.push(Match {
                 pattern: definition.name.clone(),
                 start,
                 end: selected.position,
                 captures: captures.into_boxed_slice(),
-                graph_bindings: Box::default(),
+                graph_bindings: counts.into_boxed_slice(),
                 interpretations: Box::default(),
                 lexical: None,
             });
@@ -180,18 +254,18 @@ fn execution_relations_hold<T: TokenInfoTrait>(
                 }
             }
             RelationTarget::Predicate {
-                polarity,
+                requirement,
                 predicates,
                 ..
             } => {
                 if !execution_dependency_observation_is_usable(tokens) {
-                    return false;
+                    return matches!(requirement, DependentRequirement::Measure(_));
                 }
-                let required_attributes = predicates
+                let scalar_attributes = predicates
                     .iter()
-                    .flat_map(|predicate| predicate.iter())
-                    .map(|atom| &atom.attr)
+                    .flat_map(|predicate| crate::fsm::scalar_attributes(predicate))
                     .collect::<BTreeSet<_>>();
+                let mut count = 0;
                 for dependent_start in 0..tokens.len() {
                     if !execution_relation_matches_token(
                         relation,
@@ -201,21 +275,38 @@ fn execution_relations_hold<T: TokenInfoTrait>(
                     ) {
                         continue;
                     }
-                    if *polarity == RelationPolarity::Negative
-                        && required_attributes
-                            .iter()
-                            .any(|attribute| tokens[dependent_start].value_key(attribute).is_none())
-                    {
-                        return false;
-                    }
                     let witness = predicates
                         .iter()
                         .any(|predicate| predicate_matches(&tokens[dependent_start], predicate));
+                    if !witness
+                        && *requirement != DependentRequirement::Exists
+                        && scalar_attributes
+                            .iter()
+                            .any(|attribute| tokens[dependent_start].value_key(attribute).is_none())
+                    {
+                        return matches!(requirement, DependentRequirement::Measure(_));
+                    }
                     if witness {
-                        return *polarity == RelationPolarity::Positive;
+                        match requirement {
+                            DependentRequirement::Exists => {
+                                return true;
+                            }
+                            DependentRequirement::Absent => {
+                                return false;
+                            }
+                            DependentRequirement::Measure(_)
+                            | DependentRequirement::Count { .. } => count += 1,
+                        }
                     }
                 }
-                *polarity == RelationPolarity::Negative
+                match requirement {
+                    DependentRequirement::Measure(_) => true,
+                    DependentRequirement::Exists => false,
+                    DependentRequirement::Absent => true,
+                    DependentRequirement::Count { min, max, .. } => {
+                        count >= *min && max.is_none_or(|upper| count <= upper)
+                    }
+                }
             }
         }
     })
@@ -1076,6 +1167,78 @@ mod tests {
     }
 
     #[test]
+    fn occurrence_reductions_match_parent_walks_and_boundary_counts() {
+        use crate::token_match::{BoundTokenSentence, SentenceSpan, TokenSequence};
+        let source = "p := (?<v> []) []+ measure count(match.words[]) as $n, mean(tree(word).links.length) as $distance, max(tree(word).boundaries.open_links) as $peak, mean(tree(bunsetsu).nodes.depth) as $depth, tree(word).depth($v) as $at, count($v -[*]-> []) as $children.";
+        let definition = execution_definition(source);
+        let catalog = compile_catalog(
+            PatternSource::named("measure", source),
+            CompileLimits::default(),
+        )
+        .unwrap()
+        .matcher;
+        let bound = catalog
+            .bind(&crate::corpus::conllu::token_schema())
+            .unwrap();
+        for heads in [[2, 0, 2], [2, 3, 0], [0, 3, 2], [0, 0, 1]] {
+            let values = heads
+                .into_iter()
+                .flat_map(|p| {
+                    bound
+                        .projection()
+                        .keys()
+                        .iter()
+                        .map(move |key| match key.as_str() {
+                            "dep.head" => Some(compact_str::CompactString::from(p.to_string())),
+                            "dep.rel" => Some(if p == 0 { "root" } else { "dep" }.into()),
+                            _ => None,
+                        })
+                })
+                .collect();
+            let sentence =
+                BoundTokenSentence::from_projected_values(bound.projection(), 3, values).unwrap();
+            for spans in [
+                vec![],
+                vec![
+                    SentenceSpan {
+                        kind: "bunsetsu".into(),
+                        start: 0,
+                        end: 1,
+                        governor: Some(2),
+                        head: None,
+                        label: None,
+                    },
+                    SentenceSpan {
+                        kind: "entity".into(),
+                        start: 0,
+                        end: 2,
+                        governor: None,
+                        head: None,
+                        label: None,
+                    },
+                    SentenceSpan {
+                        kind: "bunsetsu".into(),
+                        start: 1,
+                        end: 3,
+                        governor: None,
+                        head: None,
+                        label: None,
+                    },
+                ],
+            ] {
+                let annotated = sentence.clone().with_spans(spans).unwrap();
+                let rows = (0..3)
+                    .map(|i| SequenceToken::new(&annotated, i).unwrap())
+                    .collect::<Vec<_>>();
+                assert_eq!(
+                    bound.find_matches(&annotated).unwrap(),
+                    execution_oracle_with_spans(&definition, &rows, annotated.spans())
+                );
+            }
+        }
+    }
+
+    #[test]
     fn mixed_span_and_token_edges_match_the_independent_oracle() {
         use crate::token_match::{BoundTokenSentence, SentenceSpan, TokenSequence};
         let source =
@@ -1129,12 +1292,26 @@ mod tests {
     }
 
     #[test]
+    fn bound_attribute_comparisons_match_the_execution_oracle() {
+        let tokens = [token("a"), token("a"), token("b")];
+        for op in ["=", "!="] {
+            assert_execution_oracle(
+                &format!("p := (?<a> []) (?<b> []) where $a.text {op} $b.text."),
+                &tokens,
+            );
+        }
+    }
+
+    #[test]
     fn anonymous_relations_match_the_independent_execution_oracle() {
         for source in [
             "pattern p := (?<h> []) where $h -[obj]-> _.",
             "pattern p := (?<h> []) where not $h -[obj]-> _.",
             "pattern p := (?<h> []) where $h -[obj]-> [upos=NOUN].",
             "pattern p := (?<h> []) where not $h -[obj]-> [upos=NOUN].",
+            "pattern p := (?<h> []) where $h -[obj]-> [upos=NOUN]{0}.",
+            "key: [$n]\npattern p := (?<h> []) where $h -[obj]-> [upos=NOUN] as $n.",
+            "pattern p := (?<h> []) where $h -[obj]-> [upos=NOUN]{1,2}.",
         ] {
             let definition = execution_definition(source);
             let compiled = compile_catalog(
@@ -1333,6 +1510,7 @@ mod tests {
     fn program(expr: BoundExpr) -> BoundProgram {
         BoundProgram {
             definitions: vec![BoundDefinition {
+                measures: Box::default(),
                 interpretation: None,
                 id: DefinitionId::new(0),
                 source: SourceId::new(0),
@@ -1342,7 +1520,7 @@ mod tests {
                     expr,
                     relations: Box::default(),
                     enhanced_relations: Box::default(),
-                    orders: Box::default(),
+                    node_constraints: Box::default(),
                     span_paths: Box::default(),
                 },
                 metadata: Arc::new(HashMap::new()),
@@ -1400,6 +1578,7 @@ mod tests {
     fn sequence_returns_exclusive_end_and_full_context() {
         let program = BoundProgram {
             definitions: vec![BoundDefinition {
+                measures: Box::default(),
                 interpretation: None,
                 id: DefinitionId::new(0),
                 source: SourceId::new(0),
@@ -1411,7 +1590,7 @@ mod tests {
                     ),
                     relations: Box::default(),
                     enhanced_relations: Box::default(),
-                    orders: Box::default(),
+                    node_constraints: Box::default(),
                     span_paths: Box::default(),
                 },
                 metadata: Arc::new(HashMap::new()),
@@ -1535,6 +1714,7 @@ mod tests {
     fn definition_edges_resolve_by_id() {
         let mut program = program(token_expr("a"));
         program.definitions.push(BoundDefinition {
+            measures: Box::default(),
             interpretation: None,
             id: DefinitionId::new(1),
             source: SourceId::new(0),
@@ -1547,7 +1727,7 @@ mod tests {
                 },
                 relations: Box::default(),
                 enhanced_relations: Box::default(),
-                orders: Box::default(),
+                node_constraints: Box::default(),
                 span_paths: Box::default(),
             },
             metadata: Arc::new(HashMap::new()),
@@ -1718,6 +1898,7 @@ mod tests {
                 },
             };
             definitions.push(BoundDefinition {
+                measures: Box::default(),
                 interpretation: None,
                 id: DefinitionId::new(u32::try_from(id).expect("four definitions fit u32")),
                 source: SourceId::new(0),
@@ -1727,7 +1908,7 @@ mod tests {
                     expr,
                     relations: Box::default(),
                     enhanced_relations: Box::default(),
-                    orders: Box::default(),
+                    node_constraints: Box::default(),
                     span_paths: Box::default(),
                 },
                 metadata: Arc::new(HashMap::new()),

@@ -696,6 +696,15 @@ pub struct GraphNodeAttribute {
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(tag = "binding_kind", rename_all = "snake_case")]
 pub enum GraphBinding {
+    Measure {
+        name: String,
+        value: Option<serde_json::Number>,
+        status: String,
+    },
+    Count {
+        name: String,
+        value: Option<usize>,
+    },
     Node {
         name: String,
         node: GraphNodeId,
@@ -734,6 +743,9 @@ pub struct MatchData {
     /// Sentence-local annotation IDs enclosing the complete published match.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub span_ids: Vec<u64>,
+    /// Sentence-local annotation IDs with exactly the published boundaries, grouped by layer.
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub whole_span_ids: BTreeMap<String, Vec<u64>>,
     /// The published span's code-point range in the sentence text.
     ///
     /// Absent when the run cannot supply offsets at all — see the `run`

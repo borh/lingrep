@@ -446,6 +446,39 @@ sets keep the ordinary DNF and substitution budgets. Neither polarity assigns or
 publishes the dependent, and both require the complete basic-dependency
 observation described above.
 
+### Counting direct dependents
+
+A count after a dependent test selects the head once for the qualifying count.
+Use `{2}` for exactly two, `{1,3}` for one through three, or `{2,}` for at
+least two. Use `[]` to count every word with a matching relation.
+
+```pattern
+pattern two_nominals := (?<v> [upos=VERB])
+  where $v -[*]-> [upos in {NOUN, PROPN, PRON}]{2}.
+```
+
+Each dependent word contributes at most one, including when it satisfies two
+branches of the token test. A root attachment contributes no dependent.
+A count is unknown when the sentence has no usable basic parse, or when an
+edge-compatible word satisfies no alternative of the test and lacks a scalar
+attribute the test reads: with `lemma` missing, `[lemma=本]` is undecided. A
+word without a string-set attribute holds no member of it, so
+`[feat.Case has Nom]` is false there and the count stays known. An unknown
+count satisfies no range, including `{0}` and `{0,}`. Write a range directly
+without `not`.
+
+To **measure** the count for every head, bind it with `as` and use the
+bare binding in `key:` for a histogram. Each verb contributes one record.
+The JSON graph binding carries a number, including zero, or `null` when
+the count is unknown. An unknown value leaves the key unfilled.
+A count range before `as` also filters the head.
+
+```pattern
+key: [$nominals]
+pattern nominal_load := (?<v> [upos=VERB])
+  where $v -[*]-> [upos in {NOUN, PROPN, PRON}] as $nominals.
+```
+
 ### The captured form
 
 `$head -[labels]-> $dependent` holds when the dependent token's `dep.rel` is
@@ -528,6 +561,28 @@ pattern two_objects := (?<v> [upos=VERB])
 An order constraint compares enhanced empty nodes in CoNLL-U order: `2.1` comes
 after word `2` and before word `3`.
 
+### Comparing attributes of bound words
+
+`$a.lemma = $b.lemma` and `$a.surface != $b.surface` compare scalar values. The
+operands may use different token attributes. Both must designate one word
+and both values must be present for either operator to succeed.
+
+```pattern
+pattern spelling_contrast := (?<v> [upos=VERB])
+  where $v -[nsubj]-> (?<s> []), $v -[obj]-> (?<o> []),
+        $s.lemma = $o.lemma, $s.surface != $o.surface.
+```
+
+For additive label frequencies, consume the dependent and bind its governor.
+The following query emits one observation per qualifying basic edge, even
+when the same governor has several objects. Group its key to obtain separate
+frequencies and sum them for the pooled total.
+
+```pattern
+key: [$d.dep.rel]
+pattern argument_edge := (?<d> []) where (?<v> [upos=VERB]) -[nsubj|obj]-> $d.
+```
+
 ### Static validation
 
 The clause's own diagnostics:
@@ -577,6 +632,53 @@ label sets, and `key: [$n1.dep.rel, $n2.dep.rel]` to publish the pair. A fragmen
 cannot declare a `where` clause, but its captures are legal operands in the
 including pattern's clause. Because `double-wo-dep.lx` requires `dep.head` and
 `dep.rel`, `double-wo.lx` remains the catalog for morphology-only corpora.
+
+## Occurrence measurements
+
+Place `measure` after the pattern body and any `where` clause. Each named
+value belongs to the occurrence the pattern selected. An empty selection
+retains the occurrence. A graph pattern that emits several assignments
+still emits one record for each assignment. Fragments cannot emit measures.
+
+```pattern
+test nominal := upos in {NOUN, PROPN, PRON}.
+key: [$n]
+verb := (?<v> [upos=VERB])
+  measure count($v -[*]-> [@nominal]) as $n,
+          mean(($v -[*]-> [@nominal]).length) as $distance,
+          tree(word).depth($v) as $depth.
+```
+
+| Collection | Unit and scope |
+| --- | --- |
+| `match.words[TEST]` | Words inside the consumed occurrence, including words crossed by `skip:`. Use `count` with the usual token tests and named tests. |
+| `$v -[LABELS]-> [TEST]` | Direct word links from the captured governor anywhere in its sentence. Count the links, or select `(…).length` for their absolute lengths. |
+| `tree(LAYER).links.length` | Absolute surface-position differences in the sentence tree, excluding the root attachment. Adjacent units have length one. |
+| `tree(LAYER).nodes.depth` | Distances to the sentence root, including the root at zero. `tree(LAYER).depth($v)` reads the depth of the unit containing the single captured word. |
+| `tree(LAYER).boundaries.open_links` | Links crossing each unit boundary, including the two sentence edges with load zero. The maximum is zero for a singleton. |
+
+Choose `word` for the basic dependency tree or `bunsetsu` for annotated
+bunsetsu ordered by surface position. A tree needs one root and a path to it
+from every unit. Bunsetsu must partition the sentence and their root must
+contain an observed root word. Punctuation and skipped tokens retain their
+positions. `count`, `mean` and `max` reduce numeric collections; `count`
+also accepts the collection itself.
+
+JSON match records publish a binding of kind `measure` with its name, numeric
+value and status. An observed value has status `ok`. The count of an observed
+empty selection is zero; its mean and maximum have status `empty`. A missing
+layer or capture gives `unavailable`, and so does a test that is undecided
+on a word, by the rule for [dependent counts](#counting-direct-dependents); a partially
+annotated or inconsistent tree gives `invalid_tree`. These three statuses
+carry a null value. Using such a binding in `key:` leaves the record unkeyed;
+`ling summarize` reports how many records had no key.
+`measure count($v -[L]-> [T])` counts the links that `where $v -[L]-> [T] as $n`
+counts. They differ on a sentence whose dependencies are not one tree: the
+measure is `invalid_tree`, and the `where` count reads the edges present. Measures are published
+in JSON match records only. When a pattern with `interpret` entries has
+several readings of one occurrence, readings with the same measures share a
+record and readings with different measures are separate records.
+A `where` dependency prerequisite still applies when the pattern has one.
 
 ## Enhanced graph constraints
 
@@ -667,8 +769,7 @@ jq -r 'select(.type == "match") | .data.interpretations[]? | .classification.voi
 ```
 
 Interpretation extraction supports token tests, named captures, sequences,
-alternation and repetition. The compiler diagnoses an unsupported expression
-or a dependency constraint on an interpreted pattern. Extraction is bounded
+alternation and repetition. A `where` clause filters each reading with its own capture assignments and the published graph bindings. Role declarations name surface captures. Extraction is bounded
 per sentence. Exceeding a resource limit fails the query before that sentence
 is published. The Workbench hit inspector shows the same roles and classifications.
 

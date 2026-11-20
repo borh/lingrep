@@ -1,4 +1,5 @@
 mod interpret;
+mod measure;
 
 use super::assertion::AssertionSession;
 use super::predicate::{
@@ -13,6 +14,7 @@ use crate::fsm::compiler::model::{
     ExecutionExpr, ExecutionGraphBindingDecl, RelationLabel, RelationLabels, RelationPolarity,
     RelationTarget, TokenPredicate,
 };
+use crate::fsm::compiler::model::{DependentRequirement, NodeComparison, NodeConstraint};
 use crate::fsm::{AttrValueType, Capture, GraphBinding, GraphNodeAttribute, PositionAssertion};
 use crate::token_match::{
     AttributeKey, AttributeLocator, AttributeValueRef, BoundProjection, TokenSequence,
@@ -22,11 +24,12 @@ use std::collections::{BTreeMap, BTreeSet};
 #[derive(Clone)]
 pub(crate) struct Program {
     definition: ExecutionDefinition,
+    measures: Box<[measure::RuntimeMeasure]>,
     runtime: RuntimeExpr,
     captures: Box<[CaptureDescriptor]>,
     relations: Box<[RuntimeRelation]>,
     enhanced_relations: Box<[RuntimeEnhancedRelation]>,
-    orders: Box<[Box<[RuntimeEnhancedEndpoint]>]>,
+    node_constraints: Box<[NodeConstraint<RuntimeEnhancedEndpoint>]>,
 }
 
 #[derive(Clone)]
@@ -46,9 +49,9 @@ enum RuntimeRelationTarget {
     },
     Anonymous(RelationPolarity),
     Predicate {
-        polarity: RelationPolarity,
-        predicates: Box<[PredicateId]>,
-        required_attributes: Box<[AttributeLocator]>,
+        requirement: DependentRequirement,
+        /// Each alternative with the scalar attributes it tests.
+        predicates: Box<[(PredicateId, Box<[AttributeLocator]>)]>,
     },
 }
 
@@ -132,13 +135,20 @@ struct Candidate {
 
 #[derive(Clone)]
 pub(crate) struct ProgramMatch {
+    pub(crate) interpretations: Box<[crate::fsm::Interpretation]>,
     pub(crate) start: usize,
     pub(crate) end: usize,
     pub(crate) captures: Box<[Capture]>,
     pub(crate) graph_bindings: Box<[GraphBinding]>,
 }
 
-#[derive(Clone, Default)]
+struct AcceptedCandidate {
+    candidate: Candidate,
+    assignments: Vec<GraphAssignment>,
+    counts: Vec<GraphBinding>,
+}
+
+#[derive(Clone, Default, PartialEq, Eq)]
 struct GraphAssignment {
     nodes: BTreeMap<compact_str::CompactString, EnhancedNodeId>,
     edges: BTreeMap<
@@ -250,22 +260,22 @@ impl Program {
                         RuntimeRelationTarget::Anonymous(*polarity)
                     }
                     RelationTarget::Predicate {
-                        polarity,
+                        requirement,
                         predicates: tests,
                         ..
                     } => RuntimeRelationTarget::Predicate {
-                        polarity: *polarity,
+                        requirement: requirement.clone(),
                         predicates: tests
                             .iter()
-                            .map(|predicate| predicates.intern(predicate))
-                            .collect(),
-                        required_attributes: tests
-                            .iter()
-                            .flat_map(|predicate| predicate.iter())
-                            .map(|atom| atom.attr.clone())
-                            .collect::<BTreeSet<_>>()
-                            .into_iter()
-                            .map(AttributeLocator::symbolic)
+                            .map(|predicate| {
+                                (
+                                    predicates.intern(predicate),
+                                    crate::fsm::scalar_attributes(predicate)
+                                        .cloned()
+                                        .map(AttributeLocator::symbolic)
+                                        .collect(),
+                                )
+                            })
                             .collect(),
                     },
                 },
@@ -295,18 +305,30 @@ impl Program {
                 dependent: compile_enhanced_endpoint(&relation.dependent),
             })
             .collect();
-        let orders = definition
-            .orders
+        let node_constraints = definition
+            .node_constraints
             .iter()
-            .map(|order| order.iter().map(compile_enhanced_endpoint).collect())
+            .map(|order| NodeConstraint {
+                operands: order
+                    .operands
+                    .iter()
+                    .map(compile_enhanced_endpoint)
+                    .collect(),
+                comparison: order.comparison.clone(),
+            })
             .collect();
         Self {
+            measures: definition
+                .measures
+                .iter()
+                .map(|m| measure::compile(m, predicates))
+                .collect(),
             definition,
             runtime,
             captures: captures.into_boxed_slice(),
             relations,
             enhanced_relations,
-            orders,
+            node_constraints,
         }
     }
 
@@ -346,12 +368,8 @@ impl Program {
                     .expect("schema binding projected every relation key");
                 attribute.bind(ordinal);
             }
-            if let RuntimeRelationTarget::Predicate {
-                required_attributes,
-                ..
-            } = &mut relation.target
-            {
-                for attribute in required_attributes {
+            if let RuntimeRelationTarget::Predicate { predicates, .. } = &mut relation.target {
+                for attribute in predicates.iter_mut().flat_map(|(_, scalars)| scalars) {
                     let ordinal = projection
                         .ordinal_for_key(attribute.key())
                         .expect("schema binding projected every predicate-target key");
@@ -448,6 +466,13 @@ impl Program {
         self.matches_with(budget, predicates, tokens, session, Some(graph))
     }
 
+    fn has_node_or_span_filters(&self) -> bool {
+        !self.relations.is_empty()
+            || !self.enhanced_relations.is_empty()
+            || !self.node_constraints.is_empty()
+            || !self.definition.span_constraints.is_empty()
+    }
+
     fn span_constraints_hold(
         &self,
         candidate: &Candidate,
@@ -503,57 +528,103 @@ impl Program {
         }
         let span_probes = spans.len().saturating_mul(constraint_count);
         let mut matches = Vec::new();
-        let mut captured_negative_observation = None;
+        let observations = measure::Observations::default();
+        let mut basic_observation_usable = None;
         for start in 0..tokens.len() {
-            let mut accepted = self
-                .candidates::<
-                    PREDICATE_SITE_EVALUATED_TOKEN,
-                    PREDICATE_SITE_EVALUATED_PREVIOUS_TOKEN,
-                    _,
-                    _,
-                >(predicates, tokens, start, assertions)
-                .into_iter()
-                .filter(|candidate| candidate.position > start)
-                // Filters relations before longest-candidate selection below:
-                // filtering after it would let a failing longer candidate
-                // shadow a passing shorter one at the same start, and the
-                // shadow would be unobservable.
-                .filter(|candidate| {
-                    self.relations_hold(
-                        predicates,
-                        candidate,
-                        tokens,
-                        &mut captured_negative_observation,
-                    )
-                })
-                .map(|candidate| {
-                    if span_probes > 0 {
-                        budget.work(&self.definition.name, span_probes)?;
-                        if !self.span_constraints_hold(&candidate, start, spans) {
-                            return Ok((candidate, Vec::new()));
-                        }
+            let mut accepted = Vec::new();
+            let candidates = self.candidates::<
+                PREDICATE_SITE_EVALUATED_TOKEN,
+                PREDICATE_SITE_EVALUATED_PREVIOUS_TOKEN, _, _
+            >(predicates, tokens, start, assertions);
+            for candidate in candidates {
+                if candidate.position <= start {
+                    continue;
+                }
+                let mut counts = Vec::new();
+                let relations_hold = self.relations_hold(
+                    predicates,
+                    &candidate,
+                    tokens,
+                    &mut basic_observation_usable,
+                    &mut counts,
+                );
+                if !relations_hold {
+                    continue;
+                }
+                if span_probes > 0 {
+                    budget.work(&self.definition.name, span_probes)?;
+                    if !self.span_constraints_hold(&candidate, start, spans) {
+                        continue;
                     }
-                    let assignments = self.enhanced_assignments(
-                        budget,
-                        &candidate,
-                        tokens,
-                        enhanced_graph,
-                    )?;
-                    Ok((candidate, assignments))
-                })
-                .collect::<Result<Vec<_>, MatchResourceError>>()?;
-            accepted.retain(|(_, assignments)| !assignments.is_empty());
-            accepted.sort_by_key(|(candidate, _)| std::cmp::Reverse(candidate.position));
-            let mut seen_branches = BTreeSet::new();
-            for (candidate, assignments) in accepted
-                .into_iter()
-                .filter(|(candidate, _)| seen_branches.insert(candidate.any_order_branches.clone()))
-            {
+                }
+                let assignments =
+                    self.enhanced_assignments(budget, &candidate, tokens, enhanced_graph)?;
+                if !assignments.is_empty() {
+                    if !counts.is_empty() {
+                        let bytes = counts
+                            .iter()
+                            .map(|binding| size_of::<GraphBinding>() + binding.name().len())
+                            .sum();
+                        budget.allocate(&self.definition.name, bytes)?;
+                        counts.sort();
+                    }
+                    accepted.push(AcceptedCandidate {
+                        candidate,
+                        assignments,
+                        counts,
+                    });
+                }
+            }
+            accepted.sort_by_key(|hit| std::cmp::Reverse(hit.candidate.position));
+            // The longest candidate of each branch selection is published. In
+            // an interpreted pattern its other readings join it when they have
+            // the same measures, and are published separately when they differ.
+            let mut longest = BTreeMap::new();
+            let mut measured: Vec<Option<Vec<GraphBinding>>> = Vec::new();
+            if !self.measures.is_empty() {
+                budget.work(&self.definition.name, accepted.len())?;
+                for (index, hit) in accepted.iter().enumerate() {
+                    let candidate = &hit.candidate;
+                    let (position, first) = *longest
+                        .entry(&candidate.any_order_branches)
+                        .or_insert((candidate.position, index));
+                    let reading =
+                        self.definition.interpretation.is_some() && position == candidate.position;
+                    measured.push(if reading || first == index {
+                        Some(self.measure(
+                            candidate,
+                            start,
+                            &observations,
+                            predicates,
+                            tokens,
+                            budget,
+                        )?)
+                    } else {
+                        None
+                    });
+                }
+            }
+            let mut seen = BTreeSet::new();
+            for (index, hit) in accepted.iter().enumerate() {
+                let AcceptedCandidate {
+                    candidate,
+                    assignments,
+                    counts,
+                } = hit;
+                let measures = measured.get(index).and_then(Option::as_ref);
+                let branch_seen = seen
+                    .iter()
+                    .any(|(branches, _)| *branches == &candidate.any_order_branches);
+                if (branch_seen && measures.is_none())
+                    || !seen.insert((&candidate.any_order_branches, measures))
+                {
+                    continue;
+                }
                 for assignment in assignments {
                     let graph_bytes = if self.enhanced_relations.is_empty() {
                         0
                     } else {
-                        self.public_graph_bytes(budget, &assignment, tokens, enhanced_graph)?
+                        self.public_graph_bytes(budget, assignment, tokens, enhanced_graph)?
                     };
                     if !self.enhanced_relations.is_empty() {
                         budget.allocate(
@@ -574,15 +645,79 @@ impl Program {
                     if !assignment.nodes.is_empty() || !assignment.edges.is_empty() {
                         budget.output.reserve(graph_bytes)?;
                     }
+                    let (captures, interpretations) = if let Some(recipe) =
+                        &self.definition.interpretation
+                    {
+                        self.interpreted_candidates(
+                            recipe,
+                            budget,
+                            predicates,
+                            tokens,
+                            start..candidate.position,
+                            |reading, budget| {
+                                for (other_index, other) in accepted.iter().enumerate() {
+                                    budget.interpretation(
+                                        &self.definition.name,
+                                        1 + reading.slots.len(),
+                                        0,
+                                    )?;
+                                    if other.candidate.position == reading.position
+                                        && other.candidate.slots == reading.slots
+                                        && other.counts == *counts
+                                        && measured.get(other_index).and_then(Option::as_ref)
+                                            == measures
+                                    {
+                                        let comparisons = other.assignments.len().saturating_mul(
+                                            1 + assignment.nodes.len() + assignment.edges.len(),
+                                        );
+                                        budget.interpretation(
+                                            &self.definition.name,
+                                            comparisons,
+                                            0,
+                                        )?;
+                                        return Ok(other.assignments.contains(assignment));
+                                    }
+                                }
+                                Ok(false)
+                            },
+                        )?
+                    } else {
+                        (
+                            self.public_captures(candidate, &budget.output)?,
+                            Box::default(),
+                        )
+                    };
+                    let mut graph_bindings =
+                        self.public_graph_bindings(assignment, tokens, enhanced_graph);
+                    if !counts.is_empty() {
+                        budget
+                            .output
+                            .reserve_buffer::<GraphBinding>(counts.len() + graph_bindings.len())?;
+                        budget
+                            .output
+                            .reserve(counts.iter().map(|binding| binding.name().len()).sum())?;
+                        let mut bindings = graph_bindings.into_vec();
+                        bindings.extend(counts.iter().cloned());
+                        graph_bindings = bindings.into_boxed_slice();
+                    }
+                    if let Some(measures) = measures {
+                        budget.output.reserve_buffer::<GraphBinding>(
+                            measures.len() + graph_bindings.len(),
+                        )?;
+                        budget
+                            .output
+                            .reserve(measures.iter().map(|m| m.name().len()).sum())?;
+                        let mut bindings = graph_bindings.into_vec();
+                        bindings.extend(measures.iter().cloned());
+                        bindings.sort();
+                        graph_bindings = bindings.into_boxed_slice();
+                    }
                     matches.push(ProgramMatch {
+                        interpretations,
                         start,
                         end: candidate.position,
-                        captures: self.public_captures(&candidate, &budget.output)?,
-                        graph_bindings: self.public_graph_bindings(
-                            &assignment,
-                            tokens,
-                            enhanced_graph,
-                        ),
+                        captures,
+                        graph_bindings,
                     });
                 }
             }
@@ -610,7 +745,8 @@ impl Program {
         predicates: &PredicateSession<'_>,
         candidate: &Candidate,
         tokens: &S,
-        captured_negative_observation: &mut Option<bool>,
+        basic_observation_usable: &mut Option<bool>,
+        counts: &mut Vec<GraphBinding>,
     ) -> bool {
         self.relations.iter().all(|relation| {
             let Some((head_start, _)) = candidate.slots[relation.head.index()] else {
@@ -625,7 +761,7 @@ impl Program {
                         return false;
                     };
                     if *polarity == RelationPolarity::Negative
-                        && !*captured_negative_observation.get_or_insert_with(|| {
+                        && !*basic_observation_usable.get_or_insert_with(|| {
                             dependency_observation_is_usable(relation, tokens)
                         })
                     {
@@ -651,39 +787,116 @@ impl Program {
                     }
                 }
                 RuntimeRelationTarget::Predicate {
-                    polarity,
+                    requirement,
                     predicates: target_predicates,
-                    required_attributes,
                 } => {
-                    if !dependency_observation_is_usable(relation, tokens) {
-                        return false;
+                    let mut unknown = || {
+                        if let DependentRequirement::Measure(name) = requirement {
+                            counts.push(GraphBinding::Count {
+                                name: name.clone(),
+                                value: None,
+                            });
+                            true
+                        } else {
+                            false
+                        }
+                    };
+                    if !*basic_observation_usable
+                        .get_or_insert_with(|| dependency_observation_is_usable(relation, tokens))
+                    {
+                        return unknown();
                     }
+                    let mut count = 0;
                     for dependent_start in 0..tokens.len() {
                         if !relation_matches_token(relation, tokens, dependent_start, head_start) {
                             continue;
                         }
-                        if *polarity == RelationPolarity::Negative
-                            && required_attributes.iter().any(|attribute| {
-                                tokens.value_locator(dependent_start, attribute).is_none()
-                            })
-                        {
-                            return false;
-                        }
-                        let witness = target_predicates.iter().any(|predicate| {
+                        let witness = target_predicates.iter().any(|(predicate, _)| {
                             predicates.matches_at_site::<PREDICATE_SITE_EVALUATED_TOKEN, _>(
                                 *predicate,
                                 tokens,
                                 dependent_start,
                             )
                         });
+                        if !witness
+                            && *requirement != DependentRequirement::Exists
+                            && target_predicates
+                                .iter()
+                                .flat_map(|(_, scalars)| scalars)
+                                .any(|attribute| {
+                                    tokens.value_locator(dependent_start, attribute).is_none()
+                                })
+                        {
+                            return unknown();
+                        }
                         if witness {
-                            return *polarity == RelationPolarity::Positive;
+                            match requirement {
+                                DependentRequirement::Exists => return true,
+                                DependentRequirement::Absent => return false,
+                                DependentRequirement::Count { .. }
+                                | DependentRequirement::Measure(_) => count += 1,
+                            }
                         }
                     }
-                    *polarity == RelationPolarity::Negative
+                    if let Some(name) = requirement.binding() {
+                        counts.push(GraphBinding::Count {
+                            name: name.clone(),
+                            value: Some(count),
+                        });
+                    }
+                    match requirement {
+                        DependentRequirement::Exists => false,
+                        DependentRequirement::Absent | DependentRequirement::Measure(_) => true,
+                        DependentRequirement::Count { min, max, .. } => {
+                            count >= *min && max.is_none_or(|upper| count <= upper)
+                        }
+                    }
                 }
             }
         })
+    }
+
+    /// The measures of one candidate, read from its own captures.
+    fn measure<S: TokenSequence + ?Sized>(
+        &self,
+        candidate: &Candidate,
+        start: usize,
+        observations: &measure::Observations,
+        predicates: &PredicateSession<'_>,
+        tokens: &S,
+        budget: &mut MatchBudget,
+    ) -> Result<Vec<GraphBinding>, MatchResourceError> {
+        budget.allocate(
+            &self.definition.name,
+            self.measures
+                .iter()
+                .map(|m| size_of::<GraphBinding>() + m.name.len())
+                .sum(),
+        )?;
+        let mut bindings = Vec::with_capacity(self.measures.len());
+        for m in &self.measures {
+            observations.charge(
+                m,
+                candidate.position - start,
+                tokens,
+                budget,
+                &self.definition.name,
+            )?;
+            let value = observations
+                .observations(
+                    m,
+                    start..candidate.position,
+                    |id| candidate.slots[id.index()].map(|slot| slot.0),
+                    predicates,
+                    tokens,
+                )
+                .map_or_else(|missing| missing, |values| values.reduce(m.reducer));
+            bindings.push(GraphBinding::Measure {
+                name: m.name.clone(),
+                value,
+            });
+        }
+        Ok(bindings)
     }
 
     fn enhanced_assignments<S: TokenSequence + ?Sized>(
@@ -696,7 +909,7 @@ impl Program {
         if self.enhanced_relations.is_empty() {
             let assignment = GraphAssignment::default();
             return Ok(self
-                .orders_hold(candidate, tokens, &assignment)
+                .node_constraints_hold(candidate, tokens, &assignment)
                 .then_some(assignment)
                 .into_iter()
                 .collect());
@@ -719,12 +932,12 @@ impl Program {
                     return true;
                 }
                 basic_binders_are_distinct(&self.enhanced_relations, candidate, partial)
-                    && self.orders_can_hold(candidate, tokens, partial)
+                    && self.partial_order_holds(candidate, tokens, partial)
             },
         )?;
         assignments.retain(|assignment| {
             basic_binders_are_distinct(&self.enhanced_relations, candidate, assignment)
-                && self.orders_hold(candidate, tokens, assignment)
+                && self.node_constraints_hold(candidate, tokens, assignment)
         });
         let mut keyed = assignments
             .into_iter()
@@ -745,14 +958,32 @@ impl Program {
             .collect())
     }
 
-    fn orders_hold<S: TokenSequence + ?Sized>(
+    fn node_constraints_hold<S: TokenSequence + ?Sized>(
         &self,
         candidate: &Candidate,
         tokens: &S,
         assignment: &GraphAssignment,
     ) -> bool {
-        self.orders.iter().all(|order| {
+        self.node_constraints.iter().all(|order| {
+            if let NodeComparison::Attributes { keys, equal } = &order.comparison {
+                let value = |index: usize| {
+                    let EnhancedNodeId::Word { token_index } = enhanced_endpoint_assignment(
+                        &order.operands[index],
+                        candidate,
+                        tokens,
+                        assignment,
+                    )?
+                    else {
+                        return None;
+                    };
+                    tokens.scalar_key(token_index, &keys[index])
+                };
+                return value(0)
+                    .zip(value(1))
+                    .is_some_and(|(left, right)| (left == right) == *equal);
+            }
             let nodes = order
+                .operands
                 .iter()
                 .map(|operand| {
                     enhanced_endpoint_assignment(operand, candidate, tokens, assignment)
@@ -763,14 +994,18 @@ impl Program {
         })
     }
 
-    fn orders_can_hold<S: TokenSequence + ?Sized>(
+    fn partial_order_holds<S: TokenSequence + ?Sized>(
         &self,
         candidate: &Candidate,
         tokens: &S,
         assignment: &GraphAssignment,
     ) -> bool {
-        self.orders.iter().all(|order| {
+        self.node_constraints.iter().all(|order| {
+            if !matches!(order.comparison, NodeComparison::SourceOrder) {
+                return true;
+            }
             order
+                .operands
                 .iter()
                 .filter_map(|operand| {
                     enhanced_endpoint_assignment(operand, candidate, tokens, assignment)
@@ -799,9 +1034,29 @@ impl Program {
         self.matches_with(budget, predicates, tokens, &mut NoAssertions, Some(graph))
     }
 
+    pub(crate) fn compared_attributes(&self) -> impl Iterator<Item = AttributeKey> + '_ {
+        self.node_constraints
+            .iter()
+            .filter_map(|constraint| match &constraint.comparison {
+                NodeComparison::Attributes { keys, .. } => Some(keys),
+                NodeComparison::SourceOrder => None,
+            })
+            .flatten()
+            .cloned()
+    }
+
     pub(crate) fn required_attributes(&self) -> impl Iterator<Item = AttributeKey> + '_ {
         let mut attributes = Vec::new();
         collect_attributes(&self.definition.expr, &mut attributes);
+        for m in &self.definition.measures {
+            use crate::fsm::compiler::model::MeasureSource;
+            if !matches!(m.source, MeasureSource::Words(_)) {
+                attributes.extend([dependency_head_key(), dependency_relation_key()]);
+            }
+            if let Some(test) = m.source.test() {
+                attributes.extend(test.iter().flatten().map(|a| a.attr.clone()));
+            }
+        }
         // The edge attributes join the projection exactly as lookaround-only
         // attributes do — and this is also the bind-time admission rule: a
         // relation-bearing catalog cannot bind against a schema that lacks
@@ -849,7 +1104,7 @@ impl Program {
                 }
             }
         }
-        attributes.into_iter()
+        attributes.into_iter().chain(self.compared_attributes())
     }
 
     pub(crate) fn has_basic_head_endpoints(&self) -> bool {

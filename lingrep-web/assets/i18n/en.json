@@ -420,6 +420,8 @@
   "hit.classification": "Classification",
   "hit.graph_bindings": "Graph bindings",
   "hit.graph_edge": "Edge",
+  "hit.graph_measure": "Measurement",
+  "hit.graph_count": "Count",
   "hit.graph_node": "Node",
   "hit.graph_relation": "relation",
   "hit.division": "Division",

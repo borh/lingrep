@@ -1083,6 +1083,7 @@ const PINNED_DEFINITION_COUNTS: &[(&str, usize)] = &[
     // 9 emitting patterns (three alternation families) and 6 predicate
     // fragments; the derived `group` declaration is not a definition and does
     // not parse as one, the same way `counting.lx`'s `set` does not.
+    ("examples/occurrence-measures.lx", 4),
     ("patterns/alternation.lx", 15),
     // 13 emitting constructions and 6 predicate fragments; the one `test` is a
     // value, not a definition.
@@ -1125,7 +1126,7 @@ const PINNED_DEFINITION_COUNTS: &[(&str, usize)] = &[
     ("patterns/sf-experimental.lx", 104),
     ("patterns/sfe.lx", 27),
     ("patterns/sketch-grammar.lx", 22),
-    ("patterns/psycholinguistics.lx", 12),
+    ("patterns/psycholinguistics.lx", 14),
     ("patterns/test-simple.lx", 1),
     // Five emitting where-clause patterns; constraints add no definitions, and
     // the one `set` is a value, not a definition, whether a relation bracket
@@ -2007,10 +2008,7 @@ fn enhanced_constraint_order_preserves_complete_graph_binding_order() {
         records[0][0]
             .graph_bindings
             .iter()
-            .map(|binding| match binding {
-                lingrep_core::fsm::GraphBinding::Node { name, .. }
-                | lingrep_core::fsm::GraphBinding::Edge { name, .. } => name.as_str(),
-            })
+            .map(lingrep_core::fsm::GraphBinding::name)
             .collect::<Vec<_>>(),
         vec!["a", "b", "edge_a", "edge_b"],
     );
@@ -4180,6 +4178,28 @@ fn negated_regex_search_is_charged_the_same_regex_bytes_as_the_positive_form() {
         negative.stats.regex_bytes(),
         "`!~` must charge the same regex bytes as `~`"
     );
+}
+
+#[test]
+fn regexes_in_measure_and_dependent_tests_are_charged_regex_bytes() {
+    let bytes = |source: &str| {
+        compile_catalog(
+            PatternSource::named("regex.lx", source),
+            CompileLimits::default(),
+        )
+        .expect("the catalog compiles")
+        .stats
+        .regex_bytes()
+    };
+    let body = bytes("p := [lemma ~ /終止形/].");
+    assert!(body > 0);
+    for source in [
+        "p := [] measure count(match.words[lemma ~ /終止形/]) as $n.",
+        "p := (?<v> []) measure count($v -[*]-> [lemma ~ /終止形/]) as $n.",
+        "p := (?<v> []) where $v -[*]-> [lemma ~ /終止形/].",
+    ] {
+        assert_eq!(bytes(source), body, "{source}");
+    }
 }
 
 fn first_diagnostic_message(source: &str) -> String {

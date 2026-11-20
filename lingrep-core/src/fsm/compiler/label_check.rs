@@ -56,6 +56,16 @@ pub(super) fn literal_errors(
         if let Some(expr) = definition.expr() {
             collect_expr(expr, &mut literals);
         }
+        for m in &definition.measures {
+            if let super::model::MeasureSource::Links { labels, .. } = &m.source {
+                collect_relation_labels(labels, &mut literals);
+            }
+            if let Some(test) = m.source.test() {
+                for predicate in test {
+                    collect_predicate(predicate, &mut literals);
+                }
+            }
+        }
         for relation in definition.relations() {
             collect_relation_labels(&relation.labels, &mut literals);
             if let RelationTarget::Predicate { predicates, .. } = &relation.target {

@@ -114,6 +114,27 @@ words twice, once for each assignment; `$a < $b` keeps one:
   pattern two_objects := (?<v> [upos=VERB])
     where $v -[obj]-> (?<a> [upos=NOUN]), $v -[obj]-> (?<b> [upos=NOUN]), $a < $b.
 
+A range after a dependent test counts qualifying words once each:
+  where $v -[*]-> [upos=NOUN]{2}    exactly two noun dependents
+  where $v -[obj]-> []{1,3}         one through three direct objects
+Use {N,} for an open upper bound. Missing edge or tested attribute data
+makes a count unknown. A range filters the head once.
+Use `where $v -[*]-> [upos=NOUN] as $n` to keep every head with its count.
+Use `key: [$n]` for a frequency table. Unknown counts leave the key unfilled.
+
+Bind occurrence measurements after the body and any where clause:
+  profile := ^ []+ $ measure mean(tree(word).links.length) as $distance.
+  verb := (?<v> [upos=VERB]) measure count($v -[*]-> [upos=NOUN]) as $n.
+Use word or bunsetsu trees; reduce links.length, nodes.depth, or
+boundaries.open_links with count, mean, or max. Read tree(word).depth($v)
+for one captured word, or count(match.words[TEST]) for a matched span.
+A measure keeps the occurrence and can supply a key with key: [$n].
+
+Compare scalar attributes on captured words or graph-bound words:
+  where $a.lemma = $b.lemma, $a.surface != $b.surface
+Both operands must supply a value. A where clause on an interpreted pattern
+filters each reading against the published graph assignment.
+
 Use `_` when only existence matters, not the dependent's identity:
 
   where $v -[obj|obj:*]-> _       some direct object exists

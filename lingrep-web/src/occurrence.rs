@@ -41,6 +41,7 @@ pub fn roles<'a>(
     };
     for binding in graph_bindings {
         match binding {
+            GraphBinding::Count { .. } | GraphBinding::Measure { .. } => {}
             GraphBinding::Node { name, node, .. } => word(name.to_string(), node),
             GraphBinding::Edge {
                 name,

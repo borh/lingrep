@@ -125,6 +125,12 @@ run_full_tests_and_extras() {
     echo "Running complete workspace Rust test inventory"
     cargo test --config .cargo/test.toml --workspace --tests --quiet 2>&1 | tee "${TMPDIR:-/tmp}/cargo-test-full.log"
 
+    echo "Checking the DuckDB examples against the native measures"
+    cargo build -p lingrep --bin ling --quiet
+    local ling_target=${CARGO_TARGET_DIR:-target}
+    [[ $ling_target = /* ]] || ling_target="$repo_root/$ling_target"
+    LING="$ling_target/debug/ling" python3 -m unittest scripts/test/test_duckdb_examples.py
+
     echo "Running real native portable-catalog realizations"
     scripts/cargo-test-selected.py -p lingrep-core --test suite -- \
         portable_catalog_realization::real_vibrato_and_sudachi_realize_the_same_portable_catalog \

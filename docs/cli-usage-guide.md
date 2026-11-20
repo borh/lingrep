@@ -392,8 +392,11 @@ When offsets are unavailable, match exports concatenate the unplaced tokens.
 Grouping by a multi-token surface requires offsets for every internal boundary.
 A single-token surface and an explicit attribute key need no spacing evidence.
 
-A CoNLL-U sentence has no offsets when its `# text` comment differs from the
-text its rows spell. `ling summarize` stops at the first multi-token surface
+A CoNLL-U sentence with a `# text` comment takes its offsets from that text:
+each FORM is located in it, in order, with only whitespace between the forms,
+so the spacing is the comment's even where `SpaceAfter=No` is missing or
+wrong. A sentence has no offsets when its forms do not occur in its `# text`
+that way. `ling summarize` stops at the first multi-token surface
 or `--by-span` key in such a sentence with `error[missing_surface_offsets]`,
 exit code 1, and writes no summary and no count table, because the key would
 otherwise depend on a guess about the missing spaces. The error names the
@@ -430,8 +433,8 @@ sentence-relative Unicode code-point offsets into the exact analysis text.
 Analyzer paths address text after the declared normalization policy. Every
 analyzer reads the source unchanged by default, so its offsets address the
 source text; under `--normalization nfc` they address the NFC text. CoNLL-U
-uses the reconstructed surface text and omits offsets when `# text`
-does not match. Words sharing a multiword surface token each address its whole
+offsets address the `# text` comment, or the text reconstructed from the rows
+when there is none, and are omitted when the forms do not occur in `# text`. Words sharing a multiword surface token each address its whole
 surface range; their internal character boundaries are not inferred. A run
 declares `char_offsets`, and `counters.offsets_omitted` counts published
 records whose alignment is unavailable. Token-index `span` and the TSV columns
@@ -567,7 +570,10 @@ reads no sentence reports nothing, and `ling check --schema`, the browser and
 
 JSONL `match` records carry `span_ids` when annotations contain the complete
 published match. These zero-based IDs are local to `corpus_sentence_ordinal`.
-With `--evidence`, each ID indexes the sentence annotation in `evidence.spans`.
+The `whole_span_ids` object groups annotations with exactly the published
+boundaries by layer. For example, `whole_span_ids.bunsetsu` gives the IDs of
+coextensive bunsetsu. Empty groups are omitted. With `--evidence`, each ID
+indexes the sentence annotation in `evidence.spans`.
 In the web token inspector, select a word and open **Details** to see its
 enclosing units, their IDs, and any recorded heads, labels and governors.
 
@@ -575,7 +581,10 @@ enclosing units, their IDs, and any recorded heads, labels and governors.
 
 The [psycholinguistics catalog](../patterns/psycholinguistics.lx) extracts
 written word forms, two- and three-character fixation targets, bunsetsu and
-case-marked relative-clause candidates. Use Japanese UD CoNLL-U or an
+case-marked relative-clause candidates, nominal dependent counts per verb,
+and subject–object pairs with one lemma and two spellings. Summarizing
+`nominal_load` by its declared key produces the count distribution, including
+verbs with zero qualifying dependents. Use Japanese UD CoNLL-U or an
 equivalent prepared corpus with basic dependencies. Bunsetsu analyses also
 require annotated bunsetsu. Sentences without them still contribute lexical
 and UD matches. The case-marked candidates provide the overt coargument,
@@ -612,6 +621,49 @@ duckdb -batch -bail -cmd "SET VARIABLE matches = 'reading.jsonl'" \
   The clause query identifies 男性を見た女性 and 男性が見た女性 by their
   different overt arguments. Testing effects on readers requires aligning
   these observations to independent fixation or reading-time measurements.
+
+### Sentence-level dependency complexity
+
+Run the occurrence-measurement catalog to obtain both tree profiles, nominal
+dependent counts and distances per verb, and kanji-word counts per bunsetsu.
+Named numeric values and their observation statuses appear in `graph_bindings`.
+
+```bash
+ling --json matches --patterns examples/occurrence-measures.lx --input-format conllu \
+  lingrep/tests/fixtures/psycholinguistics.conllu
+```
+
+For the independent DuckDB calculation, export one match covering every word of each nonempty sentence. The same DuckDB
+query measures the basic UD word tree and the annotated bunsetsu tree. For a
+prepared corpus, replace the input format and filename with `--corpus ARTIFACT`.
+
+```bash
+ling --json matches --pattern '^ []+ $.' --evidence --input-format conllu \
+  lingrep/tests/fixtures/psycholinguistics.conllu > sentences.jsonl
+duckdb -batch -bail -cmd "SET VARIABLE matches = 'sentences.jsonl'" \
+  < examples/dependency-complexity.sql
+```
+
+| Column | Definition |
+| --- | --- |
+| `unit_count` | Number of words or annotated bunsetsu. All CoNLL-U word rows, including punctuation, contribute positions. Bunsetsu positions follow surface order. |
+| `mean_distance` | Mean absolute difference in positions over non-root links. Adjacent units have distance one. A one-unit tree has no links and yields NULL. |
+| `mean_depth` | Mean number of links from each unit to the root, including the root at depth zero. |
+| `height` | Maximum depth in that sentence. Averaging sentence heights gives a different quantity from averaging unit depths. |
+| `peak_open_links` | Largest number of links spanning any boundary between adjacent units, in either direction. A one-unit tree yields zero. |
+
+For 新聞を子どもが読む, the word tree has mean distance 2, mean depth 1.2,
+height 2 and peak 3. Immediately after 子ども, the links 新聞–読む, 子ども–読む
+and 子ども–が are open. The three bunsetsu 新聞を / 子どもが / 読む give 1.5,
+2/3, 1 and 2 respectively.
+
+Each sentence has one row per unit type. A usable tree has one root and a path
+from every unit to that root. Word links require basic HEAD and DEPREL.
+Bunsetsu must partition the sentence, and their root span must contain an
+observed root word. Missing annotations give `unavailable`; incomplete or
+inconsistent trees give `invalid_tree`. Both keep the sentence in the output
+with NULL measures. When comparing the two unit types, select sentences with
+`ok` rows for both and report the number contributing to each mean.
 
 ### Counting per document
 
@@ -2035,6 +2087,9 @@ span's phrase label, such as `NP` or `VP`. When GiNZA starts a bunsetsu on a
 whitespace token, the next retained word carries the boundary. With CoNLL-U
 input, a complete `BunsetuBILabel` sequence in MISC supplies the
 intervals, and a complete `LUWBILabel` sequence supplies spans of kind `luw`.
+When the bunsetsu governors that follow from the heads and HEAD values of a
+sentence form a cycle, its `bunsetsu` spans have no governors, so
+`span(bunsetsu, $a -> $b)` matches nothing in that sentence.
 Packaged Vibrato/UniDic dictionaries produce short-unit tokens. A corpus with
 annotated long units can supply them through CoNLL-U.
 

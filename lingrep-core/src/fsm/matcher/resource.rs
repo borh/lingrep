@@ -351,6 +351,9 @@ pub(crate) fn match_heap_bytes(value: &crate::fsm::Match) -> usize {
                         .saturating_add(compact_heap_bytes(&attribute.value));
                 }
             }
+            GraphBinding::Count { name, .. } | GraphBinding::Measure { name, .. } => {
+                bytes = bytes.saturating_add(compact_heap_bytes(name))
+            }
             GraphBinding::Edge { name, relation, .. } => {
                 bytes = bytes
                     .saturating_add(compact_heap_bytes(name))

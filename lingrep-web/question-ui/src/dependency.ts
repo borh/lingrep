@@ -32,7 +32,7 @@ export function evidenceWords(row:Row,length:number):EvidenceWord[] {
   const bind=(node:{node_kind:string;token_index?:number},role:string)=>{if(node.node_kind==='word'&&node.token_index!==undefined)add(node.token_index,role);};
   for(const binding of row.graph_bindings??[]){
     if(binding.binding_kind==='node')bind(binding.node,binding.name);
-    else{bind(binding.head,`${binding.name}.head`);bind(binding.dependent,`${binding.name}.dependent`);}
+    else if(binding.binding_kind==='edge'){bind(binding.head,`${binding.name}.head`);bind(binding.dependent,`${binding.name}.dependent`);}
   }
   return [...roles].sort(([a],[b])=>a-b).map(([index,set])=>({index,roles:[...set].sort(),inSpan:index>=row.span.start&&index<row.span.end}));
 }

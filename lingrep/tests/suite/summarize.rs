@@ -4283,3 +4283,25 @@ fn a_span_kind_no_sentence_carries_is_reported_on_both_paths() {
         }
     }
 }
+
+#[test]
+fn text_summary_states_how_many_records_had_no_key() {
+    let directory = TempDir::new().unwrap();
+    let corpus = directory.path().join("flat.conllu");
+    fs::write(&corpus, "1\ta\ta\tX\t_\t_\t_\t_\t_\t_\n\n").unwrap();
+    let output = lingrep()
+        .args([
+            "summarize",
+            "--pattern",
+            "key: [$height]\npattern p := ^ []+ $ measure max(tree(word).nodes.depth) as $height.",
+        ])
+        .arg(&corpus)
+        .output()
+        .unwrap();
+    assert_success(&output);
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(
+        stdout.contains("full coverage; 0 records, 1 without a key;"),
+        "{stdout}"
+    );
+}

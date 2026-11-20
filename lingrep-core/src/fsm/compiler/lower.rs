@@ -58,7 +58,7 @@ pub(super) struct LoweredProgram {
 struct WhereClause {
     relations: Box<[ParsedRelation]>,
     enhanced_relations: Box<[super::model::ParsedEnhancedRelation]>,
-    orders: Box<[super::model::OrderConstraint]>,
+    node_constraints: Box<[super::model::ParsedNodeConstraint]>,
     span_paths: Box<[super::model::ParsedSpanPath]>,
 }
 
@@ -1466,8 +1466,29 @@ impl<'a, 'src> Lowerer<'a, 'src> {
         let mut seen = HashSet::new();
         let mut cursor = value_node.walk();
         for projection_node in value_node.named_children(&mut cursor) {
-            if projection_node.kind() == "lexical_term_projection" {
-                let projection = KeyProjection::lexical_term();
+            if matches!(
+                projection_node.kind(),
+                "lexical_term_projection" | "count_key_projection"
+            ) {
+                let projection = if projection_node.kind() == "count_key_projection" {
+                    let capture = required_field(
+                        self.source,
+                        &self.source_label,
+                        projection_node,
+                        "capture",
+                        "capture_reference",
+                    )?;
+                    let name = required_field(
+                        self.source,
+                        &self.source_label,
+                        capture,
+                        "name",
+                        "identifier",
+                    )?;
+                    KeyProjection::count(self.text(name)?)
+                } else {
+                    KeyProjection::lexical_term()
+                };
                 if !seen.insert(projection.name()) {
                     return Err(self.error(
                         projection_node,
@@ -2027,6 +2048,7 @@ impl<'a, 'src> Lowerer<'a, 'src> {
                 ));
             }
             return Ok(ParsedDefinition {
+                measures: Box::default(),
                 interpretation: None,
                 name: self.text(name_node)?.into(),
                 body: ParsedDefinitionBody::Lexicon {
@@ -2084,6 +2106,17 @@ impl<'a, 'src> Lowerer<'a, 'src> {
             }
         };
 
+        let measures = match node.child_by_field_name("measure") {
+            Some(clause) if visibility == DefinitionVisibility::Fragment => {
+                return Err(self.error(
+                    clause,
+                    DiagnosticCode::WhereOnFragment,
+                    "measure requires an emitting pattern",
+                ));
+            }
+            Some(clause) => self.lower_measures(clause)?,
+            None => Box::default(),
+        };
         let mut expr = self.lower_expr(pattern_node, 1)?;
         let mut skip_test = None;
         match (visibility, skip) {
@@ -2118,6 +2151,7 @@ impl<'a, 'src> Lowerer<'a, 'src> {
         }
 
         Ok(ParsedDefinition {
+            measures,
             interpretation: None,
             name: self.text(name_node)?.into(),
             body: ParsedDefinitionBody::Pattern {
@@ -2125,7 +2159,7 @@ impl<'a, 'src> Lowerer<'a, 'src> {
                 expr,
                 relations: clause.relations,
                 enhanced_relations: clause.enhanced_relations,
-                orders: clause.orders,
+                node_constraints: clause.node_constraints,
                 span_paths: clause.span_paths,
             },
             metadata,
@@ -2139,6 +2173,122 @@ impl<'a, 'src> Lowerer<'a, 'src> {
                 )
             })?,
         })
+    }
+
+    fn lower_measures(
+        &mut self,
+        clause: Node<'_>,
+    ) -> Result<Box<[super::model::ParsedMeasure]>, CompileError> {
+        use super::model::{MeasureSource, NamedMeasure, Reducer, TreeLayer, TreeSeries};
+        if clause.has_error() {
+            self.check_recovery_subtree(clause)?;
+        }
+        let mut measures = Vec::new();
+        for item in clause
+            .named_children(&mut clause.walk())
+            .filter(|n| n.kind() == "named_measure")
+        {
+            fn field<'t>(n: Node<'t>, key: &str) -> Node<'t> {
+                n.child_by_field_name(key).expect("measure grammar field")
+            }
+            let name = self.text(field(field(item, "name"), "name"))?.into();
+            let value = field(item, "value");
+            let tree = |this: &Self, n: Node<'_>| -> Result<TreeLayer, CompileError> {
+                let source = n
+                    .named_children(&mut n.walk())
+                    .find(|n| n.kind() == "tree_source")
+                    .expect("tree source");
+                Ok(if this.text(field(source, "layer"))? == "word" {
+                    TreeLayer::Word
+                } else {
+                    TreeLayer::Bunsetsu
+                })
+            };
+            let (reducer, source) = if value.kind() == "capture_depth" {
+                (
+                    Reducer::Max,
+                    MeasureSource::Depth(
+                        tree(self, value)?,
+                        self.text(field(field(value, "capture"), "name"))?.into(),
+                    ),
+                )
+            } else {
+                let reducer = match self.text(field(value, "operator"))? {
+                    "count" => Reducer::Count,
+                    "mean" => Reducer::Mean,
+                    _ => Reducer::Max,
+                };
+                let collection = field(value, "collection");
+                let source = match collection.kind() {
+                    "tree_collection" => {
+                        let property = collection
+                            .child_by_field_name("property")
+                            .map(|n| self.text(n))
+                            .transpose()?;
+                        let series =
+                            match (self.text(field(collection, "items"))?, property) {
+                                ("links", Some("length")) => TreeSeries::Length,
+                                ("nodes", Some("depth")) => TreeSeries::Depth,
+                                ("boundaries", Some("open_links")) => TreeSeries::OpenLinks,
+                                ("links", None) if reducer == Reducer::Count => TreeSeries::Length,
+                                ("nodes", None) if reducer == Reducer::Count => TreeSeries::Depth,
+                                ("boundaries", None) if reducer == Reducer::Count => {
+                                    TreeSeries::OpenLinks
+                                }
+                                _ => return Err(self.error(
+                                    collection,
+                                    DiagnosticCode::Syntax,
+                                    "expected a numeric property of the selected tree collection",
+                                )),
+                            };
+                        MeasureSource::Tree(tree(self, collection)?, series)
+                    }
+                    "match_words" if reducer == Reducer::Count => MeasureSource::Words(
+                        self.lower_token_test(field(collection, "test"), 1)
+                            .map_err(|d| CompileError::from_diagnostics(vec![d]))?,
+                    ),
+                    "link_selection" | "link_lengths" => {
+                        if collection.kind() == "link_selection" && reducer != Reducer::Count {
+                            return Err(self.error(
+                                collection,
+                                DiagnosticCode::Syntax,
+                                "select .length to reduce dependency lengths",
+                            ));
+                        }
+                        let edge = if collection.kind() == "link_lengths" {
+                            collection
+                                .named_children(&mut collection.walk())
+                                .find(|n| n.kind() == "link_selection")
+                                .expect("link selection")
+                        } else {
+                            collection
+                        };
+                        MeasureSource::Links {
+                            head: self.text(field(field(edge, "head"), "name"))?.into(),
+                            labels: self.lower_relation_labels(field(edge, "label"))?,
+                            test: self
+                                .lower_token_test(field(edge, "test"), 1)
+                                .map_err(|d| CompileError::from_diagnostics(vec![d]))?,
+                        }
+                    }
+                    _ => {
+                        return Err(self.error(
+                            collection,
+                            DiagnosticCode::Syntax,
+                            "a word selection supports count",
+                        ));
+                    }
+                };
+                (reducer, source)
+            };
+            measures.push(NamedMeasure {
+                name,
+                span: self.span_of(item)?,
+                reducer,
+                source,
+            });
+        }
+        Ok(measures.into_boxed_slice())
     }
 
     fn lower_span_path(
@@ -2221,7 +2371,7 @@ impl<'a, 'src> Lowerer<'a, 'src> {
         self.check_recovery_node(node)?;
         let mut relations = Vec::new();
         let mut enhanced_relations = Vec::new();
-        let mut orders = Vec::new();
+        let mut node_constraints = Vec::new();
         let mut span_paths = Vec::new();
         let mut cursor = node.walk();
         let constraints: Vec<_> = node
@@ -2233,7 +2383,10 @@ impl<'a, 'src> Lowerer<'a, 'src> {
                 span_paths.push(self.lower_span_path(constraint)?);
                 continue;
             }
-            if constraint.kind() == "order_constraint" {
+            if matches!(
+                constraint.kind(),
+                "order_constraint" | "attribute_comparison"
+            ) {
                 let mut cursor = constraint.walk();
                 let operands = constraint
                     .children_by_field_name("operand", &mut cursor)
@@ -2253,7 +2406,41 @@ impl<'a, 'src> Lowerer<'a, 'src> {
                         ))
                     })
                     .collect::<Result<_, CompileError>>()?;
-                orders.push(super::model::OrderConstraint { operands });
+                let comparison = if constraint.kind() == "attribute_comparison" {
+                    let keys = constraint
+                        .children_by_field_name("attribute", &mut constraint.walk())
+                        .map(|node| {
+                            AttributeKey::new(self.text(node)?).map_err(|error| {
+                                self.error(node, DiagnosticCode::Syntax, error.to_string())
+                            })
+                        })
+                        .collect::<Result<Vec<_>, _>>()?
+                        .try_into()
+                        .map_err(|_| {
+                            self.error(
+                                constraint,
+                                DiagnosticCode::Syntax,
+                                "comparison requires two attributes",
+                            )
+                        })?;
+                    let op = constraint.child_by_field_name("operator").ok_or_else(|| {
+                        self.error(
+                            constraint,
+                            DiagnosticCode::Syntax,
+                            "missing comparison operator",
+                        )
+                    })?;
+                    super::model::NodeComparison::Attributes {
+                        keys,
+                        equal: self.text(op)? == "=",
+                    }
+                } else {
+                    super::model::NodeComparison::SourceOrder
+                };
+                node_constraints.push(super::model::ParsedNodeConstraint {
+                    operands,
+                    comparison,
+                });
                 continue;
             }
             if constraint.child_by_field_name("kind").is_some() {
@@ -2370,6 +2557,26 @@ impl<'a, 'src> Lowerer<'a, 'src> {
                     "relation_constraint is missing field dependent",
                 )
             })?;
+            let count_binding = constraint
+                .child_by_field_name("count_binding")
+                .map(|binding| {
+                    let name = required_field(
+                        self.source,
+                        &self.source_label,
+                        binding,
+                        "name",
+                        "identifier",
+                    )?;
+                    if constraint.child_by_field_name("polarity").is_some() {
+                        return Err(self.error(
+                            binding,
+                            DiagnosticCode::InvalidQuantifier,
+                            "a named count requires a positive edge",
+                        ));
+                    }
+                    Ok(CompactString::from(self.text(name)?))
+                })
+                .transpose()?;
             let target = match dependent_node.kind() {
                 "capture_reference" => {
                     let dependent_name = required_field(
@@ -2409,10 +2616,30 @@ impl<'a, 'src> Lowerer<'a, 'src> {
                     span: self.span_of(dependent_node)?,
                 },
                 "node_pattern" => ParsedRelationTarget::Predicate {
-                    polarity: if constraint.child_by_field_name("polarity").is_some() {
-                        RelationPolarity::Negative
-                    } else {
-                        RelationPolarity::Positive
+                    requirement: match (
+                        constraint.child_by_field_name("polarity"),
+                        constraint.child_by_field_name("count"),
+                    ) {
+                        (Some(_), Some(count)) => {
+                            return Err(self.error(
+                                count,
+                                DiagnosticCode::InvalidQuantifier,
+                                "use a count range without `not`",
+                            ));
+                        }
+                        (None, Some(count)) => {
+                            let (min, max) = self.lower_quantifier(count)?;
+                            super::model::DependentRequirement::Count {
+                                min,
+                                max,
+                                binding: count_binding,
+                            }
+                        }
+                        (Some(_), None) => super::model::DependentRequirement::Absent,
+                        (None, None) => count_binding.map_or(
+                            super::model::DependentRequirement::Exists,
+                            super::model::DependentRequirement::Measure,
+                        ),
                     },
                     test: self
                         .lower_token_test(dependent_node, 0)
@@ -2438,7 +2665,7 @@ impl<'a, 'src> Lowerer<'a, 'src> {
         Ok(WhereClause {
             relations: relations.into_boxed_slice(),
             enhanced_relations: enhanced_relations.into_boxed_slice(),
-            orders: orders.into_boxed_slice(),
+            node_constraints: node_constraints.into_boxed_slice(),
             span_paths: span_paths.into_boxed_slice(),
         })
     }

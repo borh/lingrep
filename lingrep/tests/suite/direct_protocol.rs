@@ -4017,6 +4017,36 @@ fn direct_and_prepared_outputs_distinguish_spaced_surface_groups() {
 }
 
 #[test]
+fn a_declared_text_gives_the_spacing_the_rows_omit() {
+    let directory = TempDir::new().unwrap();
+    let input = directory.path().join("unmarked.conllu");
+    // No row carries `SpaceAfter=No`, although the text has no space before
+    // the comma.
+    std::fs::write(&input, "# text = Hi, you\n1\tHi\t_\tX\t_\t_\t0\troot\t_\t_\n2\t,\t_\tX\t_\t_\t1\tdep\t_\t_\n3\tyou\t_\tX\t_\t_\t1\tdep\t_\t_\n\n").unwrap();
+    let run = |command: &str| {
+        let output = lingrep()
+            .args([command, "--json", "--pattern", "p := [] []."])
+            .arg(&input)
+            .output()
+            .unwrap();
+        crate::support::assert_success(&output);
+        output
+    };
+    let matches = match_events(&run("matches"));
+    assert_eq!(matches[0]["data"]["surface"], "Hi,");
+    assert_eq!(
+        matches[0]["data"]["char_span"],
+        serde_json::json!({"start":0,"end":3})
+    );
+    let groups: Vec<_> = parse_jsonl(&run("summarize").stdout)
+        .into_iter()
+        .filter(|event| event["type"] == "summary")
+        .map(|event| event["data"]["group"]["value"].clone())
+        .collect();
+    assert_eq!(groups, [", you", "Hi,"]);
+}
+
+#[test]
 fn a_surface_key_requires_alignment_only_between_tokens() {
     let directory = TempDir::new().unwrap();
     let input = directory.path().join("unaligned.conllu");

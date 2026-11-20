@@ -423,7 +423,7 @@ pub struct KwicCaptureData {
 #[derive(Clone)]
 pub struct GraphBindingData {
     pub name: String,
-    pub is_node: bool,
+    pub kind: &'static str,
     pub identity: String,
     pub relation: Option<String>,
     pub attributes: Vec<GraphBindingAttributeData>,

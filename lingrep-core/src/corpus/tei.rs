@@ -30,7 +30,7 @@ pub fn annotated_descriptor(
     schema: &TokenSchema,
 ) -> crate::analysis::AnalyzerDescriptor {
     let mut projection = blake3::Hasher::new();
-    projection.update(b"lingrep.tei-source-annotation-projection/v1");
+    projection.update(b"lingrep.tei-source-annotation-projection/v2");
     projection.update(base.projection_policy_digest());
     crate::analysis::AnalyzerDescriptor::new(
         base.family(),

@@ -388,8 +388,15 @@ fn hit_detail_renders_typed_graph_bindings() {
         captures: Vec::new(),
         graph_bindings: vec![
             GraphBindingData {
+                name: "mean_distance".into(),
+                kind: "measure",
+                identity: "1.5".into(),
+                relation: None,
+                attributes: Vec::new(),
+            },
+            GraphBindingData {
                 name: "predicate".into(),
-                is_node: true,
+                kind: "node",
                 identity: "14.1".into(),
                 relation: None,
                 attributes: vec![GraphBindingAttributeData {
@@ -399,7 +406,7 @@ fn hit_detail_renders_typed_graph_bindings() {
             },
             GraphBindingData {
                 name: "role".into(),
-                is_node: false,
+                kind: "edge",
                 identity: "14.1 → 8".into(),
                 relation: Some("obl".into()),
                 attributes: Vec::new(),
@@ -412,6 +419,7 @@ fn hit_detail_renders_typed_graph_bindings() {
     .unwrap();
 
     assert!(html.contains("class=\"hit-graph-bindings\""));
+    assert!(html.contains(r#"data-i18n="hit.graph_measure">Measurement</span> <code>1.5</code>"#));
     assert!(html.contains("predicate"));
     assert!(html.contains("14.1"));
     assert!(html.contains("lemma"));

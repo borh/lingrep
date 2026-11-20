@@ -112,7 +112,7 @@ def roles(record: dict[str, Any]) -> dict[str, str]:
     for binding in record.get("graph_bindings", []):
         if binding["binding_kind"] == "node":
             named[binding["name"]] = node(binding["node"])
-        else:
+        elif binding["binding_kind"] == "edge":
             named[binding["name"]] = f"{node(binding['head'])}>{node(binding['dependent'])}"
     return named
 

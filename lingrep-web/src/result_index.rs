@@ -524,6 +524,14 @@ pub(crate) mod bindings {
             dependent: Node,
             relation: compact_str::CompactString,
         },
+        Count {
+            name: compact_str::CompactString,
+            value: Option<usize>,
+        },
+        Measure {
+            name: compact_str::CompactString,
+            value: lingrep_core::fsm::Measurement,
+        },
     }
     #[derive(Serialize)]
     enum BorrowedBinding<'a> {
@@ -538,6 +546,14 @@ pub(crate) mod bindings {
             head: Node,
             dependent: Node,
             relation: &'a compact_str::CompactString,
+        },
+        Count {
+            name: &'a compact_str::CompactString,
+            value: Option<usize>,
+        },
+        Measure {
+            name: &'a compact_str::CompactString,
+            value: lingrep_core::fsm::Measurement,
         },
     }
     fn serialize_attributes<S: Serializer>(
@@ -563,6 +579,14 @@ pub(crate) mod bindings {
                 name,
                 node: (*node).into(),
                 attributes,
+            },
+            GraphBinding::Measure { name, value } => BorrowedBinding::Measure {
+                name,
+                value: *value,
+            },
+            GraphBinding::Count { name, value } => BorrowedBinding::Count {
+                name,
+                value: *value,
             },
             GraphBinding::Edge {
                 name,
@@ -595,6 +619,8 @@ pub(crate) mod bindings {
                         .map(|(name, value)| GraphNodeAttribute { name, value })
                         .collect(),
                 },
+                Binding::Measure { name, value } => GraphBinding::Measure { name, value },
+                Binding::Count { name, value } => GraphBinding::Count { name, value },
                 Binding::Edge {
                     name,
                     head,
@@ -640,6 +666,21 @@ mod tests {
                         value: "語".into(),
                     }]
                     .into(),
+                },
+                GraphBinding::Measure {
+                    name: "mean_depth".into(),
+                    value: lingrep_core::fsm::Measurement::Number {
+                        sum: 3,
+                        count: std::num::NonZeroU64::new(2).unwrap(),
+                    },
+                },
+                GraphBinding::Count {
+                    name: "observed".into(),
+                    value: Some(0),
+                },
+                GraphBinding::Count {
+                    name: "unknown".into(),
+                    value: None,
                 },
                 GraphBinding::Edge {
                     name: "e".into(),

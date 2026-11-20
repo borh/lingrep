@@ -159,12 +159,18 @@ impl<W: Write> SummaryEventWriter for MachineSummaryEventWriter<'_, W> {
                 &QueryEnvelope::new(QueryEvent::Complete(complete.clone())),
             )
             .map_err(execution_output_error),
-            OutputMode::Human => writeln!(
-                self.writer,
-                "full coverage; {} records; completed in {} ms",
-                complete.counters.records_emitted, complete.elapsed_millis
-            )
-            .map_err(execution_output_io),
+            OutputMode::Human => {
+                let unkeyed = match complete.counters.records_unkeyed {
+                    0 => String::new(),
+                    count => format!(", {count} without a key"),
+                };
+                writeln!(
+                    self.writer,
+                    "full coverage; {} records{unkeyed}; completed in {} ms",
+                    complete.counters.records_emitted, complete.elapsed_millis
+                )
+                .map_err(execution_output_io)
+            }
             OutputMode::Tsv => Ok(()),
         }
     }

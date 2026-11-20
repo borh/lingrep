@@ -22,8 +22,7 @@ impl CapturePlan {
                 budget,
                 predicates,
                 tokens,
-                matched.start,
-                matched.end,
+                matched.start..matched.end,
             )?;
         } else {
             matched.captures = self

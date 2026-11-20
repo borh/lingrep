@@ -67,6 +67,21 @@ pub(crate) fn analyze_program(
                 ));
             }
         }
+        for m in &definition.measures {
+            use super::model::MeasureSource;
+            if let MeasureSource::Depth(_, id) | MeasureSource::Links { head: id, .. } = &m.source
+                && !capture_widths
+                    .get(id)
+                    .is_some_and(|w| w.min == 1 && w.max == Some(1))
+            {
+                diagnostics.push(diagnostic(
+                    sources,
+                    m.span,
+                    DiagnosticCode::WhereCaptureNotSingleToken,
+                    "a measured dependency endpoint must capture exactly one word",
+                ));
+            }
+        }
         for relation in &definition.relations {
             let mut operands = vec![(relation.head, relation.head_span)];
             if let RelationTarget::Captured { capture, span, .. } = &relation.target {
@@ -87,7 +102,7 @@ pub(crate) fn analyze_program(
                 }
             }
         }
-        for endpoint in graph_endpoints_and_order_operands(definition) {
+        for endpoint in graph_constraint_endpoints(definition) {
             let (capture, span) = match endpoint {
                 ExecutionEnhancedEndpoint::Surface(capture) => (*capture, definition.span),
                 ExecutionEnhancedEndpoint::BasicHead(dependent) => (*dependent, definition.span),
@@ -237,7 +252,7 @@ pub(crate) fn analyze_program(
         // `$a -[x]-> $b` does.
         if !definition.relations.is_empty()
             || !definition.enhanced_relations.is_empty()
-            || !definition.orders.is_empty()
+            || !definition.node_constraints.is_empty()
         {
             let guards = branch_guards(&definition.expr);
             let mut operands: Vec<(CaptureId, SourceSpan)> = Vec::new();
@@ -247,7 +262,7 @@ pub(crate) fn analyze_program(
                     operands.push((*capture, *span));
                 }
             }
-            for endpoint in graph_endpoints_and_order_operands(definition) {
+            for endpoint in graph_constraint_endpoints(definition) {
                 match endpoint {
                     ExecutionEnhancedEndpoint::Surface(capture) => {
                         operands.push((*capture, definition.span));
@@ -290,10 +305,11 @@ pub(crate) fn analyze_program(
             ExecutionCapability::Intersection
         } else if contains_any_order(&definition.expr) {
             ExecutionCapability::AnyOrder
-        } else if !definition.span_constraints.is_empty()
+        } else if !definition.measures.is_empty()
+            || !definition.span_constraints.is_empty()
             || !definition.relations.is_empty()
             || !definition.enhanced_relations.is_empty()
-            || !definition.orders.is_empty()
+            || !definition.node_constraints.is_empty()
         {
             // Also above `Captures`, for the ordering reason the capability's
             // own doc states: the relation filter must see every candidate
@@ -312,14 +328,19 @@ pub(crate) fn analyze_program(
     Ok(())
 }
 
-fn graph_endpoints_and_order_operands(
+fn graph_constraint_endpoints(
     definition: &ExecutionDefinition,
 ) -> impl Iterator<Item = &ExecutionEnhancedEndpoint> {
     definition
         .enhanced_relations
         .iter()
         .flat_map(|relation| [&relation.head, &relation.dependent])
-        .chain(definition.orders.iter().flatten())
+        .chain(
+            definition
+                .node_constraints
+                .iter()
+                .flat_map(|constraint| constraint.operands.iter()),
+        )
 }
 
 fn relation_labels_intersect(
@@ -383,11 +404,18 @@ fn relation_existence_polarity(relation: &ExecutionRelation) -> Option<RelationP
         } => None,
         RelationTarget::Anonymous { polarity, .. } => Some(*polarity),
         RelationTarget::Predicate {
-            polarity: RelationPolarity::Positive,
+            requirement: super::model::DependentRequirement::Count { min: 1.., .. },
             ..
         } => Some(RelationPolarity::Positive),
         RelationTarget::Predicate {
-            polarity: RelationPolarity::Negative,
+            requirement: super::model::DependentRequirement::Exists,
+            ..
+        } => Some(RelationPolarity::Positive),
+        RelationTarget::Predicate {
+            requirement:
+                super::model::DependentRequirement::Measure(_)
+                | super::model::DependentRequirement::Absent
+                | super::model::DependentRequirement::Count { .. },
             ..
         } => None,
     }

@@ -188,11 +188,12 @@ pub struct WindowKeyField {
 }
 
 fn window_captures(definition: &ExecutionDefinition) -> Option<Box<[Option<CompactString>]>> {
-    if !(definition.interpretation.is_none()
+    if !(definition.measures.is_empty()
+        && definition.interpretation.is_none()
         && definition.span_constraints.is_empty()
         && definition.relations.is_empty()
         && definition.enhanced_relations.is_empty()
-        && definition.orders.is_empty()
+        && definition.node_constraints.is_empty()
         && definition.graph_bindings.is_empty())
     {
         return None;
@@ -1564,6 +1565,31 @@ impl CompiledCatalog {
                 };
                 (key, kind)
             }))
+            .chain(
+                self.evaluated_plans
+                    .iter()
+                    .flat_map(|plan| plan.0.compared_attributes())
+                    .map(|key| (key, AttributeKind::Scalar)),
+            )
+            .chain(
+                self.evaluated_plans
+                    .iter()
+                    .filter(|plan| {
+                        plan.0.definition().measures.iter().any(|m| {
+                            !matches!(
+                                m.source,
+                                crate::fsm::compiler::model::MeasureSource::Words(_)
+                            )
+                        })
+                    })
+                    .flat_map(|_| {
+                        [
+                            super::program::dependency_head_key(),
+                            super::program::dependency_relation_key(),
+                        ]
+                    })
+                    .map(|key| (key, AttributeKind::Scalar)),
+            )
             .chain(self.catalog_policy.required_attribute_kinds())
             .chain(self.lexicons().iter().flat_map(|lexicon| {
                 lexicon

@@ -36,7 +36,7 @@ pub(crate) fn match_projection_errors(
         if entry.key.is_empty() { return None; }
         let lexical_definition = definition.expr().is_none();
         let has_lexical_projection = entry.key.iter().any(|field| matches!(field.target, KeyTarget::LexicalTerm | KeyTarget::LexicalSegments));
-        let invalid = if lexical_definition { !has_lexical_projection || entry.key.iter().any(|field| matches!(field.target, KeyTarget::Match | KeyTarget::Capture { .. })) } else { has_lexical_projection };
+        let invalid = if lexical_definition { !has_lexical_projection || entry.key.iter().any(|field| matches!(field.target, KeyTarget::Match | KeyTarget::Capture { .. } | KeyTarget::Count { .. })) } else { has_lexical_projection };
         invalid.then(|| {
             let key = definition.key.as_ref().expect("policy key retains its source");
             let message = if lexical_definition {
@@ -100,6 +100,12 @@ pub(crate) fn key_projection_errors(
             continue;
         };
         for field in &mut entry.key {
+            if let KeyTarget::Count { name } = &field.target {
+                if !definition.measures.iter().any(|m| m.name == name) && !definition.relations.iter().any(|relation| matches!(&relation.target, super::model::RelationTarget::Predicate { requirement, .. } if requirement.binding() == Some(name))) {
+                    diagnostics.push(error(sources, definition, "key", DiagnosticCode::InvalidPolicyValue, format!("undefined count or measurement `${name}`")));
+                }
+                continue;
+            }
             let KeyTarget::Capture { name, component } = &field.target else {
                 continue;
             };

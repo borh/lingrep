@@ -1039,6 +1039,25 @@ fn second_policy_block(
 
 fn remap_definition_source(definition: &mut ParsedDefinition, source: SourceId) {
     definition.span = definition.span.with_source(source);
+    for m in &mut definition.measures {
+        m.span = m.span.with_source(source);
+        if let model::MeasureSource::Words(test) | model::MeasureSource::Links { test, .. } =
+            &mut m.source
+        {
+            remap_test_body_source(test, source);
+        }
+        if let model::MeasureSource::Links {
+            labels: model::RelationLabels::Listed(labels),
+            ..
+        } = &mut m.source
+        {
+            for term in labels {
+                if let model::ParsedLabelTerm::SetReference { span, .. } = term {
+                    *span = span.with_source(source);
+                }
+            }
+        }
+    }
     if let Some(recipe) = &mut definition.interpretation {
         for role in recipe.captures.values_mut() {
             role.span = role.span.with_source(source);
@@ -1180,6 +1199,18 @@ fn measure_program(
     for definition in &program.definitions {
         if let Some(expr) = definition.expr() {
             measure_expr(expr, 1, &mut stats)?;
+        }
+        for measure in &definition.measures {
+            if let Some(test) = measure.source.test() {
+                charge_test_regex_bytes(test, &mut stats)?;
+            }
+        }
+        if let model::ParsedDefinitionBody::Pattern { relations, .. } = &definition.body {
+            for relation in relations {
+                if let model::ParsedRelationTarget::Predicate { test, .. } = &relation.target {
+                    charge_test_regex_bytes(test, &mut stats)?;
+                }
+            }
         }
     }
     // A `test` body's regexes are charged once, here, rather than at each

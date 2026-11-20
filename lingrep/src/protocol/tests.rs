@@ -1454,6 +1454,7 @@ fn query_match() -> QueryEnvelope {
         source_metadata: None,
         sequence: 4,
         span_ids: Vec::new(),
+        whole_span_ids: Default::default(),
         pattern: "p".into(),
         span: span(1, 3),
         char_span: None,

@@ -156,9 +156,45 @@ pub struct GraphNodeAttribute {
     pub value: CompactString,
 }
 
-/// Observable identity introduced by an enhanced `where` constraint.
+/// Value of one occurrence-level measurement. A mean retains its exact sum and denominator.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Ord, PartialOrd, Serialize, Deserialize)]
+pub enum Measurement {
+    Number {
+        sum: u64,
+        count: std::num::NonZeroU64,
+    },
+    Empty,
+    Unavailable,
+    InvalidTree,
+}
+
+impl Measurement {
+    #[must_use]
+    pub fn number(self) -> Option<f64> {
+        match self {
+            Self::Number { sum, count } => Some(sum as f64 / count.get() as f64),
+            _ => None,
+        }
+    }
+
+    #[must_use]
+    pub fn status(self) -> &'static str {
+        match self {
+            Self::Number { .. } => "ok",
+            Self::Empty => "empty",
+            Self::Unavailable => "unavailable",
+            Self::InvalidTree => "invalid_tree",
+        }
+    }
+}
+
+/// A named graph assignment, dependent count or occurrence measurement.
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Ord, PartialOrd)]
 pub enum GraphBinding {
+    Measure {
+        name: CompactString,
+        value: Measurement,
+    },
     Node {
         name: CompactString,
         node: EnhancedNodeId,
@@ -169,6 +205,10 @@ pub enum GraphBinding {
         head: EnhancedNodeId,
         dependent: EnhancedNodeId,
         relation: CompactString,
+    },
+    Count {
+        name: CompactString,
+        value: Option<usize>,
     },
 }
 
@@ -194,7 +234,10 @@ impl GraphBinding {
     #[must_use]
     pub fn name(&self) -> &str {
         match self {
-            Self::Node { name, .. } | Self::Edge { name, .. } => name,
+            Self::Node { name, .. }
+            | Self::Edge { name, .. }
+            | Self::Count { name, .. }
+            | Self::Measure { name, .. } => name,
         }
     }
 
@@ -206,7 +249,7 @@ impl GraphBinding {
                 .find(|value| value.name == *attribute)
                 .map(|value| value.value.as_str()),
             Self::Edge { relation, .. } if attribute.as_str() == "dep.rel" => Some(relation),
-            Self::Edge { .. } => None,
+            Self::Edge { .. } | Self::Count { .. } | Self::Measure { .. } => None,
         }
     }
 }
@@ -474,6 +517,26 @@ impl<A: Hash> Hash for AttrValue<A> {
 
 /// Analyzer-independent token predicate atom retained by a compiled catalog.
 pub(crate) type SymbolicAttrValue = AttrValue<AttributeKey>;
+
+/// The scalar attributes `predicate` tests. A word that lacks one of them and
+/// does not satisfy the predicate leaves a count over the predicate unknown.
+/// A string-set attribute is not listed: a word without one holds no member.
+pub(crate) fn scalar_attributes(
+    predicate: &[SymbolicAttrValue],
+) -> impl Iterator<Item = &AttributeKey> {
+    predicate
+        .iter()
+        .filter(|atom| {
+            !matches!(
+                atom.value,
+                AttrValueType::SetHas(_)
+                    | AttrValueType::SetHasAny(_)
+                    | AttrValueType::SetNotHas(_)
+                    | AttrValueType::SetNotHasAny(_)
+            )
+        })
+        .map(|atom| &atom.attr)
+}
 
 // Deterministic ordering for AttrValue
 impl<A: Ord> PartialOrd for AttrValue<A> {

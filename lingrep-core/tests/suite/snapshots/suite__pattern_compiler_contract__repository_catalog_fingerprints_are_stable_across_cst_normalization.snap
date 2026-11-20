@@ -4,6 +4,56 @@ expression: repository_catalog_fingerprints()
 ---
 [
     CatalogFingerprint {
+        source: "examples/occurrence-measures.lx",
+        definitions: 4,
+        catalog: [
+            (
+                "word_profile",
+                [],
+            ),
+            (
+                "bunsetsu_profile",
+                [],
+            ),
+            (
+                "verb_load",
+                [
+                    (
+                        "key",
+                        "$nominals",
+                    ),
+                ],
+            ),
+            (
+                "chunk_script",
+                [
+                    (
+                        "within_span",
+                        "kind: bunsetsu\nposition: whole\n",
+                    ),
+                ],
+            ),
+        ],
+        policy: [],
+        required_attributes: [
+            "AttributeKey(\"dep.head\")",
+            "AttributeKey(\"dep.rel\")",
+            "AttributeKey(\"surface\")",
+            "AttributeKey(\"upos\")",
+        ],
+        predicates: PredicateDigest(
+            "75e89b1dbdcbb961c4df8e493b661197d6e2fe710fefd1307f8408c2fc19789b",
+        ),
+        compiler_stats: CompilerStatsFingerprint {
+            definitions: 4,
+            expression_nodes: 14,
+            max_depth: 3,
+            reference_edges: 0,
+            nfa_states: 0,
+            transitions: 0,
+        },
+    },
+    CatalogFingerprint {
         source: "lingrep/tests/fixtures/lexicon-research-mix.lx",
         definitions: 6,
         catalog: [],
@@ -2458,7 +2508,7 @@ expression: repository_catalog_fingerprints()
     },
     CatalogFingerprint {
         source: "patterns/psycholinguistics.lx",
-        definitions: 12,
+        definitions: 14,
         catalog: [
             (
                 "noun_spelling",
@@ -2652,20 +2702,55 @@ expression: repository_catalog_fingerprints()
                     ),
                 ],
             ),
+            (
+                "nominal_load",
+                [
+                    (
+                        "category",
+                        "Syntactic complexity\n",
+                    ),
+                    (
+                        "key",
+                        "$nominals",
+                    ),
+                    (
+                        "status",
+                        "experimental\n",
+                    ),
+                ],
+            ),
+            (
+                "argument_spelling_contrast",
+                [
+                    (
+                        "category",
+                        "Spelling variation\n",
+                    ),
+                    (
+                        "key",
+                        "$s.lemma,$s.surface,$o.surface",
+                    ),
+                    (
+                        "status",
+                        "experimental\n",
+                    ),
+                ],
+            ),
         ],
         policy: [],
         required_attributes: [
             "AttributeKey(\"dep.head\")",
             "AttributeKey(\"dep.rel\")",
+            "AttributeKey(\"lemma\")",
             "AttributeKey(\"surface\")",
             "AttributeKey(\"upos\")",
         ],
         predicates: PredicateDigest(
-            "321b22a174252362a3c289670206de9cdf98e11f0b8252b80985b621ae2e4283",
+            "6b9cd4212dc0cc9cd8e00a870658cf83103fa91e05a9fc1282fbb417b4af8515",
         ),
         compiler_stats: CompilerStatsFingerprint {
-            definitions: 12,
-            expression_nodes: 21,
+            definitions: 14,
+            expression_nodes: 25,
             max_depth: 3,
             reference_edges: 0,
             nfa_states: 16,

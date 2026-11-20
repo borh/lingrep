@@ -56,6 +56,14 @@ fn reading_predictors_preserve_word_types_span_occurrences_and_argument_witnesse
             ("読む", &json!([2]))
         ]
     );
+
+    for (id, unit) in inventory
+        .iter()
+        .filter(|unit| unit["corpus_sentence_ordinal"] == 0)
+        .enumerate()
+    {
+        assert_eq!(unit["whole_span_ids"]["bunsetsu"], json!([id]));
+    }
     let edges = matches("earlier_dependent")
         .into_iter()
         .filter(|edge| edge["corpus_sentence_ordinal"] == 0)
@@ -79,6 +87,15 @@ fn reading_predictors_preserve_word_types_span_occurrences_and_argument_witnesse
             vec![("dependent", 0), ("governor", 4)],
             vec![("dependent", 2), ("governor", 4)]
         ]
+    );
+    let loads = matches("nominal_load");
+    assert_eq!(
+        loads[0]["graph_bindings"],
+        json!([{"binding_kind":"count","name":"nominals","value":2}])
+    );
+    assert_eq!(
+        loads[0]["key"],
+        json!([{"kind":"scalar","name":"$nominals","value":"2"}])
     );
     for (name, sentence) in [("subject_gap_candidate", 1), ("object_gap_candidate", 2)] {
         let hits = matches(name);

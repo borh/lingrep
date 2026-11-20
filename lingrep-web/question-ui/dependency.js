@@ -23,7 +23,7 @@ export function evidenceWords(row, length) {
     for (const binding of row.graph_bindings ?? []) {
         if (binding.binding_kind === 'node')
             bind(binding.node, binding.name);
-        else {
+        else if (binding.binding_kind === 'edge') {
             bind(binding.head, `${binding.name}.head`);
             bind(binding.dependent, `${binding.name}.dependent`);
         }

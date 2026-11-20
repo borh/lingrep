@@ -3,6 +3,91 @@ source: lingrep-core/src/fsm/compiler/published_baseline.rs
 expression: baseline
 ---
 {
+    "examples/occurrence-measures.lx": {
+        "fixture r7_aspect:0": [
+            "verb_load (verb_load) 0..1 raw 0..1 captures=[v<verb_load/v>0..1]",
+            "bunsetsu_profile (bunsetsu_profile) 0..3 raw 0..3 captures=[]",
+            "word_profile (word_profile) 0..3 raw 0..3 captures=[]",
+            "verb_load (verb_load) 2..3 raw 2..3 captures=[v<verb_load/v>2..3]",
+        ],
+        "fixture r7_aspect:1": [
+            "verb_load (verb_load) 0..1 raw 0..1 captures=[v<verb_load/v>0..1]",
+            "bunsetsu_profile (bunsetsu_profile) 0..3 raw 0..3 captures=[]",
+            "word_profile (word_profile) 0..3 raw 0..3 captures=[]",
+            "verb_load (verb_load) 2..3 raw 2..3 captures=[v<verb_load/v>2..3]",
+        ],
+        "fixture r7_natsume:0": [
+            "verb_load (verb_load) 0..1 raw 0..1 captures=[v<verb_load/v>0..1]",
+            "bunsetsu_profile (bunsetsu_profile) 0..2 raw 0..2 captures=[]",
+            "word_profile (word_profile) 0..2 raw 0..2 captures=[]",
+        ],
+        "fixture r7_natsume:1": [
+            "verb_load (verb_load) 0..1 raw 0..1 captures=[v<verb_load/v>0..1]",
+            "bunsetsu_profile (bunsetsu_profile) 0..6 raw 0..6 captures=[]",
+            "word_profile (word_profile) 0..6 raw 0..6 captures=[]",
+        ],
+        "fixture r7_natsume:10": [
+            "verb_load (verb_load) 0..1 raw 0..1 captures=[v<verb_load/v>0..1]",
+            "bunsetsu_profile (bunsetsu_profile) 0..3 raw 0..3 captures=[]",
+            "word_profile (word_profile) 0..3 raw 0..3 captures=[]",
+        ],
+        "fixture r7_natsume:11": [
+            "bunsetsu_profile (bunsetsu_profile) 0..5 raw 0..5 captures=[]",
+            "word_profile (word_profile) 0..5 raw 0..5 captures=[]",
+        ],
+        "fixture r7_natsume:2": [
+            "verb_load (verb_load) 0..1 raw 0..1 captures=[v<verb_load/v>0..1]",
+            "bunsetsu_profile (bunsetsu_profile) 0..3 raw 0..3 captures=[]",
+            "word_profile (word_profile) 0..3 raw 0..3 captures=[]",
+        ],
+        "fixture r7_natsume:3": [
+            "verb_load (verb_load) 0..1 raw 0..1 captures=[v<verb_load/v>0..1]",
+            "bunsetsu_profile (bunsetsu_profile) 0..3 raw 0..3 captures=[]",
+            "word_profile (word_profile) 0..3 raw 0..3 captures=[]",
+        ],
+        "fixture r7_natsume:4": [
+            "bunsetsu_profile (bunsetsu_profile) 0..4 raw 0..4 captures=[]",
+            "word_profile (word_profile) 0..4 raw 0..4 captures=[]",
+            "verb_load (verb_load) 1..2 raw 1..2 captures=[v<verb_load/v>1..2]",
+            "verb_load (verb_load) 3..4 raw 3..4 captures=[v<verb_load/v>3..4]",
+        ],
+        "fixture r7_natsume:5": [
+            "bunsetsu_profile (bunsetsu_profile) 0..4 raw 0..4 captures=[]",
+            "word_profile (word_profile) 0..4 raw 0..4 captures=[]",
+            "verb_load (verb_load) 3..4 raw 3..4 captures=[v<verb_load/v>3..4]",
+        ],
+        "fixture r7_natsume:6": [
+            "bunsetsu_profile (bunsetsu_profile) 0..3 raw 0..3 captures=[]",
+            "word_profile (word_profile) 0..3 raw 0..3 captures=[]",
+        ],
+        "fixture r7_natsume:7": [
+            "bunsetsu_profile (bunsetsu_profile) 0..3 raw 0..3 captures=[]",
+            "word_profile (word_profile) 0..3 raw 0..3 captures=[]",
+            "verb_load (verb_load) 2..3 raw 2..3 captures=[v<verb_load/v>2..3]",
+        ],
+        "fixture r7_natsume:8": [
+            "verb_load (verb_load) 0..1 raw 0..1 captures=[v<verb_load/v>0..1]",
+            "bunsetsu_profile (bunsetsu_profile) 0..2 raw 0..2 captures=[]",
+            "word_profile (word_profile) 0..2 raw 0..2 captures=[]",
+        ],
+        "fixture r7_natsume:9": [
+            "bunsetsu_profile (bunsetsu_profile) 0..4 raw 0..4 captures=[]",
+            "word_profile (word_profile) 0..4 raw 0..4 captures=[]",
+        ],
+        "fixture synthetic:0": [
+            "bunsetsu_profile (bunsetsu_profile) 0..1 raw 0..1 captures=[]",
+            "word_profile (word_profile) 0..1 raw 0..1 captures=[]",
+        ],
+        "fixture synthetic:1": [
+            "bunsetsu_profile (bunsetsu_profile) 0..1 raw 0..1 captures=[]",
+            "word_profile (word_profile) 0..1 raw 0..1 captures=[]",
+        ],
+        "fixture synthetic:2": [
+            "bunsetsu_profile (bunsetsu_profile) 0..1 raw 0..1 captures=[]",
+            "verb_load (verb_load) 0..1 raw 0..1 captures=[v<verb_load/v>0..1]",
+            "word_profile (word_profile) 0..1 raw 0..1 captures=[]",
+        ],
+    },
     "lingrep-core/tests/fixtures/catalogs/apparatus-depth2.lx": {
         "fixture r7_aspect:0": [],
         "fixture r7_aspect:1": [],
@@ -1178,19 +1263,44 @@ expression: baseline
         ],
     },
     "patterns/psycholinguistics.lx": {
-        "fixture r7_aspect:0": [],
-        "fixture r7_aspect:1": [],
-        "fixture r7_natsume:0": [],
-        "fixture r7_natsume:1": [],
-        "fixture r7_natsume:10": [],
+        "fixture r7_aspect:0": [
+            "nominal_load (nominal_load) 0..1 raw 0..1 captures=[v<nominal_load/v>0..1]",
+            "nominal_load (nominal_load) 2..3 raw 2..3 captures=[v<nominal_load/v>2..3]",
+        ],
+        "fixture r7_aspect:1": [
+            "nominal_load (nominal_load) 0..1 raw 0..1 captures=[v<nominal_load/v>0..1]",
+            "nominal_load (nominal_load) 2..3 raw 2..3 captures=[v<nominal_load/v>2..3]",
+        ],
+        "fixture r7_natsume:0": [
+            "nominal_load (nominal_load) 0..1 raw 0..1 captures=[v<nominal_load/v>0..1]",
+        ],
+        "fixture r7_natsume:1": [
+            "nominal_load (nominal_load) 0..1 raw 0..1 captures=[v<nominal_load/v>0..1]",
+        ],
+        "fixture r7_natsume:10": [
+            "nominal_load (nominal_load) 0..1 raw 0..1 captures=[v<nominal_load/v>0..1]",
+        ],
         "fixture r7_natsume:11": [],
-        "fixture r7_natsume:2": [],
-        "fixture r7_natsume:3": [],
-        "fixture r7_natsume:4": [],
-        "fixture r7_natsume:5": [],
+        "fixture r7_natsume:2": [
+            "nominal_load (nominal_load) 0..1 raw 0..1 captures=[v<nominal_load/v>0..1]",
+        ],
+        "fixture r7_natsume:3": [
+            "nominal_load (nominal_load) 0..1 raw 0..1 captures=[v<nominal_load/v>0..1]",
+        ],
+        "fixture r7_natsume:4": [
+            "nominal_load (nominal_load) 1..2 raw 1..2 captures=[v<nominal_load/v>1..2]",
+            "nominal_load (nominal_load) 3..4 raw 3..4 captures=[v<nominal_load/v>3..4]",
+        ],
+        "fixture r7_natsume:5": [
+            "nominal_load (nominal_load) 3..4 raw 3..4 captures=[v<nominal_load/v>3..4]",
+        ],
         "fixture r7_natsume:6": [],
-        "fixture r7_natsume:7": [],
-        "fixture r7_natsume:8": [],
+        "fixture r7_natsume:7": [
+            "nominal_load (nominal_load) 2..3 raw 2..3 captures=[v<nominal_load/v>2..3]",
+        ],
+        "fixture r7_natsume:8": [
+            "nominal_load (nominal_load) 0..1 raw 0..1 captures=[v<nominal_load/v>0..1]",
+        ],
         "fixture r7_natsume:9": [],
         "fixture synthetic:0": [
             "kanji_token (kanji_token) 0..1 raw 0..1 captures=[]",
@@ -1202,6 +1312,7 @@ expression: baseline
         ],
         "fixture synthetic:2": [
             "kanji_initial (kanji_initial) 0..1 raw 0..1 captures=[]",
+            "nominal_load (nominal_load) 0..1 raw 0..1 captures=[v<nominal_load/v>0..1]",
         ],
     },
     "patterns/reduplication.lx": {

@@ -719,7 +719,7 @@ fn generated_output_owned_bytes(
     )
 }
 
-fn predicate_owned_bytes(
+pub(super) fn predicate_owned_bytes(
     predicate: &[SymbolicAttrValue],
     source_label: &Arc<str>,
 ) -> Result<usize, CompileError> {

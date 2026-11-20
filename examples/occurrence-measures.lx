@@ -1,0 +1,23 @@
+test nominal := upos in {NOUN, PROPN, PRON}.
+test all_kanji := surface ~ /\A\p{Han}+\z/.
+
+pattern word_profile := ^ []+ $
+  measure mean(tree(word).links.length) as $mean_distance,
+          mean(tree(word).nodes.depth) as $mean_depth,
+          max(tree(word).nodes.depth) as $height,
+          max(tree(word).boundaries.open_links) as $peak_open_links.
+
+pattern bunsetsu_profile := ^ []+ $
+  measure mean(tree(bunsetsu).links.length) as $mean_distance,
+          mean(tree(bunsetsu).nodes.depth) as $mean_depth,
+          max(tree(bunsetsu).nodes.depth) as $height,
+          max(tree(bunsetsu).boundaries.open_links) as $peak_open_links.
+
+key: [$nominals]
+pattern verb_load := (?<v> [upos=VERB])
+  measure count($v -[*]-> [@nominal]) as $nominals,
+          mean(($v -[*]-> [@nominal]).length) as $mean_distance,
+          tree(word).depth($v) as $depth.
+
+within_span: {kind: "bunsetsu", position: "whole"}
+pattern chunk_script := []+ measure count(match.words[@all_kanji]) as $kanji_words.

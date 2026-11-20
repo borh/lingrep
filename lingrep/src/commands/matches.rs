@@ -74,6 +74,15 @@ fn protocol_graph_binding(
     published: Option<&[lingrep_core::token_match::AttributeKey]>,
 ) -> ProtocolGraphBinding {
     match binding {
+        lingrep_core::fsm::GraphBinding::Measure { name, value } => ProtocolGraphBinding::Measure {
+            name: name.to_string(),
+            value: value.number().and_then(serde_json::Number::from_f64),
+            status: value.status().into(),
+        },
+        lingrep_core::fsm::GraphBinding::Count { name, value } => ProtocolGraphBinding::Count {
+            name: name.to_string(),
+            value: *value,
+        },
         lingrep_core::fsm::GraphBinding::Node {
             name,
             node,
@@ -740,6 +749,8 @@ fn match_evidence(
     };
     for binding in record.graph_bindings {
         match binding {
+            lingrep_core::fsm::GraphBinding::Count { .. }
+            | lingrep_core::fsm::GraphBinding::Measure { .. } => {}
             lingrep_core::fsm::GraphBinding::Node { name, node, .. } => {
                 bind(*node, name.to_string())
             }
@@ -983,6 +994,19 @@ impl<W: Write> DirectMatchSink<'_, W> {
                     if offsets_missing {
                         self.offsets_omitted = self.offsets_omitted.saturating_add(1);
                     }
+                    let mut span_ids = Vec::new();
+                    let mut whole_span_ids = std::collections::BTreeMap::<String, Vec<u64>>::new();
+                    for (id, span) in sentence.spans().iter().enumerate() {
+                        if span.start <= record.start && record.end <= span.end {
+                            span_ids.push(id as u64);
+                            if (span.start, span.end) == (record.start, record.end) {
+                                whole_span_ids
+                                    .entry(span.kind.to_string())
+                                    .or_default()
+                                    .push(id as u64);
+                            }
+                        }
+                    }
                     let event = QueryEnvelope::new(QueryEvent::Match(MatchData {
                         sequence: self.sequence,
                         pattern: record.pattern.to_owned(),
@@ -990,15 +1014,8 @@ impl<W: Write> DirectMatchSink<'_, W> {
                             start: record.start as u64,
                             end: record.end as u64,
                         },
-                        span_ids: sentence
-                            .spans()
-                            .iter()
-                            .enumerate()
-                            .filter(|(_, span)| {
-                                span.start <= record.start && record.end <= span.end
-                            })
-                            .map(|(id, _)| id as u64)
-                            .collect(),
+                        span_ids,
+                        whole_span_ids,
                         char_span,
                         captures: record
                             .captures

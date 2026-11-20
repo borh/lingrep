@@ -898,7 +898,7 @@ mod tests {
             ("patterns/sentence-final.lx", (17, 261, 202, 51, 17, 0)),
             ("patterns/sfe.lx", (19, 2941, 550, 0, 0, 0)),
             ("patterns/sketch-grammar.lx", (35, 855, 395, 0, 0, 0)),
-            ("patterns/psycholinguistics.lx", (5, 365, 317, 0, 0, 0)),
+            ("patterns/psycholinguistics.lx", (5, 447, 399, 0, 0, 0)),
             ("patterns/test-simple.lx", (17, 53, 51, 0, 0, 0)),
             // The first ConlluSyntax-bound catalog: the committed dependency
             // witnesses rather than the eleven morphology fixtures, and every
@@ -961,7 +961,7 @@ mod tests {
             ("patterns/sentence-final.lx", (10, 0, 0, 8, 0)),
             ("patterns/sfe.lx", (110, 0, 0, 110, 0)),
             ("patterns/sketch-grammar.lx", (21, 21, 42, 21, 21)),
-            ("patterns/psycholinguistics.lx", (48, 0, 0, 48, 11)),
+            ("patterns/psycholinguistics.lx", (53, 5, 5, 53, 0)),
             ("patterns/test-simple.lx", (2, 0, 0, 2, 0)),
             // 11 -> 17: `verbal_argument` adds two records per argument-order
             // witness and one for each verb of the shadow sentence, where 犬
@@ -1006,7 +1006,7 @@ mod tests {
             ("patterns/sentence-final.lx", (0, 0)),
             ("patterns/sfe.lx", (0, 0)),
             ("patterns/sketch-grammar.lx", (217, 217)),
-            ("patterns/psycholinguistics.lx", (20, 20)),
+            ("patterns/psycholinguistics.lx", (40, 40)),
             ("patterns/test-simple.lx", (0, 0)),
             ("patterns/comment-register.lx", (233, 233)),
             ("patterns/ud-dependency.lx", (337, 337)),

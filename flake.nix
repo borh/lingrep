@@ -71,6 +71,7 @@
             nodejs_24
             typescript
             jq
+            duckdb
             ripgrep
             sqlx-cli
             tree-sitter

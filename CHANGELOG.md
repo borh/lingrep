@@ -65,9 +65,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   keys and the surface keys of count tables join tokens with one space
   wherever their character offsets show a gap, so `NHK news` and `NHKnews`
   are different keys. Count tables are version 4.
+- A CoNLL-U sentence whose `# text` comment spaces its forms differently
+  from `SpaceAfter` takes its character offsets, and so its `surface`
+  spacing and count keys, from the comment. Such a sentence had no offsets
+  before.
 - `ling summarize` fails with `error[missing_surface_offsets]` when it groups
   a multi-token surface in a sentence without character offsets, such as a
-  CoNLL-U sentence whose `# text` comment differs from its rows; 0.8.x counted
+  CoNLL-U sentence whose forms do not occur in its `# text` comment; 0.8.x counted
   such a match under its tokens joined with nothing. The error names the
   file, sentence and token. Correct or delete the `# text` line, or give the
   pattern a `key:`. `ling matches` exports the same match with its tokens

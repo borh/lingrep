@@ -287,47 +287,53 @@ pub(super) fn bind(
         let id = DefinitionId::new(
             u32::try_from(index).expect("definition IDs were checked before bound allocation"),
         );
-        let (body, used_sets, used_tests) = match definition.body {
+        let (body, measures, used_sets, used_tests) = match definition.body {
             ParsedDefinitionBody::Pattern {
                 visibility,
                 expr,
                 relations,
                 enhanced_relations,
-                orders,
+                node_constraints,
                 span_paths,
             } => {
-                let (expr, relations, enhanced_relations, used_sets, used_tests) = bind_definition(
-                    expr,
-                    &relations,
-                    &enhanced_relations,
-                    &symbols,
-                    &set_members,
-                    &near,
-                    &test_bodies,
-                    &test_spans,
-                    &visibilities,
-                    &sources,
-                    &global_capture_names,
-                    definition.span,
-                    limits,
-                    &test_budget,
-                    &mut binding_diagnostics,
-                );
+                let (expr, relations, enhanced_relations, measures, used_sets, used_tests) =
+                    bind_definition(
+                        expr,
+                        ParsedClauses {
+                            relations: &relations,
+                            enhanced_relations: &enhanced_relations,
+                            measures: &definition.measures,
+                        },
+                        &symbols,
+                        &set_members,
+                        &near,
+                        &test_bodies,
+                        &test_spans,
+                        &visibilities,
+                        &sources,
+                        &global_capture_names,
+                        definition.span,
+                        limits,
+                        &test_budget,
+                        &mut binding_diagnostics,
+                    );
                 (
                     BoundDefinitionBody::Pattern {
                         visibility,
                         expr,
                         relations,
                         enhanced_relations,
-                        orders,
+                        node_constraints,
                         span_paths,
                     },
+                    measures,
                     used_sets,
                     used_tests,
                 )
             }
             ParsedDefinitionBody::Lexicon { by, members } => (
                 BoundDefinitionBody::Lexicon { by, members },
+                Box::default(),
                 BTreeSet::new(),
                 BTreeSet::new(),
             ),
@@ -339,6 +345,7 @@ pub(super) fn bind(
             test_uses.insert(id, used_tests);
         }
         bound_definitions.push(BoundDefinition {
+            measures,
             interpretation: definition.interpretation,
             id,
             source: definition.span.source(),
@@ -630,6 +637,12 @@ fn validate_acyclic(
     Ok(finish_order)
 }
 
+struct ParsedClauses<'a> {
+    relations: &'a [super::model::ParsedRelation],
+    enhanced_relations: &'a [super::model::ParsedEnhancedRelation],
+    measures: &'a [super::model::ParsedMeasure],
+}
+
 /// Binds one definition's body and reports which named values it referenced.
 ///
 /// Set and test names come back beside the expression rather than being
@@ -640,8 +653,7 @@ fn validate_acyclic(
 /// [`BindCtx`] below bundles them, and this is the one call that assembles it.
 fn bind_definition(
     expr: ParsedExpr,
-    relations: &[super::model::ParsedRelation],
-    enhanced_relations: &[super::model::ParsedEnhancedRelation],
+    clauses: ParsedClauses<'_>,
     symbols: &IndexMap<CompactString, DefinitionId>,
     set_members: &IndexMap<CompactString, SetMembers>,
     near: &IndexMap<NearQuery, NearResolution>,
@@ -658,9 +670,15 @@ fn bind_definition(
     BoundExpr,
     Box<[super::model::BoundRelation]>,
     Box<[super::model::BoundEnhancedRelation]>,
+    Box<[super::model::BoundMeasure]>,
     BTreeSet<CompactString>,
     BTreeSet<CompactString>,
 ) {
+    let ParsedClauses {
+        relations,
+        enhanced_relations,
+        measures,
+    } = clauses;
     let mut declarations = BTreeMap::new();
     collect_capture_declarations(&expr, sources, &mut declarations, diagnostics);
     let ctx = BindCtx {
@@ -682,7 +700,42 @@ fn bind_definition(
     let relations = bind_relations(relations, test_spans, &ctx, &mut uses, diagnostics);
     let enhanced_relations =
         bind_enhanced_relations(enhanced_relations, test_spans, &ctx, &mut uses, diagnostics);
-    (bound, relations, enhanced_relations, uses.sets, uses.tests)
+    use super::model::{MeasureSource, NamedMeasure};
+    let measures = measures
+        .iter()
+        .map(|m| NamedMeasure {
+            name: m.name.clone(),
+            span: m.span,
+            reducer: m.reducer,
+            source: match &m.source {
+                MeasureSource::Tree(l, s) => MeasureSource::Tree(*l, *s),
+                MeasureSource::Depth(l, c) => MeasureSource::Depth(*l, c.clone()),
+                MeasureSource::Words(t) => {
+                    MeasureSource::Words(bind_token_test(t, &ctx, &mut uses, diagnostics))
+                }
+                MeasureSource::Links { head, labels, test } => MeasureSource::Links {
+                    head: head.clone(),
+                    labels: bind_relation_labels(
+                        labels,
+                        m.span,
+                        test_spans,
+                        &ctx,
+                        &mut uses,
+                        diagnostics,
+                    ),
+                    test: bind_token_test(test, &ctx, &mut uses, diagnostics),
+                },
+            },
+        })
+        .collect();
+    (
+        bound,
+        relations,
+        enhanced_relations,
+        measures,
+        uses.sets,
+        uses.tests,
+    )
 }
 
 /// The names one definition's walk resolved, recorded as it went.
@@ -1696,11 +1749,11 @@ fn bind_relations(
                 span: *span,
             },
             ParsedRelationTarget::Predicate {
-                polarity,
+                requirement,
                 test,
                 span,
             } => RelationTarget::Predicate {
-                polarity: *polarity,
+                requirement: requirement.clone(),
                 predicates: bind_token_test(test, ctx, uses, diagnostics),
                 span: *span,
             },
@@ -1995,6 +2048,7 @@ mod tests {
 
     fn definition(name: &str, expr: ParsedExpr, source: u32, start: usize) -> ParsedDefinition {
         ParsedDefinition {
+            measures: Box::default(),
             interpretation: None,
             name: name.into(),
             body: ParsedDefinitionBody::Pattern {
@@ -2002,7 +2056,7 @@ mod tests {
                 expr,
                 relations: Box::default(),
                 enhanced_relations: Box::default(),
-                orders: Box::default(),
+                node_constraints: Box::default(),
                 span_paths: Box::default(),
             },
             metadata: metadata(),
@@ -2019,13 +2073,14 @@ mod tests {
         start: usize,
     ) -> ParsedDefinition {
         ParsedDefinition {
+            measures: Box::default(),
             interpretation: None,
             body: ParsedDefinitionBody::Pattern {
                 visibility: DefinitionVisibility::Fragment,
                 expr,
                 relations: Box::default(),
                 enhanced_relations: Box::default(),
-                orders: Box::default(),
+                node_constraints: Box::default(),
                 span_paths: Box::default(),
             },
             ..definition(name, token(), source, start)
@@ -2192,6 +2247,7 @@ mod tests {
     fn preserves_shared_metadata_and_reused_definition_edges_without_expansion() {
         let shared_metadata = metadata();
         let root = ParsedDefinition {
+            measures: Box::default(),
             interpretation: None,
             name: "root".into(),
             body: ParsedDefinitionBody::Pattern {
@@ -2199,7 +2255,7 @@ mod tests {
                 expr: ParsedExpr::Sequence(vec![reference("shared"), reference("shared")]),
                 relations: Box::default(),
                 enhanced_relations: Box::default(),
-                orders: Box::default(),
+                node_constraints: Box::default(),
                 span_paths: Box::default(),
             },
             metadata: shared_metadata.clone(),
@@ -2410,6 +2466,7 @@ mod set_sharing_tests {
             )
         };
         let definition = |name: &str, expr: ParsedExpr, start: usize| ParsedDefinition {
+            measures: Box::default(),
             interpretation: None,
             name: name.into(),
             body: ParsedDefinitionBody::Pattern {
@@ -2417,7 +2474,7 @@ mod set_sharing_tests {
                 expr,
                 relations: Box::default(),
                 enhanced_relations: Box::default(),
-                orders: Box::default(),
+                node_constraints: Box::default(),
                 span_paths: Box::default(),
             },
             metadata: metadata(),

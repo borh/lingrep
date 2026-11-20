@@ -12,7 +12,7 @@ export const textOf = (tokens:readonly Token[]):string => tokens.map((token,at)=
 export const textAround = (tokens:readonly Token[],start:number,end:number):readonly [string,string,string] => [textOf(tokens.slice(0,start))+(start>0&&start<end&&tokens[start]?.space_before?' ':''),textOf(tokens.slice(start,end)),(end>start&&tokens[end]?.space_before?' ':'')+textOf(tokens.slice(end))];
 export const attributeMembers = (value:AttributeValue|undefined):readonly string[] => value===undefined?[]:typeof value==='string'?[value]:value;
 export interface GraphNode { readonly node_kind: string; readonly token_index?: number; }
-export type GraphBinding = { readonly binding_kind: 'node'; readonly name: string; readonly node: GraphNode } | { readonly binding_kind: 'edge'; readonly name: string; readonly head: GraphNode; readonly dependent: GraphNode; readonly relation: string };
+export type GraphBinding = { readonly binding_kind: 'measure'; readonly name: string; readonly value: number | null; readonly status: 'ok' | 'empty' | 'unavailable' | 'invalid_tree' } | { readonly binding_kind: 'count'; readonly name: string; readonly value: number | null } | { readonly binding_kind: 'node'; readonly name: string; readonly node: GraphNode } | { readonly binding_kind: 'edge'; readonly name: string; readonly head: GraphNode; readonly dependent: GraphNode; readonly relation: string };
 export interface MatchRecord {
   readonly sequence: number;
   readonly pattern: string;

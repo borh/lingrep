@@ -649,6 +649,12 @@ fn graph_binding(binding: &GraphBinding) -> Value {
         } => {
             json!({"binding_kind":"node","name":name,"node":graph_node(*node),"attributes":attributes.iter().map(|a|json!({"name":a.name.pattern_key(),"value":a.value})).collect::<Vec<_>>()})
         }
+        GraphBinding::Measure { name, value } => {
+            json!({"binding_kind":"measure","name":name,"value":value.number(),"status":value.status()})
+        }
+        GraphBinding::Count { name, value } => {
+            json!({"binding_kind":"count", "name":name, "value":value})
+        }
         GraphBinding::Edge {
             name,
             head,

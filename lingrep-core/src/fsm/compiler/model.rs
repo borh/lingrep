@@ -469,6 +469,7 @@ pub(crate) struct ParsedRole {
 /// One named lingrep patterns definition and its source-level annotation.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) struct ParsedDefinition {
+    pub(crate) measures: Box<[ParsedMeasure]>,
     pub(crate) interpretation: Option<ParsedInterpretation>,
     pub(crate) name: CompactString,
     pub(crate) body: ParsedDefinitionBody,
@@ -485,7 +486,7 @@ pub(crate) enum ParsedDefinitionBody {
         expr: ParsedExpr,
         relations: Box<[ParsedRelation]>,
         enhanced_relations: Box<[ParsedEnhancedRelation]>,
-        orders: Box<[OrderConstraint]>,
+        node_constraints: Box<[ParsedNodeConstraint]>,
         span_paths: Box<[ParsedSpanPath]>,
     },
     Lexicon {
@@ -493,6 +494,58 @@ pub(crate) enum ParsedDefinitionBody {
         members: Box<[CompactString]>,
     },
 }
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum Reducer {
+    Count,
+    Mean,
+    Max,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum TreeLayer {
+    Word,
+    Bunsetsu,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum TreeSeries {
+    Length,
+    Depth,
+    OpenLinks,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) enum MeasureSource<C, T, L> {
+    Tree(TreeLayer, TreeSeries),
+    Depth(TreeLayer, C),
+    Words(T),
+    Links {
+        head: C,
+        labels: RelationLabels<L>,
+        test: T,
+    },
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) struct NamedMeasure<C, T, L> {
+    pub(crate) name: CompactString,
+    pub(crate) span: SourceSpan,
+    pub(crate) reducer: Reducer,
+    pub(crate) source: MeasureSource<C, T, L>,
+}
+
+impl<C, T, L> MeasureSource<C, T, L> {
+    pub(crate) fn test(&self) -> Option<&T> {
+        match self {
+            Self::Links { test, .. } | Self::Words(test) => Some(test),
+            _ => None,
+        }
+    }
+}
+pub(crate) type ParsedMeasure = NamedMeasure<CompactString, ParsedTest, ParsedLabelTerm>;
+pub(crate) type BoundMeasure = NamedMeasure<CompactString, Box<[TokenPredicate]>, RelationLabel>;
+pub(crate) type ExecutionMeasure = NamedMeasure<CaptureId, Box<[TokenPredicate]>, RelationLabel>;
 
 /// One matcher for a dependent's `dep.rel`.
 ///
@@ -585,6 +638,31 @@ pub(crate) enum RelationPolarity {
     Negative,
 }
 
+#[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord)]
+pub(crate) enum DependentRequirement {
+    Measure(CompactString),
+    Exists,
+    Absent,
+    Count {
+        min: usize,
+        max: Option<usize>,
+        binding: Option<CompactString>,
+    },
+}
+
+impl DependentRequirement {
+    pub(crate) fn binding(&self) -> Option<&CompactString> {
+        match self {
+            Self::Measure(name)
+            | Self::Count {
+                binding: Some(name),
+                ..
+            } => Some(name),
+            _ => None,
+        }
+    }
+}
+
 /// The parsed dependent side of a `where` edge.
 ///
 /// A predicate is retained as its unresolved Boolean test until binding can
@@ -602,7 +680,7 @@ pub(crate) enum ParsedRelationTarget<T> {
         span: SourceSpan,
     },
     Predicate {
-        polarity: RelationPolarity,
+        requirement: DependentRequirement,
         test: ParsedTest,
         span: SourceSpan,
     },
@@ -620,7 +698,7 @@ pub(crate) enum RelationTarget<T> {
         span: SourceSpan,
     },
     Predicate {
-        polarity: RelationPolarity,
+        requirement: DependentRequirement,
         predicates: Box<[TokenPredicate]>,
         span: SourceSpan,
     },
@@ -674,8 +752,18 @@ pub(crate) enum ParsedEnhancedEndpoint {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub(crate) struct OrderConstraint {
-    pub(crate) operands: Box<[(CompactString, SourceSpan)]>,
+pub(crate) struct NodeConstraint<T> {
+    pub(crate) operands: Box<[T]>,
+    pub(crate) comparison: NodeComparison,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord)]
+pub(crate) enum NodeComparison {
+    SourceOrder,
+    Attributes {
+        keys: [AttributeKey; 2],
+        equal: bool,
+    },
 }
 
 /// The dependency graph a graph relation reads: basic `dep.head` and
@@ -926,6 +1014,7 @@ pub(crate) struct BoundProgram {
 /// A validated definition with stable identity and no source-buffer borrow.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) struct BoundDefinition {
+    pub(crate) measures: Box<[BoundMeasure]>,
     pub(crate) interpretation: Option<ParsedInterpretation>,
     pub(crate) id: DefinitionId,
     pub(crate) source: SourceId,
@@ -946,7 +1035,7 @@ pub(crate) enum BoundDefinitionBody {
         expr: BoundExpr,
         relations: Box<[BoundRelation]>,
         enhanced_relations: Box<[BoundEnhancedRelation]>,
-        orders: Box<[OrderConstraint]>,
+        node_constraints: Box<[ParsedNodeConstraint]>,
         span_paths: Box<[ParsedSpanPath]>,
     },
     Lexicon {
@@ -993,9 +1082,11 @@ impl BoundDefinition {
         }
     }
 
-    pub(crate) fn orders(&self) -> &[OrderConstraint] {
+    pub(crate) fn node_constraints(&self) -> &[ParsedNodeConstraint] {
         match &self.body {
-            BoundDefinitionBody::Pattern { orders, .. } => orders,
+            BoundDefinitionBody::Pattern {
+                node_constraints, ..
+            } => node_constraints,
             BoundDefinitionBody::Lexicon { .. } => &[],
         }
     }
@@ -1221,6 +1312,7 @@ pub(crate) struct InterpretationRecipe {
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) struct ExecutionDefinition {
+    pub(crate) measures: Box<[ExecutionMeasure]>,
     pub(crate) interpretation: Option<Box<InterpretationRecipe>>,
     pub(crate) span_constraints: Box<[SpanConstraint]>,
     pub(crate) name: CompactString,
@@ -1231,7 +1323,7 @@ pub(crate) struct ExecutionDefinition {
     /// definition without a clause.
     pub(crate) relations: Box<[ExecutionRelation]>,
     pub(crate) enhanced_relations: Box<[ExecutionEnhancedRelation]>,
-    pub(crate) orders: Box<[ExecutionOrder]>,
+    pub(crate) node_constraints: Box<[ExecutionNodeConstraint]>,
     /// Observable graph variables in canonical binding-kind/name order.
     pub(crate) graph_bindings: Box<[ExecutionGraphBindingDecl]>,
     pub(crate) metadata: Metadata,
@@ -1269,7 +1361,8 @@ pub(crate) struct ExecutionEnhancedRelation {
     pub(crate) dependent: ExecutionEnhancedEndpoint,
 }
 
-pub(crate) type ExecutionOrder = Box<[ExecutionEnhancedEndpoint]>;
+pub(crate) type ParsedNodeConstraint = NodeConstraint<(CompactString, SourceSpan)>;
+pub(crate) type ExecutionNodeConstraint = NodeConstraint<ExecutionEnhancedEndpoint>;
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) enum ExecutionGraphBindingDecl {

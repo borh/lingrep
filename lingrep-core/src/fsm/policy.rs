@@ -412,6 +412,8 @@ pub enum KeyTarget {
     GraphNode { name: CompactString },
     /// One named enhanced edge; the first slice exposes its `rel` value.
     GraphEdge { name: CompactString },
+    /// The numeric value of a named dependent count or occurrence measurement.
+    Count { name: CompactString },
     /// The authored member that produced a lexical occurrence.
     LexicalTerm,
     /// Per-token values across the raw lexical occurrence span.
@@ -478,6 +480,15 @@ impl KeyProjection {
 
     pub(crate) fn retarget_graph_edge(&mut self, name: CompactString) {
         self.target = KeyTarget::GraphEdge { name };
+    }
+
+    #[must_use]
+    pub(crate) fn count(name: &str) -> Self {
+        Self {
+            target: KeyTarget::Count { name: name.into() },
+            attribute: AttributeKey::new("graph.count").expect("qualified attribute"),
+            canonical_name: format!("${name}").into(),
+        }
     }
 
     #[must_use]
@@ -969,9 +980,11 @@ impl CatalogPolicy {
                     .key
                     .iter()
                     .filter(|field| {
-                        !(matches!(field.target, KeyTarget::GraphEdge { .. })
-                            || matches!(field.target, KeyTarget::GraphNode { .. })
-                                && matches!(field.attribute.as_str(), "node.kind" | "node.id"))
+                        !(matches!(
+                            field.target,
+                            KeyTarget::GraphEdge { .. } | KeyTarget::Count { .. }
+                        ) || matches!(field.target, KeyTarget::GraphNode { .. })
+                            && matches!(field.attribute.as_str(), "node.kind" | "node.id"))
                     })
                     .map(|field| field.attribute.clone()),
             );
@@ -1027,7 +1040,9 @@ impl CatalogPolicy {
                     .filter(|field| {
                         !(matches!(
                             field.target,
-                            KeyTarget::LexicalTerm | KeyTarget::GraphEdge { .. }
+                            KeyTarget::LexicalTerm
+                                | KeyTarget::GraphEdge { .. }
+                                | KeyTarget::Count { .. }
                         ) || matches!(field.target, KeyTarget::GraphNode { .. })
                             && matches!(field.attribute.as_str(), "node.kind" | "node.id"))
                     })
@@ -1286,6 +1301,24 @@ fn project_key_fields<S: TokenSequence + ?Sized>(
     }
     let mut projected = Vec::with_capacity(declared.len());
     for field in declared {
+        if let KeyTarget::Count { name } = &field.target {
+            let value = graph_bindings.iter().find_map(|binding| match binding {
+                crate::fsm::GraphBinding::Count {
+                    name: binding_name,
+                    value,
+                } if name == binding_name => value.map(|v| v.to_string()),
+                crate::fsm::GraphBinding::Measure {
+                    name: binding_name,
+                    value,
+                } if name == binding_name => value.number().map(|v| v.to_string()),
+                _ => None,
+            })?;
+            projected.push(ProjectedKeyField {
+                name: field.name(),
+                value,
+            });
+            continue;
+        }
         if let KeyTarget::GraphNode { name } | KeyTarget::GraphEdge { name } = &field.target {
             let binding = graph_bindings
                 .iter()
@@ -1314,7 +1347,8 @@ fn project_key_fields<S: TokenSequence + ?Sized>(
             KeyTarget::GraphNode { .. }
             | KeyTarget::GraphEdge { .. }
             | KeyTarget::LexicalTerm
-            | KeyTarget::LexicalSegments => return None,
+            | KeyTarget::LexicalSegments
+            | KeyTarget::Count { .. } => return None,
         };
         if start >= end || end > tokens.len() {
             return None;
@@ -1390,7 +1424,8 @@ fn project_lexical_key_fields<S: TokenSequence + ?Sized>(
                 KeyTarget::Match
                 | KeyTarget::Capture { .. }
                 | KeyTarget::GraphNode { .. }
-                | KeyTarget::GraphEdge { .. } => return None,
+                | KeyTarget::GraphEdge { .. }
+                | KeyTarget::Count { .. } => return None,
             };
             Some(LexicalProjectedKeyField {
                 name: field.name(),

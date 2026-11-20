@@ -189,7 +189,7 @@ fn graph_binding_data(binding: &GraphBinding) -> GraphBindingData {
             attributes,
         } => GraphBindingData {
             name: name.to_string(),
-            is_node: true,
+            kind: "node",
             identity: node.spelling(),
             relation: None,
             attributes: attributes
@@ -200,6 +200,22 @@ fn graph_binding_data(binding: &GraphBinding) -> GraphBindingData {
                 })
                 .collect(),
         },
+        GraphBinding::Measure { name, value } => GraphBindingData {
+            name: name.to_string(),
+            kind: "measure",
+            identity: value
+                .number()
+                .map_or_else(|| value.status().to_owned(), |n| n.to_string()),
+            relation: None,
+            attributes: Vec::new(),
+        },
+        GraphBinding::Count { name, value } => GraphBindingData {
+            name: name.to_string(),
+            kind: "count",
+            identity: value.map_or_else(|| "—".to_owned(), |count| count.to_string()),
+            relation: None,
+            attributes: Vec::new(),
+        },
         GraphBinding::Edge {
             name,
             head,
@@ -207,7 +223,7 @@ fn graph_binding_data(binding: &GraphBinding) -> GraphBindingData {
             relation,
         } => GraphBindingData {
             name: name.to_string(),
-            is_node: false,
+            kind: "edge",
             identity: format!("{} → {}", head.spelling(), dependent.spelling()),
             relation: Some(relation.to_string()),
             attributes: Vec::new(),

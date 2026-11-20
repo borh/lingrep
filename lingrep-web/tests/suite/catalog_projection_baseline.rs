@@ -227,7 +227,7 @@ fn expected_projection(catalog: &str) -> Option<Projection> {
         ),
         // Single pattern each: one definition can never reach `populated >= 2`.
         "patterns/psycholinguistics.lx" => {
-            grouped(vec![field("category", 12), field("status", 12)])
+            grouped(vec![field("category", 14), field("status", 14)])
         }
         "patterns/test-simple.lx" => (None, vec![]),
         // 5 emitting where-clause patterns; `layer` and `status` come from
@@ -281,6 +281,7 @@ fn expected_projection(catalog: &str) -> Option<Projection> {
                 field("status", 3),
             ],
         ),
+        "examples/occurrence-measures.lx" => (None, vec![]),
         "scripts/test/test_metadata.lx" => (None, vec![]),
         "lingrep/tests/fixtures/one.lx" => (None, vec![]),
         // Lexicons emit and seed browser descriptors, but these research

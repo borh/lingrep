@@ -104,6 +104,7 @@ fn the_verified_example_counts_are_what_the_catalogs_contain() {
         .collect();
 
     let expected: Vec<(String, usize)> = [
+        ("examples/occurrence-measures.lx", 0),
         ("lingrep/tests/fixtures/lexicon-research-mix.lx", 0),
         ("lingrep/tests/fixtures/lexicon-semantic.lx", 0),
         ("lingrep/tests/fixtures/one.lx", 0),
@@ -257,6 +258,7 @@ fn the_verified_nesting_claim_counts_are_what_the_catalogs_contain() {
         .collect();
 
     let expected: Vec<(String, usize)> = [
+        ("examples/occurrence-measures.lx", 0),
         ("lingrep/tests/fixtures/lexicon-research-mix.lx", 0),
         ("lingrep/tests/fixtures/lexicon-semantic.lx", 0),
         ("lingrep/tests/fixtures/one.lx", 0),

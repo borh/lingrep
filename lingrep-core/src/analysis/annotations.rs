@@ -303,7 +303,9 @@ impl<A: AnalyzerSession> AnalyzerSession for AnnotatedAnalysisSession<A> {
                     words.len(),
                     values,
                 )
-                .map_err(|_| AnalysisError::UnsupportedProjection)?;
+                .map_err(|_| AnalysisError::UnsupportedProjection)?
+                .with_spans(words.spans().to_vec())
+                .map_err(|_| AnalysisError::InvalidAlignment)?;
                 rebuilt.push(sentence);
             }
             let mode = match input.kind() {
@@ -350,6 +352,16 @@ mod tests {
         assert_eq!(value.text(), "가猫");
         assert_eq!(value.annotations()[0].range, 0..3);
     }
+    fn inner_span() -> crate::token_match::SentenceSpan {
+        crate::token_match::SentenceSpan {
+            kind: "chunk".into(),
+            start: 0,
+            end: 2,
+            head: Some(1),
+            label: Some("NP".into()),
+            governor: None,
+        }
+    }
     struct TwoWords {
         schema: TokenSchema,
         multiword: bool,
@@ -380,6 +392,8 @@ mod tests {
                             })
                             .collect(),
                     )
+                    .unwrap()
+                    .with_spans(vec![inner_span()])
                     .unwrap();
                     let spans = if self.multiword {
                         vec![SurfaceToken::new(input.source_range(0, 9).unwrap(), 0, 2)]
@@ -439,6 +453,36 @@ mod tests {
         assert_eq!(
             words.char_span(1),
             Some(crate::token_match::CharSpan { start: 2, end: 3 })
+        );
+    }
+    #[test]
+    fn annotated_words_keep_the_inner_sentence_spans() {
+        let base = TokenSchema::from_keys(["text"]).unwrap();
+        let schema = crate::corpus::tei::annotated_schema(&base).unwrap();
+        let projection = schema
+            .bind_projection(schema.keys().iter().cloned())
+            .unwrap();
+        let mut analyzer = AnnotatedAnalysisSession::new(
+            TwoWords {
+                schema: base,
+                multiword: false,
+            },
+            schema,
+            32 * 1024 * 1024,
+        );
+        let input = TextUnit::annotated(
+            InputUnitId::new(0),
+            TextUnitKind::Sentence,
+            annotated("猫猫犬", 3..9),
+            NormalizationPolicy::None,
+        )
+        .unwrap();
+        let result = analyzer
+            .analyze_bounded_batch(vec![input], &projection)
+            .unwrap();
+        assert_eq!(
+            result.inputs()[0].sentences()[0].words().spans(),
+            [inner_span()]
         );
     }
     #[hegel::test(test_cases = 300, derandomize = true)]

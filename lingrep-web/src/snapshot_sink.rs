@@ -747,6 +747,7 @@ fn reference_bytes(reference: &MatchRef) -> usize {
                             .map(|attribute| attribute.name.as_str().len() + attribute.value.len())
                             .sum::<usize>()
                 }
+                GraphBinding::Count { name, .. } | GraphBinding::Measure { name, .. } => name.len(),
                 GraphBinding::Edge { name, relation, .. } => name.len() + relation.len(),
             })
             .sum::<usize>()

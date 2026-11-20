@@ -157,7 +157,7 @@ pub fn report_catalog_drift_with_vectors(
                     expr,
                     relations,
                     enhanced_relations,
-                    orders,
+                    node_constraints,
                     span_paths,
                 } => {
                     let mut canonical_paths = span_paths
@@ -191,17 +191,18 @@ pub fn report_catalog_drift_with_vectors(
                     }
                     canonical_paths.sort();
                     canonical_paths.dedup();
-                    let mut canonical_orders =
-                        orders
-                            .iter()
-                            .flat_map(|order| {
-                                order.operands.iter().zip(&order.operands[1..]).map(
-                                    |((before, _), (after, _))| (before.clone(), after.clone()),
-                                )
-                            })
-                            .collect::<Vec<_>>();
-                    canonical_orders.sort();
-                    canonical_orders.dedup();
+                    let mut canonical_node_constraints = node_constraints
+                        .iter()
+                        .flat_map(|order| {
+                            order.operands.iter().zip(&order.operands[1..]).map(
+                                |((before, _), (after, _))| {
+                                    (before.clone(), after.clone(), order.comparison.clone())
+                                },
+                            )
+                        })
+                        .collect::<Vec<_>>();
+                    canonical_node_constraints.sort();
+                    canonical_node_constraints.dedup();
                     let mut canonical_relations = relations
                         .iter()
                         .map(|relation| {
@@ -234,14 +235,14 @@ pub fn report_catalog_drift_with_vectors(
                                         polarity, ..
                                     } => CanonicalRelationTarget::Anonymous(*polarity),
                                     super::model::RelationTarget::Predicate {
-                                        polarity,
+                                        requirement,
                                         predicates,
                                         ..
                                     } => {
                                         let mut predicates = predicates.to_vec();
                                         predicates.sort();
                                         CanonicalRelationTarget::Predicate(
-                                            *polarity,
+                                            requirement.clone(),
                                             predicates.into_boxed_slice(),
                                         )
                                     }
@@ -302,12 +303,13 @@ pub fn report_catalog_drift_with_vectors(
                             })?,
                             relations: canonical_relations.into_boxed_slice(),
                             enhanced_relations: canonical_enhanced_relations.into_boxed_slice(),
+                            measures: definition.measures.iter().map(canonical_measure).collect(),
                             paths: canonical_paths,
                             interpretation: definition
                                 .interpretation
                                 .as_ref()
                                 .map(CanonicalInterpretation::from),
-                            orders: canonical_orders.into_boxed_slice(),
+                            node_constraints: canonical_node_constraints.into_boxed_slice(),
                         },
                     )
                 }
@@ -411,6 +413,34 @@ enum CanonicalExpr {
 /// and the `within_span` and `span_dependency` annotations share this form.
 type CanonicalSpanPath = (String, Vec<super::materialize::AnnotatedSpanOperand>);
 
+type CanonicalMeasure = (
+    super::model::Reducer,
+    super::model::MeasureSource<
+        CompactString,
+        Box<[super::model::TokenPredicate]>,
+        super::model::RelationLabel,
+    >,
+);
+
+fn canonical_measure(m: &super::model::BoundMeasure) -> (CompactString, CanonicalMeasure) {
+    use super::model::MeasureSource;
+    let mut source = m.source.clone();
+    if let MeasureSource::Links {
+        labels: RelationLabels::Listed(labels),
+        ..
+    } = &mut source
+    {
+        labels.sort_unstable();
+    }
+    if let MeasureSource::Words(test) | MeasureSource::Links { test, .. } = &mut source {
+        for branch in test.iter_mut() {
+            *branch = canonical_predicate(branch).into_boxed_slice();
+        }
+        test.sort_unstable();
+    }
+    (m.name.clone(), (m.reducer, source))
+}
+
 #[derive(Clone, Debug, PartialEq, Eq)]
 enum CanonicalDefinitionBody {
     Pattern {
@@ -420,7 +450,8 @@ enum CanonicalDefinitionBody {
         /// one meaning and must not drift.
         relations: Box<[CanonicalRelation]>,
         enhanced_relations: Box<[CanonicalEnhancedRelation]>,
-        orders: Box<[(CompactString, CompactString)]>,
+        node_constraints: Box<[(CompactString, CompactString, super::model::NodeComparison)]>,
+        measures: BTreeMap<CompactString, CanonicalMeasure>,
         paths: Vec<CanonicalSpanPath>,
         interpretation: Option<CanonicalInterpretation>,
     },
@@ -497,7 +528,7 @@ enum CanonicalRelationTarget {
     Captured(CompactString),
     Anonymous(super::model::RelationPolarity),
     Predicate(
-        super::model::RelationPolarity,
+        super::model::DependentRequirement,
         Box<[super::model::TokenPredicate]>,
     ),
     CapturedNegative(CompactString),

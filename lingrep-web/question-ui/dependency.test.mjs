@@ -30,6 +30,7 @@ const layout=(tokens,row,view)=>{const starts=view==='bunsetsu'?bunsetsuStarts(t
 test('evidence words are the span, every capture and every graph-bound word, as in ling matches --evidence',()=>{
   const row={span:{start:2,end:4},captures:[{name:'n',span:{start:2,end:3}},{name:'n',span:{start:2,end:3}},{name:'p',span:{start:3,end:4}}],graph_bindings:[
     {binding_kind:'node',name:'v',node:{node_kind:'word',token_index:10},attributes:[]},
+    {binding_kind:'count',name:'objects',value:0},
     {binding_kind:'edge',name:'e',head:{node_kind:'word',token_index:10},dependent:{node_kind:'word',token_index:2},relation:'obj'},
     {binding_kind:'node',name:'x',node:{node_kind:'empty',boundary:3,subindex:1},attributes:[]},
     {binding_kind:'node',name:'far',node:{node_kind:'word',token_index:99},attributes:[]},

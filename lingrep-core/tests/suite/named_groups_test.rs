@@ -500,8 +500,6 @@ fn interpretation_admission_identifies_unknown_roles_and_unsupported_expressions
         "interpret $a as part {}\nclassify by missing\np := (?<a> []).",
         "interpret $a as part {}\np := (?<a> []) followed_by([]).",
         "interpret $a as part {}\np := ((?<a> []) & []).",
-        "interpret $a as part {}\np := (?<a> []) (?<b> []) where $a -[obj]-> $b.",
-        "interpret $a as part {}\np := (?<a> []) (?<b> []) where $a -[enhanced obj]-> $b.",
     ] {
         let error = compile_catalog(
             PatternSource::named("roles.lx", source),

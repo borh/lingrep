@@ -211,13 +211,14 @@ pub(crate) fn analyze(bound: &BoundProgram, evaluated: &BTreeSet<DefinitionId>) 
             expr,
             relations,
             enhanced_relations,
-            orders,
+            node_constraints,
             ..
         } = &definition.body
             && relations.is_empty()
             && enhanced_relations.is_empty()
-            && orders.is_empty()
+            && node_constraints.is_empty()
             && definition.span_paths().is_empty()
+            && definition.measures.is_empty()
             && definition.interpretation.is_none()
             && !definition.metadata.contains_key("within_span")
             && !definition.metadata.contains_key("span_dependency")
@@ -234,6 +235,31 @@ pub(crate) fn analyze(bound: &BoundProgram, evaluated: &BTreeSet<DefinitionId>) 
         // A `where` clause reads both edge attributes per constraint, and a
         // lexicon scans each `by` projection — references exactly as a
         // predicate's are, just not written inside an expression.
+        for constraint in definition.node_constraints() {
+            if let super::model::NodeComparison::Attributes { keys, .. } = &constraint.comparison {
+                for key in keys {
+                    *referenced.entry(key.clone()).or_default() += 1;
+                }
+            }
+        }
+        for m in &definition.measures {
+            use super::model::MeasureSource;
+            if !matches!(m.source, MeasureSource::Words(_)) {
+                for key in ["dep.head", "dep.rel"] {
+                    *referenced
+                        .entry(AttributeKey::new(key).expect("dependency key"))
+                        .or_default() += 1;
+                }
+            }
+            if let Some(test) = m.source.test() {
+                for predicate in test {
+                    collect_predicate(predicate, &mut per_attribute);
+                    for atom in predicate {
+                        *referenced.entry(atom.attr.clone()).or_default() += 1;
+                    }
+                }
+            }
+        }
         if !definition.relations().is_empty() {
             for key in ["dep.head", "dep.rel"] {
                 let key = AttributeKey::new(key).expect("dependency keys are canonical");

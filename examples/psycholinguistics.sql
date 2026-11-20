@@ -18,6 +18,7 @@ CREATE TEMP TABLE hits AS
 SELECT d->>'pattern' AS pattern, (d->>'corpus_sentence_ordinal')::BIGINT AS sentence,
        (d->'span'->>'start')::BIGINT AS first_token, (d->'span'->>'end')::BIGINT AS past_end,
        d->>'surface' AS surface, d->'tokens'->0->'attributes'->>'lemma' AS lemma,
+       d->'whole_span_ids'->'bunsetsu' AS bunsetsu_ids,
        CASE WHEN (d->>'pattern') = 'reading_bunsetsu' THEN d->'evidence'->'spans' END AS spans
 FROM events WHERE event = 'match';
 
@@ -40,14 +41,20 @@ WITH spellings AS (
 SELECT *, frequency / sum(frequency) OVER (PARTITION BY lemma) AS spelling_share
 FROM spellings ORDER BY lemma, surface;
 
--- Select the exact bunsetsu annotation. span_ids can also include enclosing
--- annotations of other kinds. Token indices and attachment IDs are sentence-local.
+-- A sentence-local annotation ID indexes the evidence array.
 CREATE TEMP TABLE units AS
-SELECT h.sentence, s.key::BIGINT AS bunsetsu_id, h.first_token, h.past_end, h.surface,
-       (s.value->>'governor')::BIGINT AS governor_id
-FROM hits h, LATERAL json_each(h.spans) s
-WHERE h.pattern = 'reading_bunsetsu' AND (s.value->>'kind') = 'bunsetsu'
-  AND (s.value->>'start')::BIGINT = h.first_token AND (s.value->>'end')::BIGINT = h.past_end;
+SELECT sentence, id.value::BIGINT AS bunsetsu_id, first_token, past_end, surface,
+       ((spans->(id.value::BIGINT))->>'governor')::BIGINT AS governor_id
+FROM hits, LATERAL json_each(bunsetsu_ids) id
+WHERE pattern = 'reading_bunsetsu'
+UNION ALL
+-- Earlier query/v2 producers expose the IDs through the evidence array alone.
+SELECT sentence, s.key::BIGINT, first_token, past_end, surface,
+       (s.value->>'governor')::BIGINT
+FROM hits, LATERAL json_each(spans) s
+WHERE pattern = 'reading_bunsetsu' AND bunsetsu_ids IS NULL
+  AND (s.value->>'kind') = 'bunsetsu' AND (s.value->>'start')::BIGINT = first_token
+  AND (s.value->>'end')::BIGINT = past_end;
 
 -- Classify displayed Unicode code points. Prolonged sound mark ー counts
 -- with katakana. Whitespace, punctuation and other scripts break runs.
@@ -108,3 +115,9 @@ SELECT (d->>'corpus_sentence_ordinal')::BIGINT AS sentence, d->>'pattern' AS can
 FROM events WHERE event = 'match'
   AND (d->>'pattern') IN ('subject_gap_candidate', 'object_gap_candidate')
 ORDER BY sentence, (d->'span'->>'start')::BIGINT;
+
+-- The nullable numeric binding keeps unknown observations distinct from zero.
+SELECT (b.value->>'value')::BIGINT AS nominal_dependents, count(*) AS verbs
+FROM events, LATERAL json_each(d->'graph_bindings') b
+WHERE event = 'match' AND (d->>'pattern') = 'nominal_load' AND (b.value->>'name') = 'nominals'
+GROUP BY nominal_dependents ORDER BY nominal_dependents;
