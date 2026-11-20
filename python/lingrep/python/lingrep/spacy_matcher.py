@@ -18,7 +18,12 @@ class Match(NamedTuple):
 def _span(doc: Doc, indices: list[int], words: TokenRange, label: str) -> Span:
     """The Doc span from the first matched word through the last, or an empty span at its position."""
     start, end = words["start"], words["end"]
-    first = indices[start] if start < len(indices) else len(doc)
+    if start < len(indices):
+        first = indices[start]
+    elif indices and doc.has_annotation("SENT_START"):
+        first = doc[indices[-1]].sent.end
+    else:
+        first = len(doc)
     return Span(doc, first, indices[end - 1] + 1 if end > start else first, label=label)
 
 

@@ -54,7 +54,7 @@ thiserror = "2"
 zstd = "0.14.3"
 
 # Git deps (shared across multiple crates — this is the big win)
-vibrato-rkyv = { git = "https://github.com/borh/vibrato-rkyv.git", rev = "7814244379dc492e8403abb15d62a939fe40aa47", default-features = false, features = ["download"] }
+vibrato-rkyv = { git = "https://github.com/borh/vibrato-rkyv.git", rev = "e121a2438069e6b1a21020ef1015038ab8afa244", default-features = false, features = ["download"] }
 tree-sitter-lingrep = { git = "https://github.com/borh/tree-sitter-lingrep.git", rev = "b7571ae13c175e4ad1b7086c3966575a50ad5f28" }
 sudachi = { git = "https://github.com/WorksApplications/sudachi.rs.git", rev = "5de0410b6edfd428fc510cc9763440772e9619d5" }
 

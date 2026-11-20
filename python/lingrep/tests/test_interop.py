@@ -151,6 +151,18 @@ class InteropTest(unittest.TestCase):
             self.assertEqual(hit.raw["captures"][0]["hygienic_path"], "pair/cat")
         self.assertEqual(list(matcher(Doc(vocab))), [])
 
+    @unittest.skipUnless(available("spacy", "lingrep_spacy_adapter"), "requires spaCy adapter")
+    def test_spacy_empty_capture_stays_at_the_end_of_its_sentence(self):
+        from spacy import blank
+        from spacy.tokens import Doc
+        from lingrep.spacy_matcher import Matcher
+
+        doc = Doc(blank("xx").vocab, words=["猫", "  ", "犬"], spaces=[False] * 3,
+                  sent_starts=[True, False, True])
+        hits = list(Matcher("p := [] (?<opt> [text=z]?).")(doc))
+        self.assertEqual([(h.captures[0].start, h.captures[0].end) for h in hits],
+                         [(2, 2), (3, 3)])
+
     @unittest.skipUnless(available("stanza", "lingrep_stanza_adapter"), "requires Stanza adapter")
     def test_stanza_multiword_token_shares_source_coordinates(self):
         from stanza.models.common.doc import Document

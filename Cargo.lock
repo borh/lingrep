@@ -6033,8 +6033,8 @@ checksum = "0b928f33d975fc6ad9f86c8f283853ad26bdd5b10b7f1542aa2fa15e2289105a"
 
 [[package]]
 name = "vibrato-rkyv"
-version = "0.7.18"
-source = "git+https://github.com/borh/vibrato-rkyv.git?rev=7814244379dc492e8403abb15d62a939fe40aa47#7814244379dc492e8403abb15d62a939fe40aa47"
+version = "0.7.20"
+source = "git+https://github.com/borh/vibrato-rkyv.git?rev=e121a2438069e6b1a21020ef1015038ab8afa244#e121a2438069e6b1a21020ef1015038ab8afa244"
 dependencies = [
  "bumpalo",
  "crawdad-rkyv",

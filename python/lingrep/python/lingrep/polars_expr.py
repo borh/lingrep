@@ -38,6 +38,7 @@ def tokenize(text: pl.Expr, *, tokenizer: Tokenizer,
     if not keys:
         raise ValueError("attributes must be nonempty")
     offsets = {"char_start": "start", "char_end": "end"}
+    requested_offsets = offsets.keys() & keys
     morphology = [k for k in keys if k not in offsets]
     unknown = sorted(set(morphology) - set(tokenizer.schema.attributes))
     if unknown:
@@ -47,9 +48,10 @@ def tokenize(text: pl.Expr, *, tokenizer: Tokenizer,
     def records(sentences: Iterable[str]) -> Iterator[object]:
         for sentence in tokenizer.analyze_pipe(sentences, attributes=morphology):
             columns: dict[str, Sequence[object]] = {k: sentence.column(k) for k in morphology}
-            spans = sentence.char_spans
-            for key, bound in offsets.items():
-                if key in keys:
+            if requested_offsets:
+                spans = sentence.char_spans
+                for key in requested_offsets:
+                    bound = offsets[key]
                     columns[key] = [None if span is None else span[bound] for span in spans]  # type: ignore[literal-required]
             yield [dict(zip(keys, row, strict=True))
                    for row in zip(*(columns[k] for k in keys), strict=True)]

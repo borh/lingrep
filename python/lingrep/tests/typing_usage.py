@@ -7,6 +7,7 @@ def use_bindings(tok: Tokenizer, sentence: Sentence) -> None:
     assert_type(tok.tokenize("猫"), list[str])
     assert_type(tok.analyze("猫", attributes=["lemma"])[0], Token)
     assert_type(sentence[0].lemma, str | None)
+    assert_type(sentence[0].__getattr__("feat.Number"), str | list[str] | None)
     assert_type(tok.schema, Schema)
     query = Query("[upos=NOUN].")
     assert_type(query.compile(sentence.schema), CompiledQuery)

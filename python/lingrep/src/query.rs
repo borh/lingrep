@@ -9,13 +9,14 @@ use lingrep_core::fsm::{
     render_diagnostics, render_pattern_error,
 };
 use lingrep_core::token_match::{
-    AttributeKey, AttributeKind, AttributeValueRef, BoundProjection, BoundTokenSentence, CharSpan,
-    ProjectedAttributeValue, SchemaAttribute, TokenSchema, TokenSequence,
+    AttributeKey, AttributeKind, AttributeOrdinal, AttributeValueRef, BoundProjection,
+    BoundTokenSentence, CharSpan, ProjectedAttributeValue, SchemaAttribute, TokenSchema,
+    TokenSequence,
 };
 use pyo3::exceptions::{PyAttributeError, PyIndexError, PyKeyError};
 use pyo3::prelude::*;
 use serde::{Deserialize, Serialize};
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Mutex, OnceLock};
 
 use super::invalid;
 
@@ -84,6 +85,7 @@ impl Schema {
 
 #[pyclass(frozen, module = "lingrep")]
 pub struct Sentence {
+    byte_offsets: OnceLock<Vec<usize>>,
     text: String,
     words: BoundTokenSentence,
     schema: Arc<TokenSchema>,
@@ -98,6 +100,7 @@ impl Sentence {
     ) -> Self {
         let (text, sentences) = item.into_parts();
         Self {
+            byte_offsets: OnceLock::new(),
             text: text.text().to_owned(),
             words: sentences.into_vec().remove(0).into_words(),
             schema,
@@ -115,29 +118,33 @@ impl Sentence {
     /// The source text a token covers, for sentences that do not project `surface`.
     fn source_surface(&self, index: usize) -> Option<&str> {
         let span = self.words.char_span(index)?;
-        let mut boundaries = self
-            .text
-            .char_indices()
-            .map(|(offset, _)| offset)
-            .chain(std::iter::once(self.text.len()));
-        let start = boundaries.nth(span.start as usize)?;
-        let end = if span.end == span.start {
-            start
-        } else {
-            boundaries.nth((span.end - span.start - 1) as usize)?
-        };
-        self.text.get(start..end)
+        let offsets = self.byte_offsets.get_or_init(|| {
+            self.text
+                .char_indices()
+                .map(|(i, _)| i)
+                .chain([self.text.len()])
+                .collect()
+        });
+        self.text
+            .get(*offsets.get(span.start as usize)?..*offsets.get(span.end as usize)?)
+    }
+
+    fn ordinal(&self, key: &str) -> PyResult<Option<AttributeOrdinal>> {
+        match self.projection.ordinal_key(key) {
+            None if key != "surface" => Err(self.unknown(key)),
+            value => Ok(value),
+        }
     }
 
     fn cell(&self, index: usize, key: &str) -> PyResult<Option<ColumnValue<'_>>> {
-        let Some(ordinal) = self.projection.ordinal_key(key) else {
-            if key == "surface" {
-                return Ok(self.source_surface(index).map(ColumnValue::Scalar));
-            }
-            return Err(self.unknown(key));
+        Ok(self.value(index, self.ordinal(key)?))
+    }
+
+    fn value(&self, index: usize, ordinal: Option<AttributeOrdinal>) -> Option<ColumnValue<'_>> {
+        let Some(ordinal) = ordinal else {
+            return self.source_surface(index).map(ColumnValue::Scalar);
         };
-        Ok(self
-            .words
+        self.words
             .token(index)
             .and_then(|word| word.value(ordinal))
             .map(|cell| match cell {
@@ -145,7 +152,7 @@ impl Sentence {
                 AttributeValueRef::StringSet(values) => {
                     ColumnValue::Set(values.iter().map(AsRef::as_ref).collect())
                 }
-            }))
+            })
     }
 }
 
@@ -205,17 +212,11 @@ impl Sentence {
         })
     }
 
-    fn __iter__<'py>(slf: Bound<'py, Self>) -> PyResult<Bound<'py, PyAny>> {
-        let tokens = (0..slf.get().words.len())
-            .map(|index| Token {
-                sentence: slf.clone().unbind(),
-                index,
-            })
-            .collect::<Vec<_>>();
-        tokens
-            .into_pyobject(slf.py())?
-            .try_iter()
-            .map(Bound::into_any)
+    fn __iter__(slf: Py<Self>) -> TokenIter {
+        TokenIter {
+            sentence: slf,
+            index: 0,
+        }
     }
 
     fn __repr__(&self) -> String {
@@ -231,17 +232,17 @@ impl Sentence {
     }
 
     fn _is_set(&self, key: &str) -> PyResult<bool> {
-        match self.projection.ordinal_key(key) {
-            Some(ordinal) => Ok(self.projection.kind(ordinal) == Some(AttributeKind::StringSet)),
-            None if key == "surface" => Ok(false),
-            None => Err(self.unknown(key)),
-        }
+        Ok(self
+            .ordinal(key)?
+            .and_then(|ordinal| self.projection.kind(ordinal))
+            == Some(AttributeKind::StringSet))
     }
 
     fn column<'py>(&self, py: Python<'py>, key: &str) -> PyResult<Bound<'py, PyAny>> {
+        let ordinal = self.ordinal(key)?;
         let column = (0..self.words.len())
-            .map(|index| self.cell(index, key))
-            .collect::<PyResult<Vec<_>>>()?;
+            .map(|index| self.value(index, ordinal))
+            .collect::<Vec<_>>();
         Ok(pythonize::pythonize(py, &column)?)
     }
 
@@ -283,10 +284,36 @@ impl Sentence {
         )
         .ok_or_else(|| invalid("invalid adapter token alignment"))?;
         Ok(Self {
+            byte_offsets: OnceLock::new(),
             text,
             words: words.with_char_offsets(Some(Arc::new(offsets))),
             schema,
             projection: Arc::new(projection),
+        })
+    }
+}
+
+#[pyclass(module = "lingrep")]
+struct TokenIter {
+    sentence: Py<Sentence>,
+    index: usize,
+}
+
+#[pymethods]
+impl TokenIter {
+    fn __iter__(slf: PyRef<'_, Self>) -> PyRef<'_, Self> {
+        slf
+    }
+
+    fn __next__(&mut self, py: Python<'_>) -> Option<Token> {
+        if self.index == self.sentence.get().words.len() {
+            return None;
+        }
+        let index = self.index;
+        self.index += 1;
+        Some(Token {
+            sentence: self.sentence.clone_ref(py),
+            index,
         })
     }
 }

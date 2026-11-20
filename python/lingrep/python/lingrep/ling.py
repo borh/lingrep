@@ -63,6 +63,8 @@ class Ling:
         if sum(x is not None for x in (text, path, corpus)) != 1:
             raise ValueError("supply exactly one of text, path or corpus")
         args: list[str | PathLike[str]] = [self.executable, "--json", "matches", *_source_args(query)]
+        if isinstance(source_metadata, str):
+            source_metadata = (source_metadata,)
         for selector in source_metadata:
             args.extend(["--source-metadata", selector])
         if analyzer_config is not None:

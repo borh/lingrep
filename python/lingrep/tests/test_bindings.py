@@ -25,10 +25,12 @@ class BindingsTest(unittest.TestCase):
         cat = sentence[1]
         self.assertEqual((cat.surface, cat.upos, cat["unidic.cform"], cat.index), ("猫", "NOUN", "*", 1))
         self.assertEqual(cat.char_span, span(2, 3))
-        self.assertEqual([t.surface for t in sentence], sentence.column("surface"))
+        self.assertEqual([t.surface for t in sentence.__iter__()], sentence.column("surface"))
         self.assertEqual(sentence[-1].surface, "。")
         self.assertEqual(sentence.schema, tok.schema)
         self.assertEqual(sentence.attributes, tok.schema.attributes)
+        with self.assertRaisesRegex(KeyError, "no attribute lemma"):
+            tok.analyze("", attributes=[]).column("lemma")
         with self.assertRaises(IndexError):
             sentence[len(sentence)]
         with self.assertRaises(AttributeError):
@@ -68,9 +70,10 @@ class BindingsTest(unittest.TestCase):
         records = [json.loads(line) for line in reference.splitlines()]
         expected = [row["data"] for row in records if row["type"] == "match"]
         self.assertTrue(expected)
-        with Ling().search(Query(pattern), path=path, source_metadata=[selector]) as run:
-            self.assertEqual(list(run), expected)
-            self.assertEqual(run.completion["coverage"], "full")
+        for selectors in ([selector], selector):
+            with Ling().search(Query(pattern), path=path, source_metadata=selectors) as run:
+                self.assertEqual(list(run), expected)
+                self.assertEqual(run.completion["coverage"], "full")
 
     def test_failed_search(self):
         with self.assertRaisesRegex(subprocess.CalledProcessError, r"Syntax: missing `\]` \(inline.lx:1:"):
@@ -92,6 +95,10 @@ class BindingsTest(unittest.TestCase):
                 call()
         with self.assertRaises(TypeError):
             Query(Path("catalog.lx"))
+
+    def test_vibrato_handles_a_long_sentence_within_the_record_limit(self):
+        text = "猫" * 327679
+        self.assertEqual(Tokenizer().tokenize(text), list(text))
 
     def test_a_sentence_over_the_record_limit_is_rejected(self):
         with self.assertRaisesRegex(ValueError, "1048576-byte limit"):

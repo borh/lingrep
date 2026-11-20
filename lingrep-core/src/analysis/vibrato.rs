@@ -116,7 +116,7 @@ impl VibratoPlan {
             digest(&[b"lingrep.vibrato-projection/v2", TEXT_KEY_REVISION]),
             *blake3::hash(b"lingrep.vibrato-alignment/v2").as_bytes(),
             *blake3::hash(b"lingrep.vibrato-components/tokenizer").as_bytes(),
-            *blake3::hash(b"lingrep.vibrato-output/v1").as_bytes(),
+            *blake3::hash(b"lingrep.vibrato-output/v2").as_bytes(),
             schema.digest(),
         )
         .expect("the built-in Vibrato descriptor is valid")
