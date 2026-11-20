@@ -64,6 +64,9 @@ run_common_checks() {
     scripts/test/test_ci_modes.sh
     scripts/test/test_fuzz_smoke.sh
 
+    echo "Checking the Python bindings lockfile"
+    uv lock --project python/lingrep --check
+
     echo "Checking the locked spaCy adapter contract"
     scripts/check-spacy-adapter.sh static
 
@@ -141,10 +144,8 @@ run_full_tests_and_extras() {
     scripts/cargo-test-selected.py -p lingrep-core --test suite -- sudachi_contract:: --ignored
 
     echo "Checking the installed Python bindings with Vibrato and ling"
-    cargo build -p lingrep --bin ling
-    local bindings=(uv run --isolated --no-project --with ./python/lingrep --with pyarrow
-        --with polars --with mypy --with typing-extensions python -m)
-    PATH="${CARGO_TARGET_DIR:-target}/debug:$PATH" \
+    local bindings=(uv run --project python/lingrep --isolated --locked --all-extras --no-editable python -m)
+    PATH="$ling_target/debug:$PATH" \
         "${bindings[@]}" unittest discover -s python/lingrep/tests
     "${bindings[@]}" mypy --config-file python/lingrep/pyproject.toml \
         python/lingrep/python/lingrep python/lingrep/tests/typing_usage.py \

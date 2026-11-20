@@ -56,6 +56,29 @@ nix build .#lingrep
 `nix run .#lingrep-web -- --help` exercises the separately packaged browser
 application.
 
+## Python bindings with uv
+
+From the repository root, enter `nix develop`. Build the CLI for the tests
+that exercise `Ling.search`, then switch to the bindings project:
+
+```bash
+cargo build -p lingrep --bin ling
+export PATH="$PWD/target/debug:$PATH"
+cd python/lingrep
+uv sync --locked --all-extras
+uv run --locked --all-extras lingrep tokenize '猫が眠る。'
+uv run --locked --all-extras python -m unittest discover -s tests
+uv run --locked --all-extras mypy --strict python/lingrep tests/typing_usage.py tests/typing_polars.py
+```
+
+`uv sync` installs the bindings in editable mode in `python/lingrep/.venv`.
+Python edits take effect on the next invocation. Changes to the native bindings
+or their workspace Rust dependencies trigger a rebuild on the next `uv run`.
+`--all-extras` includes Arrow and Polars. The spaCy and Stanza adapter projects
+have separate lockfiles and environments for their model tests. After changing
+bindings dependencies or the workspace version, run `uv lock` in
+`python/lingrep` and commit the updated lockfile.
+
 ## Dictionaries
 
 `nix develop` exports `LINGREP_DICTIONARY_PATH` for the default CWJ dictionary.

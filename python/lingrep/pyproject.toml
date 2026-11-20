@@ -25,6 +25,30 @@ module-name = "lingrep._native"
 arrow = ["pyarrow>=14"]
 polars = ["polars>=1.32"]
 
+[dependency-groups]
+dev = ["mypy", "typing-extensions"]
+
+[tool.uv]
+exclude-newer = "P3D"
+cache-keys = [
+    { file = "pyproject.toml" },
+    { file = "README.md" },
+    { file = "LICENSE" },
+    { file = "python/**/*.py" },
+    { file = "python/**/*.pyi" },
+    { file = "python/lingrep/py.typed" },
+    { file = "Cargo.toml" },
+    { file = "src/**/*.rs" },
+    { file = "../../Cargo.toml" },
+    { file = "../../Cargo.lock" },
+    { file = "../../rust-toolchain.toml" },
+    { file = "../../lingrep-core/Cargo.toml" },
+    { file = "../../lingrep-core/src/**/*" },
+    { file = "../../lingrep-cli-common/Cargo.toml" },
+    { file = "../../lingrep-cli-common/src/**/*.rs" },
+    { file = "../../nix/dictionary-licenses/**/*" },
+]
+
 [tool.mypy]
 strict = true
 
