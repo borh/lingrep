@@ -420,3 +420,50 @@ fn corpus_build_reports_descriptor_exhaustion() {
     );
     assert!(!artifact.exists());
 }
+
+#[test]
+fn window_summary_fits_its_merge_under_a_low_file_limit() {
+    let dictionary = MiniDictionary::new();
+    let directory = tempfile::tempdir().unwrap();
+    let input = write_corpus_input(directory.path(), 1);
+    let (build, artifact) = build_corpus(
+        directory.path(),
+        &dictionary,
+        &input,
+        "input.lingcorpus",
+        &[],
+    );
+    assert_success(&build.output);
+    let catalog = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../patterns/ngrams.lx");
+    let args = [
+        "--json".as_ref(),
+        "summarize".as_ref(),
+        "--workers".as_ref(),
+        "8".as_ref(),
+        "--corpus".as_ref(),
+        artifact.as_os_str(),
+        "--patterns".as_ref(),
+        catalog.as_os_str(),
+    ];
+    let knobs = [(ScaleKnob::WindowRunRecords, 2)];
+    let expected = ling(directory.path(), &args, &knobs, 256);
+    let limited = ling(
+        directory.path(),
+        &args,
+        &knobs,
+        if cfg!(target_os = "linux") { 14 } else { 24 },
+    );
+    assert_success(&expected.output);
+    assert_success(&limited.output);
+    assert_eq!(
+        summary_records(&limited.output),
+        summary_records(&expected.output)
+    );
+    let stderr = String::from_utf8_lossy(&limited.output.stderr);
+    assert!(
+        stderr.contains("open_file_limit")
+            && stderr.contains("merges")
+            && !stderr.contains("shard"),
+        "{stderr}"
+    );
+}

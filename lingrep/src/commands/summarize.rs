@@ -44,7 +44,7 @@ use crate::summary::{
 };
 use crate::terminal::PresentationProgress;
 use crate::terminal::TerminalArbiter;
-use crate::window_summary::WindowTally;
+use crate::window_summary::{WindowPlan, WindowTally};
 
 fn summary_pattern<'a>(
     pattern_names: &[&'a str],
@@ -546,9 +546,24 @@ pub fn run(
         let tallies = usize::from(sections.is_some())
             + usize::from(metadata_values.is_some())
             + usize::from(args.grouping_coverage);
+        let window_plan = if args.by_span.is_some()
+            || args.grouping_coverage
+            || args.by_document
+            || args.write_table.is_some()
+            || args.trace_policy.is_some()
+            || sections.is_some()
+            || metadata_values.is_some()
+        {
+            None
+        } else if let Some(windows) = compiled.matcher.token_windows() {
+            WindowPlan::new(&windows, &pattern_ordinals)
+        } else {
+            None
+        };
         let layout = fit_spill_layout(
             SpillLayout::new(config.workers.clamp(1, 8)),
             tallies,
+            window_plan.is_some(),
             args.write_table.is_some(),
             config,
             &run_id,
@@ -584,25 +599,8 @@ pub fn run(
             })
             .transpose()
             .map_err(CliError::Aggregation)?;
-        let windows = if args.by_span.is_some()
-            || args.grouping_coverage
-            || args.by_document
-            || args.write_table.is_some()
-            || args.trace_policy.is_some()
-            || sections.is_some()
-            || metadata_values.is_some()
-        {
-            None
-        } else if let Some(windows) = compiled.matcher.token_windows() {
-            WindowTally::new(
-                &windows,
-                &pattern_ordinals,
-                aggregation.temp_budget(),
-                layout.merge_fan_in,
-            )
-        } else {
-            None
-        };
+        let windows =
+            window_plan.map(|plan| plan.tally(aggregation.temp_budget(), layout.merge_fan_in));
         let mut sink = SummarySink {
             span_kind: args.by_span.as_deref(),
             span_kind_observed: false,
@@ -1090,6 +1088,7 @@ const RESERVED_FILES: usize = 4;
 fn fit_spill_layout(
     requested: SpillLayout,
     tallies: usize,
+    windows: bool,
     writes_table: bool,
     config: &ExecutionCliConfig,
     run_id: &str,
@@ -1104,13 +1103,30 @@ fn fit_spill_layout(
             0
         };
     let available = files.available().saturating_sub(other_files);
-    let Some(layout) = requested.fit(tallies, available) else {
+    let minimum = SpillLayout::MINIMUM;
+    let (layout, minimum_files) = if windows {
+        // A window merge opens one output alongside its input runs.
+        let fan_in = requested.merge_fan_in.min(available.saturating_sub(1));
+        (
+            (fan_in >= minimum.merge_fan_in).then_some(SpillLayout {
+                merge_fan_in: fan_in,
+                ..requested
+            }),
+            minimum.merge_fan_in + 1,
+        )
+    } else {
+        (
+            requested.fit(tallies, available),
+            minimum.files_open_at_once(tallies),
+        )
+    };
+    let Some(layout) = layout else {
         return Err(CliError::CommandFailure {
             code: FailureCode::Io,
             message: format!(
                 "summarize needs at least {} more open files, but the open-file limit is {} \
                  and {} are open; raise the open-file limit",
-                SpillLayout::MINIMUM.files_open_at_once(tallies) + other_files,
+                minimum_files + other_files,
                 files.limit,
                 files.open,
             ),

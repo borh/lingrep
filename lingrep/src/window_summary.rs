@@ -196,15 +196,15 @@ pub struct WindowTally {
     merge_fan_in: usize,
 }
 
-impl WindowTally {
+pub struct WindowPlan {
+    patterns: Vec<Pattern>,
+    attributes: Vec<AttributeKey>,
+}
+
+impl WindowPlan {
     /// `None` unless every definition keys each of its positions, in order,
     /// by one attribute list shared by the whole catalog.
-    pub fn new(
-        windows: &[TokenWindow],
-        pattern_ordinals: &BTreeMap<String, u64>,
-        budget: Arc<TempBudget>,
-        merge_fan_in: usize,
-    ) -> Option<Self> {
+    pub fn new(windows: &[TokenWindow], pattern_ordinals: &BTreeMap<String, u64>) -> Option<Self> {
         let first = windows.first()?;
         let attributes = first
             .key
@@ -234,12 +234,23 @@ impl WindowTally {
                 names: window.key.iter().map(|field| field.name.clone()).collect(),
             });
         }
+        Some(Self {
+            patterns,
+            attributes,
+        })
+    }
+
+    pub fn tally(self, budget: Arc<TempBudget>, merge_fan_in: usize) -> WindowTally {
+        let Self {
+            patterns,
+            attributes,
+        } = self;
         let width = patterns
             .iter()
             .map(|pattern| pattern.width)
             .max()
             .unwrap_or(0);
-        Some(Self {
+        WindowTally {
             patterns,
             attributes,
             width,
@@ -249,9 +260,11 @@ impl WindowTally {
             windows: Runs::new(&budget, merge_fan_in),
             budget,
             merge_fan_in,
-        })
+        }
     }
+}
 
+impl WindowTally {
     /// Adds one sentence and returns its window count over every definition.
     pub fn push<S: TokenSequence + ?Sized>(
         &mut self,
