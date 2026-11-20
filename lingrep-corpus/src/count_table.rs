@@ -14,7 +14,7 @@ use std::sync::Arc;
 
 use lingrep_core::execution::CancellationFlag;
 use lingrep_core::spill::{SortedDrain, SortedRunCounts, SpillPolicy, TempBudget};
-use memmap2::{Mmap, MmapMut};
+use memmap2::{Mmap, MmapMut, MmapOptions};
 use rayon::prelude::*;
 use serde::{Deserialize, Serialize};
 
@@ -36,6 +36,7 @@ pub const COUNT_TABLE_FORMAT: &str = "lingrep.count-table";
 pub const COUNT_TABLE_VERSION: u32 = 4;
 
 const DOCUMENT_MAJOR_PAIRS: u64 = 2_000_000;
+const DOCUMENT_MAJOR_WINDOW_BYTES: usize = 256 * 1024 * 1024;
 
 const HEADER: &str = "header.json";
 const VALUE_OFFSETS: &str = "value_offsets.u64";
@@ -723,8 +724,16 @@ impl CountTableWriter {
     /// [`CountTableError::Cancelled`] within a bounded amount of work, and
     /// the staging directory is removed.
     pub fn finish(
+        self,
+        cancellation: &CancellationFlag,
+    ) -> Result<StagedCountTable, CountTableError> {
+        self.finish_with_window_pairs(cancellation, DOCUMENT_MAJOR_WINDOW_BYTES / 8)
+    }
+
+    fn finish_with_window_pairs(
         mut self,
         cancellation: &CancellationFlag,
+        window_pairs: usize,
     ) -> Result<StagedCountTable, CountTableError> {
         self.close_entry()?;
         self.skip_patterns(self.patterns.len());
@@ -749,7 +758,7 @@ impl CountTableWriter {
         check_cancellation(cancellation)?;
         self.write_ranking(cancellation)?;
         pause_for_test("transpose", cancellation);
-        self.write_document_major(cancellation)?;
+        self.write_document_major(cancellation, window_pairs)?;
         check_cancellation(cancellation)?;
         let header = Header {
             format: COUNT_TABLE_FORMAT.to_owned(),
@@ -830,6 +839,7 @@ impl CountTableWriter {
     fn write_document_major(
         &mut self,
         cancellation: &CancellationFlag,
+        window_pairs: usize,
     ) -> Result<(), CountTableError> {
         let mut offsets = Vec::with_capacity(self.document_pairs.len() + 1);
         let mut running = 0u64;
@@ -857,34 +867,52 @@ impl CountTableWriter {
             let entry_offsets: &[u64] = cast(entry_offsets_map.as_ref(), ENTRY_PAIR_OFFSETS)?;
             let documents: &[u32] = cast(documents_map.as_ref(), PAIR_DOCUMENTS)?;
             let counts_in: &[u32] = cast(counts_in_map.as_ref(), PAIR_COUNTS)?;
-            // SAFETY: both files were created by this writer in its private
-            // staging directory and nothing else maps or truncates them.
-            let (mut entries_map, mut counts_map) = unsafe {
-                (
-                    MmapMut::map_mut(&entries_file)?,
-                    MmapMut::map_mut(&counts_file)?,
-                )
-            };
-            let out_entries: &mut [u32] = bytemuck::try_cast_slice_mut(&mut entries_map[..])
-                .map_err(|error| writer_error(format!("document entries: {error}")))?;
-            let out_counts: &mut [u32] = bytemuck::try_cast_slice_mut(&mut counts_map[..])
-                .map_err(|error| writer_error(format!("document counts: {error}")))?;
             let mut cursor = offsets[..self.document_pairs.len()].to_vec();
-            for (entry, range) in entry_offsets.windows(2).enumerate() {
-                if entry % CANCELLATION_INTERVAL == 0 {
-                    check_cancellation(cancellation)?;
+            for first_pair in (0..self.pairs).step_by(window_pairs) {
+                check_cancellation(cancellation)?;
+                let pairs = (self.pairs - first_pair).min(window_pairs as u64) as usize;
+                let last_pair = first_pair + pairs as u64;
+                // SAFETY: both files were created by this writer in its private
+                // staging directory and nothing else maps or truncates them.
+                let (mut entries_map, mut counts_map) = unsafe {
+                    (
+                        MmapOptions::new()
+                            .offset(first_pair * 4)
+                            .len(pairs * 4)
+                            .map_mut(&entries_file)?,
+                        MmapOptions::new()
+                            .offset(first_pair * 4)
+                            .len(pairs * 4)
+                            .map_mut(&counts_file)?,
+                    )
+                };
+                let out_entries: &mut [u32] = bytemuck::try_cast_slice_mut(&mut entries_map[..])
+                    .map_err(|error| writer_error(format!("document entries: {error}")))?;
+                let out_counts: &mut [u32] = bytemuck::try_cast_slice_mut(&mut counts_map[..])
+                    .map_err(|error| writer_error(format!("document counts: {error}")))?;
+                cursor.copy_from_slice(&offsets[..self.document_pairs.len()]);
+                for (entry, range) in entry_offsets.windows(2).enumerate() {
+                    if entry % CANCELLATION_INTERVAL == 0 {
+                        check_cancellation(cancellation)?;
+                    }
+                    for pair in range[0] as usize..range[1] as usize {
+                        let document = documents[pair] as usize;
+                        let at = cursor[document];
+                        cursor[document] += 1;
+                        if (first_pair..last_pair).contains(&at) {
+                            let at = (at - first_pair) as usize;
+                            out_entries[at] = entry as u32;
+                            out_counts[at] = counts_in[pair];
+                        }
+                    }
                 }
-                for pair in range[0] as usize..range[1] as usize {
-                    let document = documents[pair] as usize;
-                    let at = cursor[document] as usize;
-                    cursor[document] += 1;
-                    out_entries[at] = entry as u32;
-                    out_counts[at] = counts_in[pair];
-                }
+                entries_map.flush()?;
+                counts_map.flush()?;
             }
+            let (entries_map, counts_map) = (map_file(&entries_file)?, map_file(&counts_file)?);
+            let out_entries: &[u32] = cast(entries_map.as_ref(), DOCUMENT_ENTRIES)?;
+            let out_counts: &[u32] = cast(counts_map.as_ref(), DOCUMENT_COUNTS)?;
             self.write_document_patterns(&offsets, out_entries, out_counts, cancellation)?;
-            entries_map.flush()?;
-            counts_map.flush()?;
         } else {
             self.write_document_patterns(&offsets, &[], &[], cancellation)?;
         }
@@ -2510,4 +2538,99 @@ fn ranked(mut rows: Vec<TopRow>, limit: usize) -> Vec<TopRow> {
     }
     rows.sort_unstable_by(order);
     rows
+}
+
+#[cfg(test)]
+mod transpose_tests {
+    use super::*;
+
+    #[test]
+    fn document_major_counts_preserve_a_document_larger_than_one_window() {
+        let directory = tempfile::tempdir().expect("directory");
+        let path = directory.path().join("table");
+        let key = CountTableKey {
+            analysis_identity: "analysis".into(),
+            catalog_fingerprint: "catalog".into(),
+            matcher_revision: "matcher".into(),
+        };
+        let documents = [101, 202, 303, 404].map(|document_id| DocumentTotals {
+            document_id,
+            sentences: 100,
+            tokens: 100,
+        });
+        let values = ["a", "b", "c", "d", "e", "f", "g", "h", "i", "j"];
+        let mut writer = CountTableWriter::create(
+            &path,
+            key.clone(),
+            vec!["first".into(), "second".into()],
+            vec![GroupSchema {
+                kind: GroupKind::Surface,
+                names: Vec::new(),
+            }],
+            &values,
+            &documents,
+        )
+        .expect("writer");
+        for entry in 0..10u32 {
+            writer
+                .begin_entry(usize::from(entry >= 6), 0, &[entry])
+                .expect("entry");
+            writer
+                .add_sentence(0, u64::from(entry), u64::from(entry + 1))
+                .expect("first document");
+            if entry.is_multiple_of(2) {
+                writer
+                    .add_sentence(1, u64::from(entry + 100), u64::from(entry + 2))
+                    .expect("second document");
+            }
+            if entry == 1 || entry == 9 {
+                writer
+                    .add_sentence(2, u64::from(entry + 1000), u64::from(entry + 3))
+                    .expect("third document");
+            }
+        }
+        writer
+            .finish_with_window_pairs(&CancellationFlag::new(), 8)
+            .expect("finish")
+            .publish()
+            .expect("publish");
+        let table = CountTable::open(&path, &key).expect("open");
+        assert_eq!(table.document_ids(), &[101, 202, 303, 404]);
+        for (component, values) in [
+            (
+                DOCUMENT_ENTRIES,
+                vec![0u32, 1, 2, 3, 4, 5, 6, 7, 8, 9, 0, 2, 4, 6, 8, 1, 9],
+            ),
+            (
+                DOCUMENT_COUNTS,
+                vec![1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 2, 4, 6, 8, 10, 4, 12],
+            ),
+            (DOCUMENT_PATTERNS, vec![0, 1, 0, 1, 0, 1]),
+        ] {
+            let expected = values
+                .into_iter()
+                .flat_map(u32::to_le_bytes)
+                .collect::<Vec<_>>();
+            assert_eq!(
+                fs::read(path.join(component)).expect("component"),
+                expected,
+                "{component}"
+            );
+        }
+        for (component, values) in [
+            (DOCUMENT_PAIR_OFFSETS, vec![0u64, 10, 15, 17, 17]),
+            (DOCUMENT_PATTERN_COUNTS, vec![21, 34, 12, 18, 4, 12]),
+            (DOCUMENT_PATTERN_OFFSETS, vec![0, 2, 4, 6, 6]),
+        ] {
+            let expected = values
+                .into_iter()
+                .flat_map(u64::to_le_bytes)
+                .collect::<Vec<_>>();
+            assert_eq!(
+                fs::read(path.join(component)).expect("component"),
+                expected,
+                "{component}"
+            );
+        }
+    }
 }

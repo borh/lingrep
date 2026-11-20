@@ -43,6 +43,10 @@ lingrep-core = { workspace = true, features = ["testing"] }
 name = "prepared_tokens"
 harness = false
 
+[[bench]]
+name = "count_table_transpose"
+harness = false
+
 [lints]
 workspace = true
 
