@@ -12,6 +12,11 @@ def span(start, end):
 
 
 class BindingsTest(unittest.TestCase):
+    def test_composed_letter_and_remaining_mark_keep_their_source_spans(self):
+        sentence = Tokenizer().analyze("U\u0304\u0304")
+        self.assertEqual(sentence.column("surface"), ["U\u0304", "\u0304"])
+        self.assertEqual(sentence.char_spans, [span(0, 2), span(2, 3)])
+
     def test_surfaces_arrive_in_input_order(self):
         tok = Tokenizer(workers=3)
         texts = ["猫が眠る。", "", "犬。"] * 100

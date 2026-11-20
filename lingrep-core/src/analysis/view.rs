@@ -19,7 +19,7 @@ use unicode_normalization::{
 };
 
 /// Changes whenever [`ViewFold::fold`] produces different output for any input.
-const FOLD_REVISION: &[u8] = b"lingrep.analysis-view-fold/2";
+const FOLD_REVISION: &[u8] = b"lingrep.analysis-view-fold/3";
 
 /// A half-open range of code points in a source text.
 #[derive(Clone, Copy, Debug, Default, Eq, Hash, Ord, PartialEq, PartialOrd)]
@@ -767,10 +767,9 @@ fn fold_cells(source: &str, keep: Keep<'_>) -> Cells {
     normalize(&cells, keep)
 }
 
-/// Applies NFC chunk by chunk. A chunk that NFC leaves unchanged keeps its
-/// cells; a changed chunk becomes one cell. A kept singleton is a chunk of its
-/// own: no composition starts from or reaches into a singleton, and canonical
-/// reordering stops at every starter.
+/// Applies NFC chunk by chunk, retaining the source boundaries of unchanged
+/// cells after a composed prefix. A kept singleton forms its own chunk because
+/// canonical reordering stops at a starter.
 fn normalize(input: &Cells, keep: Keep<'_>) -> Cells {
     let mut output = Cells {
         chars: Vec::with_capacity(input.chars.len()),
@@ -813,7 +812,31 @@ fn normalize(input: &Cells, keep: Keep<'_>) -> Cells {
                     output.push(input.chars_of(cell), input.source_ends[cell]);
                 }
             } else {
-                output.push(&normalized, input.source_ends[end - 1]);
+                let mut prefix_end = end;
+                let mut prefix_len = normalized.len();
+                while prefix_end > start + 1 {
+                    let tail = input.chars_of(prefix_end - 1);
+                    if tail.len() >= prefix_len || !normalized[..prefix_len].ends_with(tail) {
+                        break;
+                    }
+                    prefix_end -= 1;
+                    prefix_len -= tail.len();
+                }
+                let source_prefix_len = chunk.len() - (normalized.len() - prefix_len);
+                if prefix_end < end
+                    && chunk[..source_prefix_len]
+                        .iter()
+                        .copied()
+                        .nfc()
+                        .eq(normalized[..prefix_len].iter().copied())
+                {
+                    output.push(&normalized[..prefix_len], input.source_ends[prefix_end - 1]);
+                    for cell in prefix_end..end {
+                        output.push(input.chars_of(cell), input.source_ends[cell]);
+                    }
+                } else {
+                    output.push(&normalized, input.source_ends[end - 1]);
+                }
             }
         }
         start = end;
@@ -899,6 +922,7 @@ mod tests {
         voiced_mark_without_composite = { "ｱﾞ", "ア\u{309B}", &[(0, 1), (1, 2)] },
         voiced_mark_after_full_width = { "カﾞ", "カ\u{309B}", &[(0, 1), (1, 2)] },
         combining_voiced_mark = { "か\u{3099}", "が", &[(0, 2)] },
+        composition_with_trailing_mark = { "U\u{0304}\u{0304}", "Ū\u{0304}", &[(0, 2), (2, 3)] },
         fullwidth_tilde = { "長～い", "長〜い", &[(0, 1), (1, 2), (2, 3)] },
         greek_oxia = { "\u{1F71}", "\u{03AC}", &[(0, 1)] },
         leading_selector = { "\u{FE00}葛", "葛", &[(0, 2)] },

@@ -105,7 +105,7 @@ fn sudachi_semantic_identity_is_pinned() {
         .collect();
     assert_eq!(
         hex,
-        "d5f420fc2e28204ca43cacb3e9539585f2296c5bf61a125573a93eb542a56296"
+        "08af798c5825668f752769e0ee3df058404ab0117cdd4b09a1cea2ba95f9a002"
     );
 }
 

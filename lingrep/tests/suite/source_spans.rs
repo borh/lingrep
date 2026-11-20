@@ -14,13 +14,14 @@ use crate::support::{assert_success, lingrep, lingrep_without_dictionary, parse_
 
 /// One sentence per line: an ideographic variation sequence, half-width
 /// katakana, decomposed が, 臭氣 spelled with U+FA5C as UniDic lists it, and
-/// U+FF5E between kana.
-const LINES: [&str; 5] = [
+/// U+FF5E between kana, and a letter followed by two combining macrons.
+const LINES: [&str; 6] = [
     "葛\u{E0100}城市に住む。",
     "ｶﾞﾗｽの靴。",
     "か\u{3099}まんする。",
     "\u{FA5C}氣がする。",
     "長～い道。",
+    "U\u{0304}\u{0304}",
 ];
 
 /// A token's sentence, its code-point span in the admitted sentence, and its
@@ -29,7 +30,7 @@ type Token = (u64, (u64, u64), &'static str);
 
 /// Every token under the default: spans address the source, so every variant
 /// spelling stays inside one token whose `surface` is the source slice.
-const SOURCE_TOKENS: [Token; 19] = [
+const SOURCE_TOKENS: [Token; 21] = [
     (0, (0, 3), "葛城"),
     (0, (3, 4), "市"),
     (0, (4, 5), "に"),
@@ -49,11 +50,13 @@ const SOURCE_TOKENS: [Token; 19] = [
     (4, (0, 3), "長〜い"),
     (4, (3, 4), "道"),
     (4, (4, 5), "。"),
+    (5, (0, 2), "Ū"),
+    (5, (2, 3), "\u{0304}"),
 ];
 
 /// Every token under `--normalization nfc`: が is one code point, and U+FA5C
 /// becomes U+81ED before analysis, which UniDic does not list with 氣.
-const NFC_TOKENS: [Token; 20] = [
+const NFC_TOKENS: [Token; 22] = [
     (0, (0, 3), "葛城"),
     (0, (3, 4), "市"),
     (0, (4, 5), "に"),
@@ -74,6 +77,8 @@ const NFC_TOKENS: [Token; 20] = [
     (4, (0, 3), "長〜い"),
     (4, (3, 4), "道"),
     (4, (4, 5), "。"),
+    (5, (0, 1), "Ū"),
+    (5, (1, 2), "\u{0304}"),
 ];
 
 /// The complete record `t := [].` publishes for each token, with `surface`
@@ -164,6 +169,8 @@ fn char_span_addresses_the_source_by_default_and_the_nfc_text_when_asked() {
     let mut nfc = source.clone();
     nfc[2] = "がまんする。".to_owned();
     nfc[3] = "\u{81ED}氣がする。".to_owned();
+
+    nfc[5] = "Ū\u{0304}".to_owned();
 
     for (normalization, sentences, tokens) in [
         (&[][..], &source, &SOURCE_TOKENS[..]),
