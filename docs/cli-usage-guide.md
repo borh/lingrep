@@ -350,6 +350,10 @@ over a different corpus, analysis, or `--where` scope than the other. A direct
 run and a prepared run of the same files have different analysis identities, so
 compare two runs of the same kind.
 
+To compare one query across two annotations of the same sentences, such as a UD
+treebank and its SUD conversion, see
+[paired-treebank-comparison.md](paired-treebank-comparison.md).
+
 ### Declared result policy in published records
 
 A catalog's metadata and its `policy … end` block declare what it publishes,

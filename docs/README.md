@@ -16,6 +16,7 @@ authoring reference.
 | [TSV contracts](lingrep-tsv-contracts.md) | Generated current TSV field and ordering contracts |
 | [N-gram analysis](ngram-analysis.md) | One-to-five-token windows expressed with lingrep patterns |
 | [Gravity analysis](gravity-analysis.md) | External corpus-global analysis over query JSONL |
+| [Paired treebank comparison](paired-treebank-comparison.md) | One query rewritten for UD and SUD, compared occurrence by occurrence |
 | [Progress reporting](progress-reporting-guide.md) | Human and machine progress behavior |
 
 Release notes for published versions live in [release-notes/](release-notes/).
