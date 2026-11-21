@@ -20,6 +20,8 @@ const SUD_VIA: &str = "(?<w> [text=を & upos=ADP]) \
     where $w -[comp]-> (?<p> [upos=ADP]), $p -[comp]-> (?<n> [upos in {NOUN, PRON}]), \
     (?<v> [upos=VERB]) -[comp:obj]-> $w.";
 
+const SENT_ID: [&str; 2] = ["--source-metadata", "@sentence.sent_id"];
+
 type Row<'a> = (&'a str, &'a str, usize, &'a str);
 
 fn sentence(id: &str, rows: &[Row<'_>]) -> String {
@@ -130,8 +132,20 @@ impl Fixture {
     }
 
     fn matches(&self, name: &str, pattern: &str, conllu: &str, limit: &str) -> PathBuf {
+        self.run(name, pattern, conllu, limit, &SENT_ID)
+    }
+
+    fn run(
+        &self,
+        name: &str,
+        pattern: &str,
+        conllu: &str,
+        limit: &str,
+        metadata: &[&str],
+    ) -> PathBuf {
         let output = lingrep()
             .args(["--json", "matches", "--evidence", "--limit", limit])
+            .args(metadata)
             .args(["--pattern", pattern])
             .arg(self.path(conllu))
             .output()
@@ -255,6 +269,11 @@ fn paired_comparison_rejects_unaligned_files_and_unusable_runs() {
     rejected(
         &fixture.compare("ud.conllu", "sud.conllu", &ud, &[&limited]),
         "B limited.jsonl: the run stopped early",
+    );
+    let unidentified = fixture.run("unidentified.jsonl", SUD_DIRECT, "sud.conllu", "all", &[]);
+    rejected(
+        &fixture.compare("ud.conllu", "sud.conllu", &ud, &[&unidentified]),
+        "B unidentified.jsonl: record 0 has no sent_id",
     );
     rejected(
         &fixture.compare("sud.conllu", "sud.conllu", &ud, &[&direct]),

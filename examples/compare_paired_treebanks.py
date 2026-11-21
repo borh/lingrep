@@ -3,7 +3,8 @@
 
 A and B are two CoNLL-U files that annotate the same words differently, for
 example a UD treebank and its SUD conversion. Each side is queried with its own
-pattern by `ling --json matches --evidence --limit all`, one file per run; B may
+pattern by `ling --json matches --evidence --limit all --source-metadata
+@sentence.sent_id`, one file per run; B may
 be several runs, whose records are pooled. An occurrence is a `sent_id` and the
 word ID of every compared role, so the two patterns must name those roles alike.
 The output is one TSV row per occurrence, marked `shared`, `a_only` or `b_only`,
@@ -80,7 +81,7 @@ def require_aligned(a: dict[str, Any], b: dict[str, Any]) -> None:
 
 
 def read_side(paths: list[str], conllu: dict[str, Any], label: str) -> dict[str, Any]:
-    """The side's file, its runs' shared completion event, and every record with its stream's path."""
+    """The side's file, its runs' shared completion event, and every record with its stream and sent_id."""
     streams = []
     for path in paths:
         with open(path, encoding="utf-8") as source:
@@ -97,13 +98,20 @@ def read_side(paths: list[str], conllu: dict[str, Any], label: str) -> dict[str,
                 f"{conllu['path']} has {len(conllu['sentences'])}"
             )
         for record in select(stream, None, f"{label} {path}"):
-            sentence = conllu["sentences"][record["corpus_sentence_ordinal"]]
+            sent_id = record.get("source_metadata", {}).get("sentence", {}).get("sent_id")
+            if sent_id is None:
+                raise InputError(
+                    f"{label} {path}: record {record['sequence']} has no sent_id; "
+                    "rerun with --source-metadata @sentence.sent_id"
+                )
             if (
                 record["source_name"] != os.path.basename(conllu["path"])
-                or sentence["text"] not in (None, record["evidence"]["sentence"])
+                or sent_id not in conllu["by_id"]
+                or conllu["sentences"][conllu["by_id"][sent_id]]["text"]
+                not in (None, record["evidence"]["sentence"])
             ):
                 raise InputError(f"{label} {path}: record {record['sequence']} is not from {conllu['path']}")
-            records.append((path, record))
+            records.append((path, sent_id, record))
     return {"label": label, "conllu": conllu, "paths": [name for name, _ in streams], "records": records,
             "complete": streams[0][1]["complete"]}
 
@@ -154,8 +162,7 @@ def main(argv: list[str] | None = None) -> int:
     per_stream: Counter[str] = Counter()
     try:
         for index, side in enumerate(sides):
-            for path, record in side["records"]:
-                sent_id = side["conllu"]["sentences"][record["corpus_sentence_ordinal"]]["sent_id"]
+            for path, sent_id, record in side["records"]:
                 key = (sent_id, unit(record, compared, f"{side['label']} {path}"))
                 counts.setdefault(key, [0, 0])[index] += 1
                 shown.setdefault(key, [None, None])[index] = record

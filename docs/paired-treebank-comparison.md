@@ -46,10 +46,10 @@ verb (`comp:obj`). Each pattern binds the nominal `n`, the particle `w` and the
 verb `v`:
 
 ```bash
-ling --json matches --evidence --limit all --pattern \
+ling --json matches --evidence --limit all --source-metadata @sentence.sent_id --pattern \
   '(?<w> [text=を & upos=ADP]) where (?<n> [upos in {NOUN, PROPN, PRON, NUM}]) -[case]-> $w, (?<v> [upos=VERB]) -[obj]-> $n.' \
   UD_Japanese-GSD/ja_gsd-ud-test.conllu > ud.jsonl
-ling --json matches --evidence --limit all --pattern \
+ling --json matches --evidence --limit all --source-metadata @sentence.sent_id --pattern \
   '(?<w> [text=を & upos=ADP]) where $w -[comp]-> (?<n> [upos in {NOUN, PROPN, PRON, NUM}]), (?<v> [upos=VERB]) -[comp:obj]-> $w.' \
   SUD_Japanese-GSD/ja_gsd-sud-test.conllu > sud-direct.jsonl
 ```
@@ -59,7 +59,7 @@ A nominal that carries a second particle, as in 何かを, has both particles as
 `comp` edges below を and a second pattern is required:
 
 ```bash
-ling --json matches --evidence --limit all --pattern \
+ling --json matches --evidence --limit all --source-metadata @sentence.sent_id --pattern \
   '(?<w> [text=を & upos=ADP]) where $w -[comp]-> (?<p> [upos=ADP]), $p -[comp]-> (?<n> [upos in {NOUN, PROPN, PRON, NUM}]), (?<v> [upos=VERB]) -[comp:obj]-> $w.' \
   SUD_Japanese-GSD/ja_gsd-sud-test.conllu > sud-via.jsonl
 ```
@@ -93,8 +93,9 @@ The script exits with status 2, and writes no rows, when
 
 - a `sent_id` is absent, occurs twice in a file, or is in only one file;
 - a sentence's ID, FORM or UPOS sequence differs between the files;
-- a run is incomplete, limited, sampled or without `--evidence`, or the `--b`
-  runs differ in corpus, analysis or `--where` scope;
+- a run is incomplete, limited, sampled, or without `--evidence` or
+  `--source-metadata @sentence.sent_id`, or the `--b` runs differ in corpus,
+  analysis or `--where` scope;
 - a run did not read the file named for its side.
 
 Run each query over one file, not over a treebank directory.
