@@ -859,18 +859,34 @@ impl Materializer<'_> {
         };
         let mut resolved = Vec::with_capacity(relations.len());
         for relation in relations {
-            if let RelationLabels::Listed(labels) = &relation.labels {
-                for label in labels {
-                    if matches!(label, super::model::RelationLabel::Deep(_)) {
-                        self.owned_bytes = self.owned_bytes.saturating_add(label.charged_bytes());
+            let is_path = relation.extent != super::model::RelationExtent::Edge;
+            for labels in std::iter::once(&relation.labels).chain(relation.extent.boundary()) {
+                if let RelationLabels::Listed(members) = labels {
+                    for label in members {
+                        let bytes = if is_path {
+                            size_of_val(label) + label.charged_bytes()
+                        } else if matches!(label, super::model::RelationLabel::Deep(_)) {
+                            label.charged_bytes()
+                        } else {
+                            0
+                        };
+                        self.owned_bytes = self.owned_bytes.saturating_add(bytes);
                     }
                 }
-                if self.owned_bytes > self.limits.max_generated_owned_bytes() {
-                    return Err(self
-                        .limit("enhanced relation labels exceed the generated owned byte limit"));
-                }
+            }
+            if self.owned_bytes > self.limits.max_generated_owned_bytes() {
+                return Err(if is_path {
+                    self.at(
+                        relation.label_span,
+                        DiagnosticCode::LimitExceeded,
+                        "basic path labels exceed the generated owned byte limit",
+                    )
+                } else {
+                    self.limit("enhanced relation labels exceed the generated owned byte limit")
+                });
             }
             resolved.push(ExecutionEnhancedRelation {
+                extent: relation.extent.clone(),
                 layer: relation.layer,
                 polarity: relation.polarity,
                 head: resolve(&relation.head, self)?,

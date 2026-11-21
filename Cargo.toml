@@ -55,7 +55,7 @@ zstd = "0.14.3"
 
 # Git deps (shared across multiple crates — this is the big win)
 vibrato-rkyv = { git = "https://github.com/borh/vibrato-rkyv.git", rev = "e121a2438069e6b1a21020ef1015038ab8afa244", default-features = false, features = ["download"] }
-tree-sitter-lingrep = { git = "https://github.com/borh/tree-sitter-lingrep.git", rev = "6ae26ef8e81a30b95139028c906cc7bf31d8e101" }
+tree-sitter-lingrep = { git = "https://github.com/borh/tree-sitter-lingrep.git", rev = "6be893ecc0ff410c02732a5dc71ff15b903b0559" }
 sudachi = { git = "https://github.com/WorksApplications/sudachi.rs.git", rev = "5de0410b6edfd428fc510cc9763440772e9619d5" }
 
 # Multi-crate dev deps

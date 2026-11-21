@@ -1297,3 +1297,58 @@ fn an_undefined_measure_capture_is_reported_against_the_measure_clause() {
     .to_string();
     assert!(error.contains("`measure` operand `$missing`"), "{error}");
 }
+
+#[test]
+fn basic_path_publishes_the_same_endpoints_as_a_direct_edge() {
+    let chain = "1\tverb\tv\tVERB\t_\t_\t0\troot\t_\t_\n2\tparticle\tp\tADP\t_\t_\t1\tcomp:obj\t_\t_\n3\tnoun\tn\tNOUN\t_\t_\t2\tcomp\t_\t_\n";
+    let direct = chain.replace("2\tcomp\t_", "1\tcomp\t_");
+    let expected = match_catalog(
+        "p",
+        "p := (?<n> [upos=NOUN]) where (?<v> [upos=VERB]) -[comp]-> $n.",
+        &direct,
+    );
+    assert_eq!(expected.len(), 1);
+    for path in [
+        "+ comp|comp:obj",
+        "+ comp first comp:obj",
+        "+ comp:obj last comp",
+    ] {
+        let pattern = format!("p := (?<n> [upos=NOUN]) where (?<v> [upos=VERB]) -[{path}]-> $n.");
+        assert_eq!(match_catalog("p", &pattern, chain), expected);
+    }
+    let decorated = chain
+        .replace("comp:obj\t", "comp:obj@expl\t")
+        .replace("comp\t", "comp@pass\t");
+    for path in [
+        "+ comp@pass first comp:obj@expl",
+        "+ comp:obj@!pass last *@pass",
+    ] {
+        let pattern = format!("p := (?<n> [upos=NOUN]) where (?<v> [upos=VERB]) -[{path}]-> $n.");
+        assert_eq!(match_catalog("p", &pattern, &decorated), expected);
+        assert!(match_catalog("p", &pattern, chain).is_empty());
+    }
+}
+
+#[test]
+fn basic_path_negation_requires_an_observed_chain_to_root() {
+    let sentence = "1\th\th\tVERB\t_\t_\t0\troot\t_\t_\n2\td\td\tNOUN\t_\t_\t1\tobj\t_\t_\n";
+    let pattern = |edge: &str| format!("p := (?<h> [text=h]) (?<d> [text=d]) where {edge}.");
+    let expected = match_catalog("p", &pattern("$h -[obj]-> $d"), sentence);
+    assert_eq!(expected.len(), 1);
+    for edge in [
+        "$h -[+ conj first obj]-> $d",
+        "$h -[+ conj last obj]-> $d",
+        "not $h -[+ conj]-> $d",
+    ] {
+        assert_eq!(match_catalog("p", &pattern(edge), sentence), expected);
+    }
+    assert!(match_catalog("p", &pattern("not $h -[+ *]-> $d"), sentence).is_empty());
+    for malformed in [
+        sentence.replace("0\troot", "2\tdep"),
+        sentence.replace("0\troot", "_\t_"),
+    ] {
+        for edge in ["$h -[+ *]-> $d", "not $h -[+ conj]-> $d"] {
+            assert!(match_catalog("p", &pattern(edge), &malformed).is_empty());
+        }
+    }
+}

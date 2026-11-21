@@ -662,7 +662,7 @@ A catalog with a basic token dependency constraint requires `dep.head` and `dep.
 morphology-only corpus is rejected by name before matching. Only basic edges are
 consulted; `dep.enhanced` is not.
 
-Optional captured edges, negated labels and dependency paths are unsupported. `patterns/ud-dependency.lx` is the tracked exemplar; its
+Optional captured edges and negated labels are unsupported. `patterns/ud-dependency.lx` is the tracked exemplar; its
 `verbal_argument` carries all three term forms in one bracket:
 `-[@CORE_ARGUMENT|obl|obl:*]->`. `patterns/ud-object-realization.lx` exercises
 anonymous existence. `patterns/double-wo-dep.lx` expresses `double-wo.lx`'s
@@ -671,6 +671,32 @@ label sets, and `key: [$n1.dep.rel, $n2.dep.rel]` to publish the pair. A fragmen
 cannot declare a `where` clause, but its captures are legal operands in the
 including pattern's clause. Because `double-wo-dep.lx` requires `dep.head` and
 `dep.rel`, `double-wo.lx` remains the catalog for morphology-only corpora.
+
+### Basic dependency paths
+
+`$h -[+ LABELS]-> $d` follows one or more basic edges from ancestor to
+descendant. Every edge must match LABELS. Use `+ *` for any ancestor. Label
+sets, exact subtypes, subtype wildcards, and SUD deep features work as on a
+direct edge.
+`first LABELS` replaces the test on the edge leaving the ancestor.
+`last LABELS` replaces the test on the edge entering the descendant. On a
+one-edge path the boundary test alone applies.
+
+```pattern
+pattern wo_object := (?<w> [text=を & upos=ADP])
+  where (?<v> [upos=VERB]) -[+ comp first comp:obj]-> $w,
+        $w -[+ comp last comp|comp:pred]-> (?<n> [upos in {NOUN, PROPN, PRON, NUM}]).
+```
+
+A positive path may bind a named word at an endpoint. Intermediate words
+are traversed without testing their token attributes or publishing bindings.
+Each qualifying endpoint assignment emits once. The connected component
+requires a one-word surface anchor. `not $h -[+ *]-> $d` accepts two bound
+words when the first is absent from the second's proper ancestors.
+Both polarities require the dependent's chain to reach a root through usable
+HEAD and DEPREL values. A missing value, out-of-range head or cycle on that
+chain satisfies neither polarity. Traversal counts against the sentence's
+graph-work limit.
 
 ## Occurrence measurements
 
@@ -778,7 +804,7 @@ record unkeyable. A named edge projects `$edge.rel`. Complete enhanced
 observation is required for enhanced edges, so unavailable or incomplete DEPS
 satisfies neither polarity.
 
-Graph-only patterns, generalized anonymous enhanced absence, paths, graph
+Graph-only patterns, generalized anonymous enhanced absence, enhanced paths, graph
 rewriting, and graph-node span/render projections are unsupported.
 
 `patterns/ud-enhanced-argument.lx` is the introductory tracked exemplar;

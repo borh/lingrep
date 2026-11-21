@@ -1924,6 +1924,9 @@ fn bind_enhanced_relations(
                 diagnostics,
             );
             BoundEnhancedRelation {
+                extent: relation.extent.map_ref(|(boundary, span)| {
+                    bind_relation_labels(boundary, *span, test_spans, ctx, uses, diagnostics)
+                }),
                 layer: relation.layer,
                 polarity: relation.polarity,
                 head: bind_endpoint(&relation.head, uses, diagnostics),

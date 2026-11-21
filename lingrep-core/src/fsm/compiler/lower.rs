@@ -2529,6 +2529,7 @@ impl<'a, 'src> Lowerer<'a, 'src> {
                     })
                     .transpose()?;
                 enhanced_relations.push(super::model::ParsedEnhancedRelation {
+                    extent: super::model::RelationExtent::Edge,
                     layer: super::model::DependencyLayer::Enhanced,
                     polarity: if constraint.child_by_field_name("polarity").is_some() {
                         RelationPolarity::Negative
@@ -2548,7 +2549,8 @@ impl<'a, 'src> Lowerer<'a, 'src> {
                     .child_by_field_name(field)
                     .is_some_and(|node| node.kind() == "graph_node_binding")
             };
-            if binds_node("head") || binds_node("dependent") {
+            let is_path = constraint.child_by_field_name("path").is_some();
+            if is_path || binds_node("head") || binds_node("dependent") {
                 let endpoint = |this: &mut Self, field: &str| {
                     let node = constraint.child_by_field_name(field).ok_or_else(|| {
                         this.error(
@@ -2567,8 +2569,27 @@ impl<'a, 'src> Lowerer<'a, 'src> {
                     "label_set",
                 )?;
                 enhanced_relations.push(super::model::ParsedEnhancedRelation {
+                    extent: match constraint.child_by_field_name("boundary_label") {
+                        Some(node) => {
+                            let labels = (self.lower_relation_labels(node)?, self.span_of(node)?);
+                            if constraint
+                                .child_by_field_name("boundary")
+                                .is_some_and(|n| n.kind() == "first")
+                            {
+                                super::model::RelationExtent::First(labels)
+                            } else {
+                                super::model::RelationExtent::Last(labels)
+                            }
+                        }
+                        None if is_path => super::model::RelationExtent::Path,
+                        None => super::model::RelationExtent::Edge,
+                    },
                     layer: super::model::DependencyLayer::Basic,
-                    polarity: RelationPolarity::Positive,
+                    polarity: if constraint.child_by_field_name("polarity").is_some() {
+                        RelationPolarity::Negative
+                    } else {
+                        RelationPolarity::Positive
+                    },
                     head: endpoint(self, "head")?,
                     labels: self.lower_relation_labels(label_node)?,
                     label_span: self.span_of(label_node)?,

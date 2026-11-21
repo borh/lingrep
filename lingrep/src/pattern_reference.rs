@@ -207,6 +207,17 @@ definition per label when every row must be that label's own pattern count.
 `matches --raw-matches` bypasses policy, but not this matcher selection;
 `summarize` has no raw mode.
 
+Basic paths traverse one or more basic edges from ancestor to descendant:
+
+  $v -[+ *]-> $n                    any proper ancestor
+  $v -[+ comp first comp:obj]-> $w  comp:obj followed by zero or more comp
+  $w -[+ comp last comp:pred]-> $n  zero or more comp followed by comp:pred
+
+A positive path can bind an endpoint with (?<name> [TEST]). Only endpoints
+are published. Intermediate words have no token predicate. A negated path
+requires two bound words. Either polarity requires a complete, acyclic chain
+from the dependent to a root.
+
 Enhanced dependency graph constraints put `enhanced` first inside the label
 bracket. Either endpoint may reuse an exact-width-one surface capture or
 introduce one named graph node with an ordinary one-token predicate:
@@ -250,7 +261,7 @@ and `$edge.rel`. Published graph bindings use canonical node-name then
 edge-name order, independent of constraint order. Complete enhanced observation
 is mandatory; unavailable or
 incomplete DEPS satisfies neither positive nor negative enhanced constraints.
-Optional graph bindings, generalized anonymous enhanced absence, and dependency
+Optional graph bindings, generalized anonymous enhanced absence, and enhanced dependency
 paths are not supported.
 
 TOKEN TESTS

@@ -32,6 +32,9 @@ describes.
 - Regex values use Rust `regex` syntax, not PCRE. Lookaround and backreferences
   are unsupported by that engine and produce `InvalidRegex`. `~ /re/` is an
   unanchored search; for a whole-value match write `~ /\A(?:re)\z/`.
+- Basic dependency paths support a nonempty chain of edge labels and an optional
+  first or last edge test. Intermediate word predicates, path bindings and
+  enhanced-graph paths are unsupported.
 - Zero-length top-level matches are unsupported.
 - [Scoped lookaround](pattern-language-reference.md#lookaround) can test
   neighboring sentences. Use an

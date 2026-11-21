@@ -5824,7 +5824,7 @@ checksum = "d0af592be68c579aa78a16846bd19422978c3c52e438523d45ff5d1bff1f9d4a"
 [[package]]
 name = "tree-sitter-lingrep"
 version = "0.1.0"
-source = "git+https://github.com/borh/tree-sitter-lingrep.git?rev=6ae26ef8e81a30b95139028c906cc7bf31d8e101#6ae26ef8e81a30b95139028c906cc7bf31d8e101"
+source = "git+https://github.com/borh/tree-sitter-lingrep.git?rev=6be893ecc0ff410c02732a5dc71ff15b903b0559#6be893ecc0ff410c02732a5dc71ff15b903b0559"
 dependencies = [
  "cc",
  "tree-sitter-language",

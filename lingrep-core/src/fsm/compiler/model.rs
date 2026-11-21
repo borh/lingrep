@@ -703,6 +703,32 @@ pub(crate) enum RelationLabels<T> {
     Listed(Box<[T]>),
 }
 
+#[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord)]
+pub(crate) enum RelationExtent<T> {
+    Edge,
+    Path,
+    First(T),
+    Last(T),
+}
+
+impl<T> RelationExtent<T> {
+    pub(crate) fn boundary(&self) -> Option<&T> {
+        match self {
+            Self::First(labels) | Self::Last(labels) => Some(labels),
+            Self::Edge | Self::Path => None,
+        }
+    }
+
+    pub(crate) fn map_ref<U>(&self, f: impl FnOnce(&T) -> U) -> RelationExtent<U> {
+        match self {
+            Self::Edge => RelationExtent::Edge,
+            Self::Path => RelationExtent::Path,
+            Self::First(labels) => RelationExtent::First(f(labels)),
+            Self::Last(labels) => RelationExtent::Last(f(labels)),
+        }
+    }
+}
+
 /// One term of an authored `where` bracket, before set references resolve.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) enum ParsedLabelTerm {
@@ -859,6 +885,7 @@ pub(crate) enum DependencyLayer {
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) struct ParsedEnhancedRelation {
+    pub(crate) extent: RelationExtent<(RelationLabels<ParsedLabelTerm>, SourceSpan)>,
     pub(crate) layer: DependencyLayer,
     pub(crate) polarity: RelationPolarity,
     pub(crate) head: ParsedEnhancedEndpoint,
@@ -887,6 +914,7 @@ pub(crate) enum BoundEnhancedEndpoint {
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) struct BoundEnhancedRelation {
+    pub(crate) extent: RelationExtent<RelationLabels<RelationLabel>>,
     pub(crate) layer: DependencyLayer,
     pub(crate) polarity: RelationPolarity,
     pub(crate) head: BoundEnhancedEndpoint,
@@ -1440,6 +1468,7 @@ pub(crate) enum ExecutionEnhancedEndpoint {
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) struct ExecutionEnhancedRelation {
+    pub(crate) extent: RelationExtent<RelationLabels<RelationLabel>>,
     pub(crate) layer: DependencyLayer,
     pub(crate) polarity: RelationPolarity,
     pub(crate) head: ExecutionEnhancedEndpoint,

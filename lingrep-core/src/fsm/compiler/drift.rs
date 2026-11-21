@@ -276,15 +276,19 @@ pub fn report_catalog_drift_with_vectors(
                                         ..
                                     } => CanonicalEnhancedEndpoint::BasicHead(dependent.clone()),
                                 };
-                            let labels = match &relation.labels {
-                                RelationLabels::Any => RelationLabels::Any,
-                                RelationLabels::Listed(labels) => {
-                                    let mut labels = labels.to_vec();
-                                    labels.sort();
-                                    RelationLabels::Listed(labels.into_boxed_slice())
-                                }
-                            };
+                            let sorted =
+                                |labels: &RelationLabels<super::model::RelationLabel>| match labels
+                                {
+                                    RelationLabels::Any => RelationLabels::Any,
+                                    RelationLabels::Listed(labels) => {
+                                        let mut labels = labels.to_vec();
+                                        labels.sort();
+                                        RelationLabels::Listed(labels.into_boxed_slice())
+                                    }
+                                };
+                            let labels = sorted(&relation.labels);
                             CanonicalEnhancedRelation {
+                                extent: relation.extent.map_ref(sorted),
                                 layer: relation.layer,
                                 polarity: relation.polarity,
                                 head: endpoint(&relation.head),
@@ -500,6 +504,7 @@ enum CanonicalEnhancedEndpoint {
 
 #[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord)]
 struct CanonicalEnhancedRelation {
+    extent: super::model::RelationExtent<RelationLabels<super::model::RelationLabel>>,
     layer: super::model::DependencyLayer,
     polarity: super::model::RelationPolarity,
     head: CanonicalEnhancedEndpoint,

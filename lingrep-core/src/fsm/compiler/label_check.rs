@@ -75,6 +75,9 @@ pub(super) fn literal_errors(
             }
         }
         for relation in definition.enhanced_relations() {
+            if let Some(labels) = relation.extent.boundary() {
+                collect_relation_labels(labels, &mut literals);
+            }
             collect_relation_labels(&relation.labels, &mut literals);
             for endpoint in [&relation.head, &relation.dependent] {
                 if let BoundEnhancedEndpoint::Binding { predicates, .. } = endpoint {

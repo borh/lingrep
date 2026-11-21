@@ -11,8 +11,8 @@ use super::resource::{MAX_RELATION_DEPTH, MatchBudget, MatchResourceError, Outpu
 use crate::corpus::conllu::{EnhancedGraph, EnhancedHead, EnhancedNodeId};
 use crate::fsm::compiler::model::{
     CaptureId, CaptureProjection, DependencyLayer, ExecutionDefinition, ExecutionEnhancedEndpoint,
-    ExecutionExpr, ExecutionGraphBindingDecl, RelationLabel, RelationLabels, RelationPolarity,
-    RelationTarget, TokenPredicate,
+    ExecutionExpr, ExecutionGraphBindingDecl, RelationExtent, RelationLabel, RelationLabels,
+    RelationPolarity, RelationTarget, TokenPredicate,
 };
 use crate::fsm::compiler::model::{DependentRequirement, NodeComparison, NodeConstraint};
 use crate::fsm::{AttrValueType, Capture, GraphBinding, GraphNodeAttribute, PositionAssertion};
@@ -57,12 +57,46 @@ enum RuntimeRelationTarget {
 
 #[derive(Clone)]
 struct RuntimeEnhancedRelation {
+    extent: RelationExtent<RelationLabels<RelationLabel>>,
     layer: RuntimeLayer,
     polarity: RelationPolarity,
     head: RuntimeEnhancedEndpoint,
     labels: RelationLabels<RelationLabel>,
     edge: Option<compact_str::CompactString>,
     dependent: RuntimeEnhancedEndpoint,
+}
+
+struct BasicPath<'a> {
+    head_attribute: &'a AttributeLocator,
+    relation_attribute: &'a AttributeLocator,
+    repeated: &'a RelationLabels<RelationLabel>,
+    first: &'a RelationLabels<RelationLabel>,
+    last: Option<&'a RelationLabels<RelationLabel>>,
+}
+
+impl RuntimeEnhancedRelation {
+    fn basic_path(&self) -> Option<BasicPath<'_>> {
+        let RuntimeLayer::Basic {
+            head_attribute,
+            relation_attribute,
+        } = &self.layer
+        else {
+            return None;
+        };
+        let (first, last) = match &self.extent {
+            RelationExtent::Edge => return None,
+            RelationExtent::Path => (&self.labels, None),
+            RelationExtent::First(labels) => (labels, None),
+            RelationExtent::Last(labels) => (&self.labels, Some(labels)),
+        };
+        Some(BasicPath {
+            head_attribute,
+            relation_attribute,
+            repeated: &self.labels,
+            first,
+            last,
+        })
+    }
 }
 
 /// Where a graph relation reads its edges: the tokens' basic `dep.head` and
@@ -291,6 +325,7 @@ impl Program {
             .enhanced_relations
             .iter()
             .map(|relation| RuntimeEnhancedRelation {
+                extent: relation.extent.clone(),
                 layer: match relation.layer {
                     DependencyLayer::Basic => RuntimeLayer::Basic {
                         head_attribute: AttributeLocator::symbolic(dependency_head_key()),
@@ -1412,14 +1447,11 @@ fn enhanced_assignments_from<S: TokenSequence + ?Sized>(
         );
     }
     let mut assignments = Vec::new();
-    for edge in layer_edges(&relation.layer, tokens, graph) {
-        budget.step(pattern)?;
-        let Some((head, dependent, label)) = edge else {
-            continue;
-        };
-        if !relation_label_matches(&relation.labels, label) {
-            continue;
-        }
+    let mut visit = |budget: &mut MatchBudget,
+                     head,
+                     dependent,
+                     label: Option<&str>|
+     -> Result<(), MatchResourceError> {
         budget.allocate(pattern, assignment.estimated_bytes())?;
         let mut next = assignment.clone();
         if !enhanced_endpoint_accepts(
@@ -1441,9 +1473,9 @@ fn enhanced_assignments_from<S: TokenSequence + ?Sized>(
             graph,
             &mut next.nodes,
         )? {
-            continue;
+            return Ok(());
         }
-        if let Some(name) = &relation.edge {
+        if let (Some(name), Some(label)) = (&relation.edge, label) {
             let before = btree_storage_bytes::<
                 compact_str::CompactString,
                 (EnhancedNodeId, EnhancedNodeId, compact_str::CompactString),
@@ -1466,12 +1498,12 @@ fn enhanced_assignments_from<S: TokenSequence + ?Sized>(
                 .get(name)
                 .is_some_and(|assigned| *assigned != value)
             {
-                continue;
+                return Ok(());
             }
             next.edges.insert(name.clone(), value);
         }
         if !admissible(&next) {
-            continue;
+            return Ok(());
         }
         assignments.extend(enhanced_assignments_from(
             budget,
@@ -1484,8 +1516,109 @@ fn enhanced_assignments_from<S: TokenSequence + ?Sized>(
             &next,
             admissible,
         )?);
+        Ok(())
+    };
+    if let Some(path) = relation.basic_path() {
+        let bound_dependent =
+            enhanced_endpoint_assignment(&relation.dependent, candidate, tokens, assignment);
+        let range = match bound_dependent {
+            Some(EnhancedNodeId::Word { token_index }) => token_index..token_index + 1,
+            Some(EnhancedNodeId::Empty { .. }) => 0..0,
+            None => 0..tokens.len(),
+        };
+        let bound_head =
+            enhanced_endpoint_assignment(&relation.head, candidate, tokens, assignment);
+        for token_index in range {
+            let dependent = EnhancedNodeId::Word { token_index };
+            basic_path_heads(
+                budget,
+                pattern,
+                &path,
+                tokens,
+                token_index,
+                |budget, head| {
+                    let head = EnhancedNodeId::Word { token_index: head };
+                    if bound_head.is_none_or(|bound| bound == head) {
+                        visit(budget, head, dependent, None)?;
+                    }
+                    Ok(())
+                },
+            )?;
+        }
+    } else {
+        for edge in layer_edges(&relation.layer, tokens, graph) {
+            budget.step(pattern)?;
+            if let Some((head, dependent, label)) = edge
+                && relation_label_matches(&relation.labels, label)
+            {
+                visit(budget, head, dependent, Some(label))?;
+            }
+        }
     }
     Ok(assignments)
+}
+
+/// Visits matching ancestors only when this dependent has a fully observed chain to a root.
+/// Returns false for an unusable chain, which also prevents a negative path match.
+fn basic_path_heads<S: TokenSequence + ?Sized>(
+    budget: &mut MatchBudget,
+    pattern: &str,
+    path: &BasicPath<'_>,
+    tokens: &S,
+    dependent: usize,
+    mut visit: impl FnMut(&mut MatchBudget, usize) -> Result<(), MatchResourceError>,
+) -> Result<bool, MatchResourceError> {
+    let parent = |index| {
+        let AttributeValueRef::Scalar(raw) = tokens.value_locator(index, path.head_attribute)?
+        else {
+            return None;
+        };
+        let id = raw.parse::<usize>().ok().filter(|id| *id <= tokens.len())?;
+        let AttributeValueRef::Scalar(label) =
+            tokens.value_locator(index, path.relation_attribute)?
+        else {
+            return None;
+        };
+        (!label.is_empty() && label != "_").then_some((id, label))
+    };
+    let mut word = dependent;
+    let mut depth = 0;
+    loop {
+        budget.step(pattern)?;
+        let Some((id, _)) = parent(word) else {
+            return Ok(false);
+        };
+        if id == 0 {
+            break;
+        }
+        depth += 1;
+        if depth >= tokens.len() {
+            return Ok(false);
+        }
+        word = id - 1;
+    }
+    word = dependent;
+    for distance in 0..depth {
+        budget.step(pattern)?;
+        let (id, label) = parent(word).expect("validated immutable basic chain");
+        word = id - 1;
+        let (accept, more) = if let Some(last) = path.last.filter(|_| distance == 0) {
+            let matches = relation_label_matches(last, label);
+            (matches, matches)
+        } else {
+            (
+                relation_label_matches(path.first, label),
+                relation_label_matches(path.repeated, label),
+            )
+        };
+        if accept {
+            visit(budget, word)?;
+        }
+        if !more {
+            break;
+        }
+    }
+    Ok(true)
 }
 
 fn basic_binders_are_distinct(
@@ -1587,6 +1720,27 @@ fn enhanced_negative_relations_hold<S: TokenSequence + ?Sized>(
         else {
             return Ok(false);
         };
+        if let Some(path) = relation.basic_path() {
+            let (
+                EnhancedNodeId::Word { token_index: head },
+                EnhancedNodeId::Word {
+                    token_index: dependent,
+                },
+            ) = (head, dependent)
+            else {
+                return Ok(false);
+            };
+            let mut found = false;
+            let observed =
+                basic_path_heads(budget, pattern, &path, tokens, dependent, |_, ancestor| {
+                    found |= ancestor == head;
+                    Ok(())
+                })?;
+            if !observed || found {
+                return Ok(false);
+            }
+            continue;
+        }
         for edge in layer_edges(&relation.layer, tokens, graph) {
             budget.step(pattern)?;
             let Some((actual_head, actual_dependent, label)) = edge else {

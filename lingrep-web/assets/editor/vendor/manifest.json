@@ -1,9 +1,9 @@
 {
-  "grammar_revision": "6ae26ef8e81a30b95139028c906cc7bf31d8e101",
+  "grammar_revision": "6be893ecc0ff410c02732a5dc71ff15b903b0559",
   "runtime_version": "0.26.11",
   "sha256": {
     "highlights.scm": "1bfaec5a138cc4ed7e806d7623dbc997eccb6404d5fee2b9c355e95bfc558fa6",
-    "tree-sitter-lingrep.wasm": "437b131e306dea94feef1e9065d287d96328e379b28a2f333b0839bd3bfd8fb1",
+    "tree-sitter-lingrep.wasm": "b015a0d7531f472ad79f756aaa085323f51d460df03773094ff155f97a29238d",
     "web-tree-sitter.js": "0c868236a47296b4ff3c1570f20e0899e4a784ff6e5cd7bfc9c3a55225463e4a",
     "web-tree-sitter.wasm": "715cae35f31b7b03a13592bc5ac9039d5c6d2c2bda9f9e0c2b8abab77b3f64cc"
   }

@@ -147,6 +147,28 @@ Six follow a host tagged `ADJ` or `VERB`. The remaining three are an object
 of an `ADJ`, an `obl` nominal, and a `fixed` を. The shared count measures overlap between the selected
 occurrences. An occurrence missed by both queries contributes no row.
 
+### One basic-path query
+
+With basic dependency paths available, run a single SUD query and compare the
+result with the same UD evidence stream:
+
+```bash
+ling --json matches --evidence --limit all --source-metadata @sentence.sent_id --pattern \
+  '(?<w> [text=を & upos=ADP]) where (?<v> [upos=VERB]) -[+ comp first comp:obj]-> $w, $w -[+ comp last comp|comp:pred]-> (?<n> [upos in {NOUN, PROPN, PRON, NUM}]).' \
+  SUD_Japanese-GSD/ja_gsd-sud-test.conllu > sud-path.jsonl
+python3 examples/compare_paired_treebanks.py \
+  --a-conllu UD_Japanese-GSD/ja_gsd-ud-test.conllu \
+  --b-conllu SUD_Japanese-GSD/ja_gsd-sud-test.conllu \
+  --a ud.jsonl --b sud-path.jsonl --roles n,w,v
+```
+
+The verb path starts with `comp:obj`. The nominal path ends with either
+`comp` or `comp:pred`. All other steps on both paths use `comp`.
+The final `comp:pred` admits the copular cases in `train-s890`, `train-s1369`
+and `train-s2068`. The query was developed using the train discrepancies.
+On the pinned files it yields 4,154 shared role triples on train, 293 on dev
+and 314 on test, with zero one-sided triples on each split.
+
 ## Controls
 
 Comparing a run with itself returns every occurrence as shared:

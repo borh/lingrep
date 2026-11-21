@@ -212,7 +212,8 @@ pub(crate) fn analyze_program(
         }
         for (index, relation) in definition.enhanced_relations.iter().enumerate() {
             for other in &definition.enhanced_relations[index + 1..] {
-                if relation.layer != other.layer
+                if relation.extent != other.extent
+                    || relation.layer != other.layer
                     || relation.head != other.head
                     || relation.dependent != other.dependent
                 {
