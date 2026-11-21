@@ -1308,13 +1308,19 @@ fn basic_path_publishes_the_same_endpoints_as_a_direct_edge() {
         &direct,
     );
     assert_eq!(expected.len(), 1);
+    let matches = |path| {
+        let pattern = format!("p := (?<n> [upos=NOUN]) where (?<v> [upos=VERB]) -[{path}]-> $n.");
+        match_catalog("p", &pattern, chain)
+    };
     for path in [
         "+ comp|comp:obj",
         "+ comp first comp:obj",
         "+ comp:obj last comp",
     ] {
-        let pattern = format!("p := (?<n> [upos=NOUN]) where (?<v> [upos=VERB]) -[{path}]-> $n.");
-        assert_eq!(match_catalog("p", &pattern, chain), expected);
+        assert_eq!(matches(path), expected);
+    }
+    for misplaced_boundary in ["+ comp last comp:obj", "+ comp:obj first comp"] {
+        assert!(matches(misplaced_boundary).is_empty());
     }
     let decorated = chain
         .replace("comp:obj\t", "comp:obj@expl\t")
