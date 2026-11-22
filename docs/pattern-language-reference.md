@@ -28,10 +28,11 @@ lingrep patterns documents contain declarations, not standalone expressions.
 References are resolved across the whole document and may point forward;
 duplicate definitions, undefined references, and cycles are compile errors.
 
-Each match belongs to one sentence. Surface expressions, anchors, lookaround,
-and graph and span constraints use that sentence's analysis. Join matches in
-other sentences through an explicit relation annotation, as in the
-[CLI example](cli-usage-guide.md#joining-annotated-relations-across-sentences).
+Each match and its captures belong to one sentence. Graph and span constraints
+use that sentence's analysis. [Scoped lookaround](#lookaround) can test tokens
+in neighboring sentences. To return both endpoints of an annotated relation
+across sentences, use an
+[external join](cli-usage-guide.md#joining-annotated-relations-across-sentences).
 
 ## Reserved names
 

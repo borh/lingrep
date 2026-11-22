@@ -33,8 +33,10 @@ describes.
   are unsupported by that engine and produce `InvalidRegex`. `~ /re/` is an
   unanchored search; for a whole-value match write `~ /\A(?:re)\z/`.
 - Zero-length top-level matches are unsupported.
-- Use an [external join](cli-usage-guide.md#joining-annotated-relations-across-sentences)
-  for relationships between sentences.
+- [Scoped lookaround](pattern-language-reference.md#lookaround) can test
+  neighboring sentences. Use an
+  [external join](cli-usage-guide.md#joining-annotated-relations-across-sentences)
+  to return both endpoints of an annotated relation across sentences.
 - Span selectors test sentence-local intervals, labels, heads, and fixed paths
   of recorded governor links. Immediate dominance, sisterhood, phrase
   precedence, c-command, unary chains, and unbounded governor paths require

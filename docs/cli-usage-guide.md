@@ -492,8 +492,12 @@ treebank and its SUD conversion, see
 
 ### Joining annotated relations across sentences
 
-Use one `ling matches` scan to collect sentence-local matches. In the JSONL
-`match.data`, `source_name` gives the source label and
+[Scoped lookaround](pattern-language-reference.md#lookaround) can test
+neighboring text and emit a match in the current sentence. To return both
+endpoints of an annotated relation such as coreference, use one
+`ling matches` scan and join its sentence-local matches.
+
+In JSONL `match.data`, `source_name` gives the source label and
 `document_ordinal` identifies the document within the input. Use
 `document_sentence_ordinal` for a sentence within that document or
 `corpus_sentence_ordinal` for a sentence across the input. Within a sentence,
