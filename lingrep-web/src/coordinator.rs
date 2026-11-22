@@ -19,9 +19,11 @@ use crate::revision::{
     AttemptFailure, CacheReadinessView, CancelReason, CoordinatorEvent, ErrorCategory,
     RevisionCoordinatorState, RevisionId, WorkbenchId,
 };
-use crate::section_tally::{self, SectionAvailability, SectionRefusal, spawn_span_producer};
+use crate::section_tally::{self, spawn_span_producer};
 use crate::snapshot::{CompletedSnapshot, CompoundCategory};
-use crate::snapshot_sink::{SectionScanState, SnapshotSink};
+use crate::snapshot_sink::{
+    SectionScanState, SnapshotSink, SnapshotSinkInitError, SnapshotSinkMeta,
+};
 use lingrep_core::fsm::policy_program::Overlaps;
 use lingrep_core::fsm::{CompileOutput, SchemaBindError};
 use lingrep_core::token_match::AttributeKey;
@@ -225,7 +227,7 @@ fn resolve_scan(
             if expected_sentence_count.is_some_and(|count| {
                 count
                     != report.sentences_admitted
-                        + sink.excluded_sentences
+                        + sink.excluded_sentences()
                         + omissions.as_ref().map_or(0, |o| o.count)
             }) =>
         {
@@ -240,11 +242,11 @@ fn resolve_scan(
             }
         }
         ScanTaskResult::Finished(Ok((RunOutcome::Completed(ref report), ref sink, _)))
-            if report.sentences_admitted != sink.observed_sentences =>
+            if report.sentences_admitted != sink.observed_sentences() =>
         {
             tracing::warn!(
                 reported = report.sentences_admitted,
-                observed = sink.observed_sentences,
+                observed = sink.observed_sentences(),
                 "sentence count disagreement between the report and the sink"
             );
             ScanResolution {
@@ -257,62 +259,29 @@ fn resolve_scan(
                 progress: ExecutionProgress::default(),
             }
         }
-        // The lifecycle guard: `finish` resolves both availability branches, so
-        // its absence means the scan never reached finalization and the span
-        // stream was never drained. Checked rather than assumed.
-        ScanTaskResult::Finished(Ok((RunOutcome::Completed(_), ref sink, _)))
-            if sink.finalized_sections.is_none() =>
-        {
-            ScanResolution {
-                event: CoordinatorEvent::Failed {
-                    workbench,
-                    revision,
-                    failure: integrity_failure(),
-                },
-                invalidate_corrupt: false,
-                progress: ExecutionProgress::default(),
-            }
-        }
-        ScanTaskResult::Finished(Ok((RunOutcome::Completed(_), mut sink, oversized_omissions))) => {
-            let sections = sink.finalized_sections.take().unwrap_or(
-                // Unreachable: the arm above fails publication when it is
-                // `None`. Stated as a value rather than a panic because this
-                // function is the one place a scan becomes a snapshot.
-                SectionAvailability::VocabularyTooLarge(SectionRefusal {
-                    labels: 0,
-                    patterns: 0,
-                }),
-            );
-            ScanResolution {
-                event: CoordinatorEvent::Completed {
-                    workbench,
-                    revision,
-                    snapshot: Arc::new(CompletedSnapshot {
-                        search_scope: sink.search_scope.clone(),
-                        admission: std::mem::take(&mut sink.admission),
-                        cli_arguments: std::mem::take(&mut sink.cli_arguments),
-                        excluded_sentences: sink.excluded_sentences,
+        // The lifecycle guard: `finish` transitions sections to `Finalized`, so
+        // `into_completed_snapshot` returning `None` means the scan never
+        // reached finalization and the span stream was never drained.
+        ScanTaskResult::Finished(Ok((RunOutcome::Completed(_), sink, oversized_omissions))) => {
+            match sink.into_completed_snapshot(revision, identity, source, oversized_omissions) {
+                Some(snapshot) => ScanResolution {
+                    event: CoordinatorEvent::Completed {
+                        workbench,
                         revision,
-                        corpus_identity: identity,
-                        source: std::sync::Arc::clone(&source),
-                        documents: sink.document_summary(),
-                        derive_compounds: sink.derive_compounds,
-                        overlaps: sink.overlaps,
-                        compound_category: sink.compound_category,
-                        patterns: sink.patterns.into_boxed_slice(),
-                        match_refs: sink.refs.into_boxed_slice(),
-                        result_index: sink.result_index.take(),
-                        capture_catalog: sink.capture_catalog.into_boxed_slice(),
-                        sections,
-                        observed_sentences: sink.observed_sentences,
-                        matched_sentences: sink.matched_sentences,
-                        oversized_omissions,
-                        unavailable_attributes: sink.unavailable_attributes,
-                        vectors_binding: sink.vectors_binding,
-                    }),
+                        snapshot: Arc::new(snapshot),
+                    },
+                    invalidate_corrupt: false,
+                    progress: ExecutionProgress::default(),
                 },
-                invalidate_corrupt: false,
-                progress: ExecutionProgress::default(),
+                None => ScanResolution {
+                    event: CoordinatorEvent::Failed {
+                        workbench,
+                        revision,
+                        failure: integrity_failure(),
+                    },
+                    invalidate_corrupt: false,
+                    progress: ExecutionProgress::default(),
+                },
             }
         }
         ScanTaskResult::Finished(Ok((RunOutcome::Cancelled(report), _, _))) => ScanResolution {
@@ -535,21 +504,6 @@ fn run_scan_blocking_with_options(
     };
     let mut output = output;
     output.matcher = output.matcher.with_overlaps(overlaps);
-    let patterns = crate::pattern_catalog::pattern_metadata_pairs(&output.matcher);
-    let snapshot = SnapshotSink::new_with_compounds(
-        max_refs,
-        patterns,
-        sections,
-        derive_compounds,
-        compound_category,
-        document_reach,
-    )
-    .map_err(|_| execution_failure())?;
-    let mut progress = WatchProgress::new(progress_tx, LIVE_SUMMARY_INTERVAL);
-    let mut sink = snapshot;
-    sink.set_metadata_conflicts(crate::pattern_catalog::pattern_metadata_conflicts(
-        &output.matcher,
-    ));
     let schema = ready.artifact.token_schema().map_err(|error| {
         tracing::warn!(%error, "artifact schema admission failed");
         integrity_failure()
@@ -561,29 +515,47 @@ fn run_scan_blocking_with_options(
     attributes.sort_unstable();
     attributes.dedup();
     let attributes: Arc<[AttributeKey]> = attributes.into();
-    if index_results {
-        sink.enable_result_index(attributes.clone())
-            .map_err(|error| AttemptFailure {
-                category: ErrorCategory::Execution,
-                message: error.to_string(),
-            })?;
-    }
-    sink.search_scope = search_scope;
-    sink.admission = resolved.admission;
-    sink.cli_arguments = cli_arguments(ready, resolved.clause.as_deref(), overlaps);
-    sink.overlaps = overlaps;
     let bound = output
         .matcher
         .bind_with_projection(&schema, attributes.iter().cloned())
         .map_err(|error| binding_failure(&error, ready.artifact.analyzer()))?;
-    sink.vectors_binding = crate::patterns::bound_word_vectors(&output.matcher);
-    if !bound.unavailable_attributes().is_empty() {
+    let unavailable_attributes = (!bound.unavailable_attributes().is_empty()).then(|| {
         let analyzer = ready.artifact.analyzer();
-        sink.unavailable_attributes = Some(crate::snapshot::UnavailableAttributes {
+        crate::snapshot::UnavailableAttributes {
             keys: bound.unavailable_attributes().into(),
             schema: format!("{} {}", analyzer.family, analyzer.profile).into(),
-        });
-    }
+        }
+    });
+    let patterns = crate::pattern_catalog::pattern_metadata_pairs(&output.matcher);
+    let metadata_conflicts = crate::pattern_catalog::pattern_metadata_conflicts(&output.matcher);
+    let meta = SnapshotSinkMeta {
+        search_scope,
+        admission: resolved.admission,
+        excluded_sentences: resolved.excluded_sentences,
+        cli_arguments: cli_arguments(ready, resolved.clause.as_deref(), overlaps),
+        overlaps,
+        unavailable_attributes,
+        vectors_binding: crate::patterns::bound_word_vectors(&output.matcher),
+        derive_compounds,
+        compound_category,
+        document_reach,
+    };
+    let mut sink = SnapshotSink::new_for_scan(
+        max_refs,
+        patterns,
+        metadata_conflicts,
+        sections,
+        index_results.then_some(attributes),
+        meta,
+    )
+    .map_err(|error| match error {
+        SnapshotSinkInitError::PatternSpaceExhausted => execution_failure(),
+        SnapshotSinkInitError::ResultIndex(error) => AttemptFailure {
+            category: ErrorCategory::Execution,
+            message: error.to_string(),
+        },
+    })?;
+    let mut progress = WatchProgress::new(progress_tx, LIVE_SUMMARY_INTERVAL);
     // Prepared artifacts may contain oversized sentences. Omit and count them
     // so the result banner can disclose a degraded run.
     let omissions = Arc::new(StdMutex::new(OversizedSentenceOmissions::default()));
@@ -635,7 +607,6 @@ fn run_scan_blocking_with_options(
     } else {
         sink.discard_sections();
     }
-    sink.excluded_sentences = resolved.excluded_sentences;
     let oversized_omissions = omissions.lock().map_err(|_| execution_failure())?.summary();
     Ok((outcome, sink, oversized_omissions))
 }
@@ -1493,7 +1464,7 @@ impl ProgressSink<SnapshotSink> for WatchProgress {
         }
         self.last_publish = Some(now);
         let rows = sink
-            .patterns
+            .patterns()
             .iter()
             .map(|pattern| LivePatternTotal {
                 name: Arc::<str>::from(pattern.name.as_str()),
@@ -1501,15 +1472,16 @@ impl ProgressSink<SnapshotSink> for WatchProgress {
             })
             .collect::<Vec<_>>()
             .into();
+        let preview = sink.preview();
         self.sender.send_replace(Some(ScanProgress {
             progress,
             rows,
-            preview: sink.preview.clone().into(),
-            publication_attributes: sink.publication_attributes.clone(),
-            capture_catalog: if sink.preview.is_empty() {
+            preview: preview.to_vec().into(),
+            publication_attributes: sink.publication_attributes(),
+            capture_catalog: if preview.is_empty() {
                 Arc::from([])
             } else {
-                sink.capture_catalog.clone().into()
+                sink.capture_catalog().to_vec().into()
             },
         }));
     }
@@ -1520,6 +1492,7 @@ mod tests {
     use super::*;
     use crate::revision::AttemptPhase;
     use crate::revision_status::project_revision_status;
+    use crate::section_tally::{SectionAvailability, SectionRefusal};
     use crate::snapshot::{MatchRef, PatternDescriptor, PatternKey, PatternOrigin};
     use lingrep_core::execution::{MatchSink, SentenceBatchSource};
     use lingrep_core::testing::execution::execute_fixture;
@@ -1564,31 +1537,31 @@ mod tests {
             assert!(plain_live.publication_attributes.is_empty());
             assert_eq!(
                 indexed_live.publication_attributes,
-                indexed.publication_attributes
+                indexed.publication_attributes()
             );
-            assert_eq!(plain.refs, indexed.refs);
-            assert_eq!(plain.patterns, indexed.patterns);
-            assert_eq!(plain.capture_catalog, indexed.capture_catalog);
-            assert!(plain.result_index.is_none());
-            assert!(plain.preview.is_empty());
+            assert_eq!(plain.refs(), indexed.refs());
+            assert_eq!(plain.patterns(), indexed.patterns());
+            assert_eq!(plain.capture_catalog(), indexed.capture_catalog());
+            assert!(plain.result_index().is_none());
+            assert!(plain.preview().is_empty());
             assert_eq!(
                 indexed
-                    .publication_attributes
+                    .publication_attributes()
                     .iter()
                     .map(AttributeKey::as_str)
                     .collect::<Vec<_>>(),
                 ["surface", "text"]
             );
             assert_eq!(
-                indexed
-                    .result_index
-                    .as_ref()
-                    .unwrap()
-                    .publication_attributes(),
-                indexed.publication_attributes.as_ref()
+                indexed.result_index().unwrap().publication_attributes(),
+                indexed.publication_attributes().as_ref()
             );
-            let preview = indexed.preview.clone();
-            (plain.refs, indexed.result_index.unwrap(), preview)
+            let preview = indexed.preview().to_vec();
+            (
+                plain.refs().to_vec(),
+                indexed.into_result_index().unwrap(),
+                preview,
+            )
         })
         .await
         .unwrap();
@@ -2029,7 +2002,10 @@ mod tests {
             progress_tx,
         )
         .unwrap();
-        let unavailable = sink.unavailable_attributes.expect("recorded by the scan");
+        let unavailable = sink
+            .unavailable_attributes()
+            .cloned()
+            .expect("recorded by the scan");
         assert_eq!(
             unavailable
                 .keys
@@ -2084,8 +2060,8 @@ mod tests {
         .unwrap();
         assert!(omissions.is_none());
         assert!(matches!(outcome, RunOutcome::Completed(_)));
-        assert_eq!(sink.patterns[0].name, "verb");
-        assert_eq!(sink.patterns[0].exact_total, 3);
+        assert_eq!(sink.patterns()[0].name, "verb");
+        assert_eq!(sink.patterns()[0].exact_total, 3);
         let live = progress_rx
             .borrow_and_update()
             .clone()
@@ -2169,12 +2145,12 @@ mod tests {
         assert!(matches!(outcome, RunOutcome::Completed(_)));
         assert!(omissions.is_none());
         assert_eq!(
-            sink.patterns.len(),
+            sink.patterns().len(),
             2,
             "one authored pattern and one derived chain"
         );
-        assert_eq!(sink.patterns[0].exact_total, 2);
-        assert_eq!(sink.patterns[1].exact_total, 1);
+        assert_eq!(sink.patterns()[0].exact_total, 2);
+        assert_eq!(sink.patterns()[1].exact_total, 1);
     }
 
     #[test]
@@ -2183,10 +2159,10 @@ mod tests {
         let mut progress = WatchProgress::new(progress_tx, Duration::MAX);
         let mut sink =
             SnapshotSink::new(0, vec![("p".into(), Box::default())], no_sections()).unwrap();
-        sink.patterns[0].exact_total = 1;
+        sink.patterns_mut()[0].exact_total = 1;
 
         progress.update(ExecutionProgress::default(), &sink);
-        sink.patterns[0].exact_total = 9;
+        sink.patterns_mut()[0].exact_total = 9;
         progress.update(
             ExecutionProgress {
                 matches_found: 9,
@@ -2238,8 +2214,8 @@ mod tests {
         .expect("zero-column projection fits below the resident ceiling");
 
         assert!(matches!(outcome, RunOutcome::Completed(_)));
-        assert_eq!(sink.observed_sentences, 1);
-        assert_eq!(sink.patterns[0].exact_total, 1);
+        assert_eq!(sink.observed_sentences(), 1);
+        assert_eq!(sink.patterns()[0].exact_total, 1);
         assert!(omissions.is_none());
 
         let lemma_source = "p := ^ [lemma~x]+ $.";
@@ -2303,7 +2279,7 @@ mod tests {
         assert!(matches!(outcome, RunOutcome::Completed(_)));
         // Only sentence 0 matches (both its tokens carry the demanded lemma);
         // sentence 1 is omitted for residency, sentence 2 has no lemma.
-        assert_eq!(sink.patterns[0].exact_total, 1);
+        assert_eq!(sink.patterns()[0].exact_total, 1);
         let omissions = omissions.expect("completion reports the omissions");
         assert_eq!(omissions.count, 1);
         assert_eq!(omissions.first_ordinal, 1);
@@ -2496,7 +2472,7 @@ mod tests {
         // would fail the scan for the wrong reason, and deleting the
         // sentence-count guard would leave this test green.
         sink.finish().unwrap();
-        assert!(sink.finalized_sections.is_some());
+        assert!(sink.finalized_sections().is_some());
         // The sink saw one sentence; the report claims two.
         let resolution = resolve_scan(
             ScanTaskResult::Finished(Ok((
@@ -2521,7 +2497,7 @@ mod tests {
     fn the_gate_holds_when_sections_are_unavailable() {
         let mut sink = test_sink_without_sections(1);
         sink.finish().unwrap();
-        assert!(sink.finalized_sections.is_some());
+        assert!(sink.finalized_sections().is_some());
         let resolution = resolve_scan(
             ScanTaskResult::Finished(Ok((
                 RunOutcome::Completed(completion_report(7)),
@@ -2647,9 +2623,9 @@ mod tests {
         // RunOutcome equality includes policy_stats.records_unkeyed. Do not narrow
         // this comparison: it makes the policy-only Norm demand observable.
         assert_eq!(projected.0, full.0);
-        assert_eq!(projected.1.refs, full.1.refs);
-        assert_eq!(projected.1.patterns, full.1.patterns);
-        assert_eq!(projected.1.capture_catalog, full.1.capture_catalog);
+        assert_eq!(projected.1.refs(), full.1.refs());
+        assert_eq!(projected.1.patterns(), full.1.patterns());
+        assert_eq!(projected.1.capture_catalog(), full.1.capture_catalog());
         let RunOutcome::Completed(report) = projected.0 else {
             panic!("fixture must complete");
         };
