@@ -35,13 +35,6 @@ impl AnalyzerPlan for NativeAnalyzerPlan {
         }
     }
 
-    fn max_input_bytes(&self) -> Option<usize> {
-        match self {
-            Self::Vibrato(plan) => plan.max_input_bytes(),
-            Self::Sudachi(plan) => plan.max_input_bytes(),
-        }
-    }
-
     fn create_session(&self) -> Self::Session {
         match self {
             Self::Vibrato(plan) => NativeAnalyzerSession::Vibrato(plan.create_session()),

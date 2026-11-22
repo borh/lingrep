@@ -15,11 +15,6 @@ pub trait AnalyzerPlan: sealed::Plan {
 
     fn schema(&self) -> &TokenSchema;
     fn create_session(&self) -> Self::Session;
-
-    /// Longest admitted UTF-8 input accepted by this adapter, or `None` without a fixed ceiling.
-    fn max_input_bytes(&self) -> Option<usize> {
-        None
-    }
 }
 
 /// Mutable analyzer state owned by exactly one tokenization lane.
