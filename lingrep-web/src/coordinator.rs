@@ -684,35 +684,44 @@ struct ScanProgress {
     publication_attributes: Arc<[AttributeKey]>,
 }
 
+struct EntryState {
+    coordinator: RevisionCoordinatorState,
+    cancellation: Option<CancellationFlag>,
+    handle: Option<tokio::task::JoinHandle<()>>,
+}
+
 struct Entry {
     /// The corpus this workbench was admitted under. Fixed at admission — see
     /// `admit`'s `CorpusConflict` check — so a workbench's revisions can never
     /// straddle two corpora.
     corpus: CorpusName,
     runtime: Arc<CorpusRuntime>,
-    state: Mutex<RevisionCoordinatorState>,
-    cancellation: StdMutex<Option<CancellationFlag>>,
+    /// Revision state, active cancellation flag, and running task handle share
+    /// one lock so superseding, cancelling, evicting, and shutting down a
+    /// revision transition atomically.
+    state: Mutex<EntryState>,
     view_tx: watch::Sender<CoordinatorView>,
     subscribed: Notify,
-    handle: StdMutex<Option<tokio::task::JoinHandle<()>>>,
     last_touch: AtomicU64,
 }
 
 fn new_entry(workbench: &WorkbenchId, slot: &CorpusSlot, touch: u64) -> Entry {
-    let state = RevisionCoordinatorState::new(workbench.clone());
+    let coordinator = RevisionCoordinatorState::new(workbench.clone());
     let (view_tx, _) = watch::channel(CoordinatorView {
-        state: state.clone(),
+        state: coordinator.clone(),
         progress: ExecutionProgress::default(),
         live_summary: None,
     });
     Entry {
         corpus: slot.name.clone(),
         runtime: Arc::clone(&slot.runtime),
-        state: Mutex::new(state),
-        cancellation: StdMutex::new(None),
+        state: Mutex::new(EntryState {
+            coordinator,
+            cancellation: None,
+            handle: None,
+        }),
         view_tx,
         subscribed: Notify::new(),
-        handle: StdMutex::new(None),
         last_touch: AtomicU64::new(touch),
     }
 }
@@ -839,14 +848,17 @@ impl CoordinatorRegistry {
             // Least-recently-touched evictable entry: terminal + unsubscribed + finished.
             let mut victim: Option<(WorkbenchId, u64)> = None;
             for (id, entry) in entries.iter() {
-                let terminal = entry.state.lock().await.is_terminal();
                 let unsubscribed = entry.view_tx.receiver_count() == 0;
-                let finished = entry
-                    .handle
-                    .lock()
-                    .expect("handle mutex poisoned")
-                    .as_ref()
-                    .is_none_or(tokio::task::JoinHandle::is_finished);
+                let (terminal, finished) = {
+                    let state = entry.state.lock().await;
+                    (
+                        state.coordinator.is_terminal(),
+                        state
+                            .handle
+                            .as_ref()
+                            .is_none_or(tokio::task::JoinHandle::is_finished),
+                    )
+                };
                 if terminal && unsubscribed && finished {
                     let last_touch = entry.last_touch.load(Ordering::Relaxed);
                     if victim.as_ref().is_none_or(|(_, best)| last_touch < *best) {
@@ -857,16 +869,11 @@ impl CoordinatorRegistry {
             match victim {
                 Some((id, _)) => {
                     if let Some(entry) = entries.remove(&id) {
-                        let cancellation = entry
-                            .cancellation
-                            .lock()
-                            .expect("cancellation mutex poisoned")
-                            .take();
-                        if let Some(cancel) = cancellation {
+                        let mut state = entry.state.lock().await;
+                        if let Some(cancel) = state.cancellation.take() {
                             cancel.cancel();
                         }
-                        let handle = entry.handle.lock().expect("handle mutex poisoned").take();
-                        if let Some(handle) = handle {
+                        if let Some(handle) = state.handle.take() {
                             handle.abort();
                         }
                     }
@@ -914,16 +921,19 @@ impl CoordinatorRegistry {
         };
         let entry = self.admit(&workbench, slot).await?;
         let readiness = entry.runtime.readiness().borrow().clone();
-        let mut state = entry.state.lock().await;
-        let next = state.current_attempt().map_or(1, |attempt| {
-            attempt
-                .revision
-                .0
-                .checked_add(1)
-                .expect("revision id exhausted")
-        });
+        let mut entry_state = entry.state.lock().await;
+        let next = entry_state
+            .coordinator
+            .current_attempt()
+            .map_or(1, |attempt| {
+                attempt
+                    .revision
+                    .0
+                    .checked_add(1)
+                    .expect("revision id exhausted")
+            });
         let revision = RevisionId(next);
-        let accepted = state.accept(
+        let accepted = entry_state.coordinator.accept(
             revision,
             source.as_str().into(),
             readiness_view(&readiness),
@@ -931,16 +941,10 @@ impl CoordinatorRegistry {
         );
         assert!(accepted, "coordinator-allocated revision must be monotonic");
         let cancellation = CancellationFlag::new();
-        let previous_cancellation = entry
-            .cancellation
-            .lock()
-            .expect("cancellation mutex poisoned")
-            .replace(cancellation.clone());
-        if let Some(cancel) = previous_cancellation {
+        if let Some(cancel) = entry_state.cancellation.replace(cancellation.clone()) {
             cancel.cancel();
         }
-        entry.publish(&state, ExecutionProgress::default());
-        drop(state);
+        entry.publish(&entry_state.coordinator, ExecutionProgress::default());
 
         let registry = self.clone();
         let entry_for_task = Arc::clone(&entry);
@@ -957,14 +961,9 @@ impl CoordinatorRegistry {
                 .await;
         });
         // The swapped cancellation flag already signalled the prior task to
-        // stop; aborting its handle here reclaims it deterministically so
-        // a superseded revision cannot linger and block eviction later.
-        let previous_handle = entry
-            .handle
-            .lock()
-            .expect("handle mutex poisoned")
-            .replace(handle);
-        if let Some(previous) = previous_handle {
+        // stop; aborting its handle under the same lock guarantees an older
+        // accept_revision call cannot interleave and abort a newer task.
+        if let Some(previous) = entry_state.handle.replace(handle) {
             previous.abort();
         }
         Ok(revision)
@@ -1027,6 +1026,7 @@ impl CoordinatorRegistry {
         entry.last_touch.store(touch, Ordering::Relaxed);
         let state = entry.state.lock().await;
         let snapshot = state
+            .coordinator
             .displayed_snapshot_arc()
             .ok_or(SnapshotLookupError::StaleSnapshot)?;
         (snapshot.revision == expected)
@@ -1090,30 +1090,27 @@ impl CoordinatorRegistry {
             .ok_or(SnapshotLookupError::UnknownWorkbench)?;
         let mut state = entry.state.lock().await;
         if state
+            .coordinator
             .current_attempt()
             .is_none_or(|attempt| attempt.revision != expected)
-            || state.is_terminal()
+            || state.coordinator.is_terminal()
         {
             return Ok(false);
         }
-        if let Some(flag) = entry
-            .cancellation
-            .lock()
-            .expect("cancellation mutex poisoned")
-            .as_ref()
-        {
+        if let Some(flag) = state.cancellation.as_ref() {
             flag.cancel();
         }
-        let changed = state.apply_terminal(CoordinatorEvent::Cancelled {
-            workbench: workbench.clone(),
-            revision: expected,
-            reason: CancelReason::User,
-        });
+        let changed = state
+            .coordinator
+            .apply_terminal(CoordinatorEvent::Cancelled {
+                workbench: workbench.clone(),
+                revision: expected,
+                reason: CancelReason::User,
+            });
         if changed {
             let progress = entry.view_tx.borrow().progress;
-            entry.publish(&state, progress);
-            let handle = entry.handle.lock().expect("handle mutex poisoned").take();
-            if let Some(handle) = handle {
+            entry.publish(&state.coordinator, progress);
+            if let Some(handle) = state.handle.take() {
                 handle.abort();
             }
         }
@@ -1150,10 +1147,10 @@ impl CoordinatorRegistry {
                 .await?;
             {
                 let mut state = entry.state.lock().await;
-                if !state.mark_queued(revision) {
+                if !state.coordinator.mark_queued(revision) {
                     return None;
                 }
-                entry.publish(&state, ExecutionProgress::default());
+                entry.publish(&state.coordinator, ExecutionProgress::default());
             }
             let permit = Arc::clone(&self.inner.permit).acquire_owned().await.ok()?;
             Some((ready, permit))
@@ -1167,8 +1164,8 @@ impl CoordinatorRegistry {
                     revision,
                     reason: CancelReason::Abandoned,
                 };
-                if state.apply_terminal(event) {
-                    entry.publish(&state, ExecutionProgress::default());
+                if state.coordinator.apply_terminal(event) {
+                    entry.publish(&state.coordinator, ExecutionProgress::default());
                 }
                 return;
             }
@@ -1188,15 +1185,15 @@ impl CoordinatorRegistry {
             })
         {
             let mut state = entry.state.lock().await;
-            if state.apply_terminal(CoordinatorEvent::Failed { workbench, revision, failure: AttemptFailure { category: ErrorCategory::AnalysisChanged, message: "The corpus saved with this question has changed. Choose the current corpus and search again.".into() } }) { entry.publish(&state, ExecutionProgress::default()); }
+            if state.coordinator.apply_terminal(CoordinatorEvent::Failed { workbench, revision, failure: AttemptFailure { category: ErrorCategory::AnalysisChanged, message: "The corpus saved with this question has changed. Choose the current corpus and search again.".into() } }) { entry.publish(&state.coordinator, ExecutionProgress::default()); }
             return;
         }
         {
             let mut state = entry.state.lock().await;
-            if !state.mark_running(revision) {
+            if !state.coordinator.mark_running(revision) {
                 return;
             }
-            entry.publish(&state, ExecutionProgress::default());
+            entry.publish(&state.coordinator, ExecutionProgress::default());
         }
         if cancel.is_cancelled() {
             return;
@@ -1299,8 +1296,8 @@ impl CoordinatorRegistry {
         }
         let terminal_progress = resolution.progress;
         let mut state = entry.state.lock().await;
-        if state.apply_terminal(resolution.event) {
-            entry.publish(&state, terminal_progress);
+        if state.coordinator.apply_terminal(resolution.event) {
+            entry.publish(&state.coordinator, terminal_progress);
         }
     }
 
@@ -1317,6 +1314,7 @@ impl CoordinatorRegistry {
                 .state
                 .lock()
                 .await
+                .coordinator
                 .current_attempt()
                 .is_none_or(|attempt| attempt.revision != revision)
             {
@@ -1332,8 +1330,8 @@ impl CoordinatorRegistry {
                     revision,
                     failure: cache_unavailable_failure(),
                 };
-                if state.apply_terminal(event) {
-                    entry.publish(&state, ExecutionProgress::default());
+                if state.coordinator.apply_terminal(event) {
+                    entry.publish(&state.coordinator, ExecutionProgress::default());
                 }
                 return None;
             }
@@ -1346,30 +1344,29 @@ impl CoordinatorRegistry {
     pub async fn shutdown(&self) {
         let mut handles = Vec::new();
         for entry in self.inner.entries.lock().await.values() {
+            let mut state = entry.state.lock().await;
+            if let Some(revision) = state
+                .coordinator
+                .current_attempt()
+                .map(|attempt| attempt.revision)
             {
-                let mut state = entry.state.lock().await;
-                if let Some(revision) = state.current_attempt().map(|attempt| attempt.revision) {
-                    let workbench = state.workbench().clone();
-                    if state.apply_terminal(CoordinatorEvent::Cancelled {
+                let workbench = state.coordinator.workbench().clone();
+                if state
+                    .coordinator
+                    .apply_terminal(CoordinatorEvent::Cancelled {
                         workbench,
                         revision,
                         reason: CancelReason::Shutdown,
-                    }) {
-                        let progress = entry.view_tx.borrow().progress;
-                        entry.publish(&state, progress);
-                    }
+                    })
+                {
+                    let progress = entry.view_tx.borrow().progress;
+                    entry.publish(&state.coordinator, progress);
                 }
             }
-            let cancellation = entry
-                .cancellation
-                .lock()
-                .expect("cancellation mutex poisoned")
-                .clone();
-            if let Some(cancel) = cancellation {
+            if let Some(cancel) = state.cancellation.take() {
                 cancel.cancel();
             }
-            let handle = entry.handle.lock().expect("handle mutex poisoned").take();
-            if let Some(handle) = handle {
+            if let Some(handle) = state.handle.take() {
                 handles.push(handle);
             }
         }
@@ -1403,13 +1400,14 @@ async fn forward_progress(
         };
         let state = entry.state.lock().await;
         if state
+            .coordinator
             .current_attempt()
             .is_none_or(|attempt| attempt.revision != revision)
         {
             continue;
         }
         entry.publish_live(
-            &state,
+            &state.coordinator,
             update.progress,
             LiveSummary {
                 revision,
@@ -1613,29 +1611,31 @@ mod tests {
         let workbench = WorkbenchId::new("cancel");
         let entry = registry.entry(&workbench, &test_slot()).await;
         let retained = snapshot(&workbench, RevisionId(1));
+        let cancellation = CancellationFlag::new();
         {
             let mut state = entry.state.lock().await;
-            state.accept(
+            state.coordinator.accept(
                 RevisionId(1),
                 "p := [].".into(),
                 CacheReadinessView::Ready,
                 Default::default(),
             );
-            state.apply_terminal(CoordinatorEvent::Completed {
-                workbench: workbench.clone(),
-                revision: RevisionId(1),
-                snapshot: retained.clone(),
-            });
-            state.accept(
+            state
+                .coordinator
+                .apply_terminal(CoordinatorEvent::Completed {
+                    workbench: workbench.clone(),
+                    revision: RevisionId(1),
+                    snapshot: retained.clone(),
+                });
+            state.coordinator.accept(
                 RevisionId(2),
                 "p := [].".into(),
                 CacheReadinessView::Ready,
                 Default::default(),
             );
-            entry.publish(&state, ExecutionProgress::default());
+            state.cancellation = Some(cancellation.clone());
+            entry.publish(&state.coordinator, ExecutionProgress::default());
         }
-        let cancellation = CancellationFlag::new();
-        *entry.cancellation.lock().unwrap() = Some(cancellation.clone());
         assert!(!registry.cancel(&workbench, RevisionId(1)).await.unwrap());
         assert!(!cancellation.is_cancelled());
         assert!(registry.cancel(&workbench, RevisionId(2)).await.unwrap());
@@ -1648,11 +1648,15 @@ mod tests {
         );
         assert_eq!(view.state.displayed_snapshot(), Some(retained.as_ref()));
         let mut state = entry.state.lock().await;
-        assert!(!state.apply_terminal(CoordinatorEvent::Completed {
-            workbench,
-            revision: RevisionId(2),
-            snapshot: retained
-        }));
+        assert!(
+            !state
+                .coordinator
+                .apply_terminal(CoordinatorEvent::Completed {
+                    workbench,
+                    revision: RevisionId(2),
+                    snapshot: retained
+                })
+        );
     }
 
     #[tokio::test(start_paused = true)]
@@ -2971,17 +2975,21 @@ mod tests {
             for number in 1..=revision_count {
                 let revision = RevisionId(number);
                 let mut state = entry.state.lock().await;
-                assert!(state.accept(
+                assert!(state.coordinator.accept(
                     revision,
                     "pattern test := [upos=NOUN].".into(),
                     CacheReadinessView::Ready,
                     Default::default()
                 ));
-                assert!(state.apply_terminal(CoordinatorEvent::Completed {
-                    workbench: workbench.clone(),
-                    revision,
-                    snapshot: snapshot(&workbench, revision),
-                }));
+                assert!(
+                    state
+                        .coordinator
+                        .apply_terminal(CoordinatorEvent::Completed {
+                            workbench: workbench.clone(),
+                            revision,
+                            snapshot: snapshot(&workbench, revision),
+                        })
+                );
             }
         }
 
@@ -2999,6 +3007,7 @@ mod tests {
                 .state
                 .lock()
                 .await
+                .coordinator
                 .displayed_snapshot()
                 .map_or(0, |snapshot| snapshot.match_refs.len());
         }
@@ -3019,14 +3028,14 @@ mod tests {
         {
             let mut state = entry.state.lock().await;
             for revision in [1, 2] {
-                assert!(state.accept(
+                assert!(state.coordinator.accept(
                     RevisionId(revision),
                     "p := [].".into(),
                     CacheReadinessView::Ready,
                     Default::default()
                 ));
             }
-            entry.publish(&state, ExecutionProgress::default());
+            entry.publish(&state.coordinator, ExecutionProgress::default());
         }
         let (progress_tx, progress_rx) = watch::channel(None::<ScanProgress>);
         let forward = tokio::spawn(forward_progress(
@@ -3107,5 +3116,91 @@ mod tests {
         );
         assert!(state.displayed_snapshot().is_some());
         assert!(!state.apply_progress_for_test(&workbench, revision, 99, 99));
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+    async fn concurrent_accept_revision_never_aborts_the_newest_revision() {
+        let (dir, _ready) = tiny_ready_corpus(1);
+        let context = Arc::new(crate::server_context::ServerContext::new("/tmp/dict").unwrap());
+        let runtime = Arc::new(
+            CorpusRuntime::open(dir.path().join("unit.lingcorpus"), context)
+                .await
+                .unwrap(),
+        );
+        let slot = Arc::new(CorpusSlot::new(
+            CorpusName::default_key(),
+            runtime,
+            "unit".into(),
+        ));
+        let registry = CoordinatorRegistry::new(4);
+        let workbench = WorkbenchId::new("concurrent-accept");
+
+        let entry = registry.entry(&workbench, &slot).await;
+        let mut rx = registry.subscribe(&workbench).await.unwrap();
+
+        let workers = 8usize;
+        for round in 0..40 {
+            let scan_permit = registry.acquire_scan_permit().await;
+            let state_gate = entry.state.lock().await;
+            let started = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+            let mut joins = Vec::with_capacity(workers);
+            for _ in 0..workers {
+                let registry = registry.clone();
+                let workbench = workbench.clone();
+                let slot = Arc::clone(&slot);
+                let started = Arc::clone(&started);
+                joins.push(tokio::spawn(async move {
+                    started.fetch_add(1, Ordering::Relaxed);
+                    registry
+                        .accept_revision(
+                            workbench,
+                            &slot,
+                            RevisionRequest {
+                                source: "verb := [upos=VERB].".into(),
+                                ..RevisionRequest::default()
+                            },
+                        )
+                        .await
+                        .unwrap()
+                }));
+            }
+            while started.load(Ordering::Relaxed) < workers {
+                tokio::task::yield_now().await;
+            }
+            tokio::time::sleep(Duration::from_millis(2)).await;
+            drop(state_gate);
+
+            let mut latest = RevisionId(0);
+            for join in joins {
+                let revision = join.await.unwrap();
+                if revision > latest {
+                    latest = revision;
+                }
+            }
+            drop(scan_permit);
+
+            let view = tokio::time::timeout(Duration::from_secs(2), async {
+                rx.wait_for(|view| {
+                    view.state.current_attempt().is_some_and(|attempt| {
+                        attempt.revision == latest && attempt.phase == AttemptPhase::Completed
+                    })
+                })
+                .await
+                .unwrap()
+                .clone()
+            })
+            .await
+            .unwrap_or_else(|_| {
+                let view = rx.borrow().clone();
+                panic!(
+                    "round {round}: newest revision {latest:?} never completed (current attempt: {:?})",
+                    view.state.current_attempt()
+                );
+            });
+            assert_eq!(
+                view.state.displayed_snapshot().map(|s| s.revision),
+                Some(latest)
+            );
+        }
     }
 }
