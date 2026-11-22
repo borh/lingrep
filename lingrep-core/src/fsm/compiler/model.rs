@@ -240,6 +240,8 @@ pub(crate) enum GroupOperator {
 pub(crate) struct MetadataEntry {
     pub(crate) value: Value,
     pub(crate) span: SourceSpan,
+    /// The entry reached the definition from `defaults` or a bundle.
+    pub(crate) inherited: bool,
 }
 
 /// Open, JSON-compatible researcher metadata attached to one definition.
@@ -1010,6 +1012,10 @@ pub(crate) struct BoundProgram {
     /// Lossy for the same reason `set_uses` is: a bound token holds
     /// `AttrValue` and no name, so this cannot be recovered afterwards.
     pub(crate) test_uses: BTreeMap<DefinitionId, BTreeSet<CompactString>>,
+    /// Per definition, the authored span of each `BoundExpr::Token` of its
+    /// body in pre-order. A token test with several disjunctive branches
+    /// repeats its span once per branch.
+    pub(crate) token_spans: BTreeMap<DefinitionId, Box<[SourceSpan]>>,
 }
 
 /// A validated definition with stable identity and no source-buffer borrow.

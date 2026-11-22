@@ -20,6 +20,7 @@ mod materialize;
 mod metadata_baseline;
 pub(crate) mod model;
 mod nfa;
+mod no_match;
 #[cfg(test)]
 mod oracle;
 mod policy;
@@ -54,6 +55,10 @@ pub use expand::{
 pub use format::{FormatError, FormatOutcome, format_pattern_source};
 pub use limits::{CompileLimitError, CompileLimits, CompilerStats, TightenedCompileLimits};
 pub use model::{CatalogVectors, NearQuery, NearTest, SimilarityThreshold};
+pub use no_match::{
+    AttributeTestOutcome, ClaimSite, DefinitionExplanation, DefinitionOutcome, ElementLocation,
+    NoMatchExplainer, NoMatchOutcome, NoMatchReport, StopReason, StoppedAttempt,
+};
 pub use render::{render_diagnostics, render_pattern_error};
 
 use crate::fsm::AttrValueType;
@@ -110,6 +115,8 @@ pub struct CompileOutput {
     /// Not part of `COMPILER_SCHEMA_IDENTITY` — it describes source, not
     /// compiled semantics, so moving it invalidates nothing.
     pub analysis: CatalogAnalysis,
+    /// Reports where a definition's best attempt on a sentence stopped.
+    pub no_match: NoMatchExplainer,
 }
 
 /// Compiles one complete lingrep patterns document into an immutable NFA matcher.
@@ -694,6 +701,7 @@ fn compile_program(
         diagnostics,
         stats: *stats,
         analysis,
+        no_match: NoMatchExplainer::new(bound),
     })
 }
 

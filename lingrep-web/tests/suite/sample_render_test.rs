@@ -228,11 +228,32 @@ fn a_run_names_its_tokenizer_its_missing_attributes_and_each_failed_claim() {
         ClaimFailure, ClaimFailureKind, ClaimsReport, SampleBinding, SampleClaims, SampleRun,
         UnavailableAttribute,
     };
+    use lingrep_web::sample::{
+        UnmatchedLine, WhyNot, WhyNotElement, WhyNotOutcome, WhyNotStop, WhyNotStopKind,
+    };
+    let why = |outcome| WhyNot {
+        definition: "v".into(),
+        outcome,
+        starts_tried: 2,
+        truncated: true,
+        add_counterexample: Some(lingrep_web::sample::ClaimInsert {
+            offset: 7,
+            text: "counterexamples: [\"<鳥>\"]\n".into(),
+            expects: "pattern v".into(),
+        }),
+    };
+    let unmatched = vec![UnmatchedLine {
+        text: "<鳥>".into(),
+        definitions: vec![why(WhyNotOutcome::WhereRejected {
+            spans: "0..2".into(),
+        })],
+    }];
     let lines = vec![vec![tok("走る", "動詞")]];
     let render = |binding, claims| {
         SampleResults {
             analysis: analyze_tokens("pattern v := [upos=動詞].", &lines),
             run: Some(SampleRun {
+                unmatched: unmatched.clone(),
                 analyzer: "vibrato morphology · unidic.dic".into(),
                 corpus_analyzer: Some("conllu pretokenized".into()),
                 binding,
@@ -268,6 +289,24 @@ fn a_run_names_its_tokenizer_its_missing_attributes_and_each_failed_claim() {
                 definition: "v".into(),
                 example: "<猫>".into(),
                 kind: ClaimFailureKind::ExpectedMatch,
+                why_not: Some(why(WhyNotOutcome::Stopped(WhyNotStop {
+                    start: 1,
+                    consumed: 2,
+                    position: 3,
+                    token: Some("<い>".into()),
+                    kind: WhyNotStopKind::Token,
+                    element: Some(WhyNotElement {
+                        line: 4,
+                        column: 9,
+                        text: "[lemma=居る & unidic.cform~終止形]".into(),
+                    }),
+                    tests: vec![lingrep_core::fsm::AttributeTestOutcome {
+                        attribute: "unidic.cform".into(),
+                        test: "~終止形".into(),
+                        actual: None,
+                        held: false,
+                    }],
+                }))),
             }],
         }),
     );
@@ -279,6 +318,26 @@ fn a_run_names_its_tokenizer_its_missing_attributes_and_each_failed_claim() {
         html.contains("data-i18n-title=\"sample.claim_use\">&#60;猫&#62;</button>"),
         "the claim text is escaped: {html}"
     );
+    for expected in [
+        r#"data-why-not="stopped""#,
+        r#"data-i18n-args='{"start": 1, "consumed": 2}'"#,
+        "<span lang=\"ja\" data-why-not-token>「&#60;い&#62;」</span>",
+        "<code data-why-not-element>[lemma=居る &#38; unidic.cform~終止形]</code>",
+        r#"data-i18n-args='{"line": 4, "column": 9}'"#,
+        "<li data-held=\"false\">",
+        "<code>unidic.cform~終止形</code>",
+        r#"data-i18n="sample.why_no_value""#,
+        r#"data-i18n-args='{"starts": 2}'"#,
+        r#"data-i18n="sample.why_truncated""#,
+        "<p class=\"sample-unmatched-text\" lang=\"ja\">&#60;鳥&#62;</p>",
+        r#"data-why-not="where-rejected""#,
+        "<code>0..2</code>",
+        "data-claim-insert=\"counterexamples\" data-claim-offset=\"7\" \
+         data-claim-text=\"counterexamples: [&#34;&#60;鳥&#62;&#34;]\n\" \
+         data-claim-expects=\"pattern v\"",
+    ] {
+        assert!(html.contains(expected), "missing {expected}: {html}");
+    }
 
     let html = render(
         SampleBinding::Bound {
@@ -290,6 +349,7 @@ fn a_run_names_its_tokenizer_its_missing_attributes_and_each_failed_claim() {
                 definition: "v".into(),
                 example: "not a list".into(),
                 kind: ClaimFailureKind::Malformed,
+                why_not: None,
             }],
         }),
     );

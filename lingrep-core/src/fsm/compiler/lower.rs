@@ -450,6 +450,11 @@ impl DocumentDraft {
                     .map(|(key, entry)| (key.clone(), entry.clone())),
             );
         }
+        for entry in effective.values_mut() {
+            if let LoweredEntry::MetadataSet(entry) = entry {
+                entry.inherited = true;
+            }
+        }
         for (key, entry) in std::mem::take(&mut self.run) {
             match entry {
                 LoweredEntry::Unset { .. } => {
@@ -1376,7 +1381,11 @@ impl<'a, 'src> Lowerer<'a, 'src> {
         let value = self.lower_metadata_value(value_node)?;
         Ok((
             key,
-            LoweredEntry::MetadataSet(MetadataEntry { value, span }),
+            LoweredEntry::MetadataSet(MetadataEntry {
+                value,
+                span,
+                inherited: false,
+            }),
         ))
     }
 

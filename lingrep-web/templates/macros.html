@@ -57,3 +57,35 @@
 {% macro corpus_name(name, digest, key) %}<p class="corpus-context-name"><span data-i18n="corpus.label">Corpus:</span> <span{% if !digest.is_empty() %} title="{{ digest }}"{% endif %}{% if !key.is_empty() %} data-i18n="{{ key }}"{% endif %}>{{ name }}</span></p>{% endmacro %}
 
 {% macro corpus_line(name, key, hidden) %}<section class="corpus-context" aria-label="Corpus context" data-i18n-aria-label="corpus.section_label" data-corpus-line{% if hidden %} hidden{% endif %}>{% call corpus_name(name, "", key) %}{% endcall %}</section>{% endmacro %}
+
+{% macro why_not(item) %}
+<div class="why-not" data-why-not="{% match item.outcome %}{% when WhyNotOutcome::Stopped with (stop) %}stopped{% when WhyNotOutcome::NotPublished with { spans } %}not-published{% when WhyNotOutcome::WhereRejected with { spans } %}where-rejected{% when WhyNotOutcome::Unexplained with { reason } %}unexplained{% endmatch %}">
+{% match item.outcome %}
+{% when WhyNotOutcome::Stopped with (stop) %}
+  <p><span data-i18n="sample.why_furthest" data-i18n-args='{"start": {{ stop.start }}, "consumed": {{ stop.consumed }}}'>The furthest attempt started at token {{ stop.start }} and matched {{ stop.consumed }} token(s).</span>
+  {% match stop.kind %}
+  {% when WhyNotStopKind::Token %}<span data-i18n="sample.why_token" data-i18n-args='{"position": {{ stop.position }}}'>Token {{ stop.position }}</span>{% match stop.token %}{% when Some with (token) %} <span lang="ja" data-why-not-token>「{{ token }}」</span>{% when None %}{% endmatch %} <span data-i18n="sample.why_fails">fails this element:</span>
+  {% when WhyNotStopKind::SentenceEnded %}<span data-i18n="sample.why_sentence_ended">The sentence ended before this element:</span>
+  {% when WhyNotStopKind::Lookaround %}<span data-i18n="sample.why_lookaround" data-i18n-args='{"position": {{ stop.position }}}'>Before token {{ stop.position }}, this lookaround does not hold:</span>
+  {% when WhyNotStopKind::NotSentenceStart %}<span data-i18n="sample.why_not_start" data-i18n-args='{"position": {{ stop.position }}}'>Token {{ stop.position }} is not at the sentence start, which the pattern requires here.</span>
+  {% when WhyNotStopKind::NotSentenceEnd %}<span data-i18n="sample.why_not_end" data-i18n-args='{"position": {{ stop.position }}}'>The sentence continues at token {{ stop.position }}, where the pattern requires its end.</span>
+  {% endmatch %}
+  {% match stop.element %}{% when Some with (element) %}<code data-why-not-element>{{ element.text }}</code> <span class="why-not-location" data-i18n="sample.why_location" data-i18n-args='{"line": {{ element.line }}, "column": {{ element.column }}}'>(line {{ element.line }}, column {{ element.column }})</span>{% when None %}{% endmatch %}</p>
+  {% if stop.tests.len() > 0 %}
+  <ul class="why-not-tests">
+  {% for test in stop.tests %}
+    <li data-held="{{ test.held }}">{% if test.held %}<span class="why-not-verdict" data-i18n="sample.why_holds">holds</span>{% else %}<span class="why-not-verdict" data-i18n="sample.why_test_fails">fails</span>{% endif %} <code>{{ test.attribute }}{{ test.test }}</code> <span data-i18n="sample.why_token_has">token has</span> {% match test.actual %}{% when Some with (actual) %}<code lang="ja">{{ actual }}</code>{% when None %}<span data-i18n="sample.why_no_value">no value</span>{% endmatch %}</li>
+  {% endfor %}
+  </ul>
+  {% endif %}
+{% when WhyNotOutcome::NotPublished with { spans } %}
+  <p><span data-i18n="sample.why_not_published">The definition matched these token spans, and result policy published none of them:</span> <code>{{ spans }}</code></p>
+{% when WhyNotOutcome::WhereRejected with { spans } %}
+  <p><span data-i18n="sample.why_where_rejected">The body matched these token spans, and the where clause rejected each:</span> <code>{{ spans }}</code></p>
+{% when WhyNotOutcome::Unexplained with { reason } %}
+  <p><span data-i18n="sample.why_unexplained">No explanation is available:</span> <span lang="en">{{ reason }}</span></p>
+{% endmatch %}
+{% match item.add_counterexample %}{% when Some with (edit) %}<p><button type="button" class="btn btn-secondary btn-compact" data-claim-insert="counterexamples" data-claim-offset="{{ edit.offset }}" data-claim-text="{{ edit.text }}" data-claim-expects="{{ edit.expects }}"><span data-i18n="sample.add_counterexample">Add this sentence to the definition's counterexamples</span></button></p>{% when None %}{% endmatch %}
+{% if item.starts_tried > 0 %}<p class="why-not-note"><span data-i18n="sample.why_pass" data-i18n-args='{"starts": {{ item.starts_tried }}}'>From a separate explanation pass over the compiled pattern; {{ item.starts_tried }} start position(s) tried.</span>{% if item.truncated %} <span data-i18n="sample.why_truncated">It stopped at its step limit, so a later start position could have gone further.</span>{% endif %}</p>{% endif %}
+</div>
+{% endmacro %}

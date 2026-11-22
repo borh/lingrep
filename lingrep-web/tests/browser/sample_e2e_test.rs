@@ -253,6 +253,78 @@ async fn tab_moves_focus_out_of_the_pattern_editor_without_editing_it() -> WebDr
 }
 
 #[tokio::test]
+async fn a_sample_sentence_becomes_an_example_and_a_counterexample_that_are_checked()
+-> WebDriverResult<()> {
+    let Some(driver) = driver().await? else {
+        return Ok(());
+    };
+    let served = serve().await;
+    let set = "const field = document.querySelector(arguments[0]); field.value = arguments[1]; \
+               field.dispatchEvent(new Event('input', {bubbles: true}));";
+    let claims =
+        "return document.querySelector('[data-sample-claims]')?.dataset.sampleClaims ?? null";
+    let result: WebDriverResult<()> = async {
+        driver.goto(&served.base).await?;
+        wait_for(&driver, CHECKED, "the editor's first check").await?;
+        driver
+            .execute(set, vec![json!("#sample-text"), json!("猫\n鳥")])
+            .await?;
+        driver
+            .execute(set, vec![json!("#sample-pattern"), json!("pattern p := [text=猫].\n")])
+            .await?;
+        wait_for(
+            &driver,
+            "return !!document.querySelector('[data-claim-insert=examples]') \
+             && !!document.querySelector('[data-claim-insert=counterexamples]')",
+            "both claim actions",
+        )
+        .await?;
+        observed(&driver, claims, json!(null), "claims before any is declared").await?;
+
+        driver
+            .execute(
+                "document.querySelector('[data-claim-insert=examples]').click()",
+                vec![],
+            )
+            .await?;
+        wait_for(
+            &driver,
+            "return document.querySelector('[data-sample-claims]')?.dataset.sampleClaims === 'hold' \
+             && !document.querySelector('[data-claim-insert=examples]')",
+            "the added example to be checked and no longer offered",
+        )
+        .await?;
+        driver
+            .execute(
+                "document.querySelector('[data-claim-insert=counterexamples]').click()",
+                vec![],
+            )
+            .await?;
+        wait_for(
+            &driver,
+            "return !document.querySelector('[data-claim-insert]')",
+            "the added counterexample to be no longer offered",
+        )
+        .await?;
+        observed(
+            &driver,
+            "return [document.querySelector('#sample-pattern').value, \
+             document.querySelector('.sample-claims-summary').dataset.i18nArgs]",
+            json!([
+                "examples: [\"猫\"]\ncounterexamples: [\"鳥\"]\npattern p := [text=猫].\n",
+                "{\"checked\": 2}"
+            ]),
+            "the edited pattern and the claims checked",
+        )
+        .await
+    }
+    .await;
+    driver.quit().await?;
+    served.server.abort();
+    result
+}
+
+#[tokio::test]
 async fn a_failed_sample_run_shows_the_servers_reason_but_not_a_gateway_page() -> WebDriverResult<()>
 {
     let Some(driver) = driver().await? else {

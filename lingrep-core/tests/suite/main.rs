@@ -66,6 +66,7 @@ mod mini_dictionary_test;
 mod named_groups_test;
 mod named_sets_test;
 mod near_test;
+mod no_match_explanation_test;
 mod oov_featurization;
 mod or_patterns_test;
 mod orth_port_differential;

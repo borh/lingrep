@@ -279,6 +279,7 @@ pub(super) fn bind(
     let mut binding_diagnostics = Vec::new();
     let mut set_uses: BTreeMap<DefinitionId, BTreeSet<CompactString>> = BTreeMap::new();
     let mut test_uses: BTreeMap<DefinitionId, BTreeSet<CompactString>> = BTreeMap::new();
+    let mut token_spans: BTreeMap<DefinitionId, Box<[SourceSpan]>> = BTreeMap::new();
     // One budget for the whole accumulated catalog, built before the loop and
     // never rebuilt inside it: total substitution work is the quantity the
     // amplifier moves, and it is invisible to any counter that resets.
@@ -287,7 +288,7 @@ pub(super) fn bind(
         let id = DefinitionId::new(
             u32::try_from(index).expect("definition IDs were checked before bound allocation"),
         );
-        let (body, measures, used_sets, used_tests) = match definition.body {
+        let (body, measures, used_sets, used_tests, spans) = match definition.body {
             ParsedDefinitionBody::Pattern {
                 visibility,
                 expr,
@@ -296,7 +297,7 @@ pub(super) fn bind(
                 node_constraints,
                 span_paths,
             } => {
-                let (expr, relations, enhanced_relations, measures, used_sets, used_tests) =
+                let (expr, relations, enhanced_relations, measures, used_sets, used_tests, spans) =
                     bind_definition(
                         expr,
                         ParsedClauses {
@@ -329,6 +330,7 @@ pub(super) fn bind(
                     measures,
                     used_sets,
                     used_tests,
+                    spans,
                 )
             }
             ParsedDefinitionBody::Lexicon { by, members } => (
@@ -336,8 +338,12 @@ pub(super) fn bind(
                 Box::default(),
                 BTreeSet::new(),
                 BTreeSet::new(),
+                Vec::new(),
             ),
         };
+        if !spans.is_empty() {
+            token_spans.insert(id, spans.into_boxed_slice());
+        }
         if !used_sets.is_empty() {
             set_uses.insert(id, used_sets);
         }
@@ -366,6 +372,7 @@ pub(super) fn bind(
         set_uses,
         tests,
         test_uses,
+        token_spans,
     };
 
     validate_nullability(bound, &finish_order, &definition_spans)
@@ -673,6 +680,7 @@ fn bind_definition(
     Box<[super::model::BoundMeasure]>,
     BTreeSet<CompactString>,
     BTreeSet<CompactString>,
+    Vec<SourceSpan>,
 ) {
     let ParsedClauses {
         relations,
@@ -735,6 +743,7 @@ fn bind_definition(
         measures,
         uses.sets,
         uses.tests,
+        uses.token_spans,
     )
 }
 
@@ -748,6 +757,9 @@ fn bind_definition(
 struct Uses {
     sets: BTreeSet<CompactString>,
     tests: BTreeSet<CompactString>,
+    /// The authored span of each `BoundExpr::Token` of the body, in the
+    /// pre-order `bind_expr` produces them.
+    token_spans: Vec<SourceSpan>,
 }
 
 fn collect_capture_names(expr: &ParsedExpr, names: &mut BTreeSet<CompactString>) {
@@ -1311,8 +1323,10 @@ fn bind_expr(
     diagnostics: &mut Vec<PendingDiagnostic>,
 ) -> BoundExpr {
     match expr {
-        ParsedExpr::Token(test, _) => {
+        ParsedExpr::Token(test, span) => {
             let branches = bind_token_test(&test, ctx, uses, diagnostics);
+            uses.token_spans
+                .extend(std::iter::repeat_n(span, branches.len()));
             if branches.len() == 1 {
                 BoundExpr::Token(branches.into_vec().pop().expect("one branch"))
             } else {

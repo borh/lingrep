@@ -1475,6 +1475,16 @@ form .btn { margin-top: var(--space-3); }
   font-family: var(--font-serif-cjk);
   cursor: pointer;
 }
+.why-not { margin-block: var(--space-1) var(--space-2); font-size: 0.9rem; }
+.why-not p { margin: 0 0 var(--space-1); }
+.why-not-tests { margin: 0 0 var(--space-1); padding-inline-start: var(--space-4); list-style: none; }
+.why-not-tests [data-held="false"] .why-not-verdict { color: var(--alert-error-text); font-weight: 600; }
+.why-not-tests [data-held="true"] .why-not-verdict { color: var(--text-muted); }
+.why-not-note, .why-not-location { color: var(--text-muted); font-size: 0.85rem; }
+.sample-unmatched-title { margin-block: var(--space-4) var(--space-2); font-size: var(--font-size-h3); }
+.sample-unmatched-line { margin-block-end: var(--space-3); }
+.sample-unmatched-text { margin: 0 0 var(--space-1); font-family: var(--font-serif-cjk); }
+.sample-unmatched-definition > summary { cursor: pointer; }
 .sample-match-list {
   list-style: none;
   margin: var(--space-3) 0 0;

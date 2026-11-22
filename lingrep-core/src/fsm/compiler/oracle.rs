@@ -1587,6 +1587,7 @@ mod tests {
             set_uses: BTreeMap::new(),
             tests: Vec::new(),
             test_uses: BTreeMap::new(),
+            token_spans: BTreeMap::new(),
         }
     }
 
@@ -1657,6 +1658,7 @@ mod tests {
             set_uses: BTreeMap::new(),
             tests: Vec::new(),
             test_uses: BTreeMap::new(),
+            token_spans: BTreeMap::new(),
         };
         let tokens = [token("a"), token("b"), token("x")];
 
@@ -1911,13 +1913,12 @@ mod tests {
         );
         let tokens = symbols.iter().map(|value| token(value)).collect::<Vec<_>>();
         let source = format!("p := ({}) z.", expr.render(0));
-        let actual = compile_catalog(
+        let output = compile_catalog(
             PatternSource::named("generated.lx", &source),
             CompileLimits::default(),
         )
-        .expect("bounded generated source must compile")
-        .matcher
-        .find_matches(&tokens);
+        .expect("bounded generated source must compile");
+        let actual = output.matcher.find_matches(&tokens);
         let expected = oracle_matches(
             &program(BoundExpr::Sequence(
                 vec![expr.bound(), token_expr("z")].into_boxed_slice(),
@@ -1925,6 +1926,53 @@ mod tests {
             &tokens,
         );
         assert_eq!(actual, expected, "source: {source}");
+
+        use crate::fsm::{NoMatchOutcome, StopReason};
+        let report = output.no_match.explain("p", tokens.as_slice());
+        assert!(!report.truncated, "source: {source}");
+        match report.outcome {
+            NoMatchOutcome::BodyMatches { spans, .. } => {
+                let starts = |spans: Vec<(usize, usize)>| {
+                    spans
+                        .into_iter()
+                        .map(|(start, _)| start)
+                        .collect::<BTreeSet<_>>()
+                };
+                // The matcher keeps one match per start and drops a match
+                // contained in an earlier one, so its starts are a subset.
+                let matched = starts(
+                    actual
+                        .iter()
+                        .map(|found| (found.start, found.end))
+                        .collect(),
+                );
+                assert!(!matched.is_empty(), "source: {source}");
+                assert!(matched.is_subset(&starts(spans)), "source: {source}");
+            }
+            NoMatchOutcome::Stopped(attempt) => {
+                assert!(actual.is_empty(), "source: {source}");
+                let element = attempt.element.expect("a token element has a location");
+                let text = source
+                    .get(element.byte_range)
+                    .expect("the element lies in the source");
+                match attempt.reason {
+                    StopReason::SentenceEnded => {}
+                    StopReason::Token { tests } => {
+                        assert_eq!(tests.len(), 1);
+                        assert_eq!(tests[0].test, format!("={text}"), "source: {source}");
+                        assert_eq!(
+                            tests[0].actual.as_deref(),
+                            Some(symbols[attempt.position]),
+                            "source: {source}"
+                        );
+                        assert!(!tests[0].held);
+                    }
+                    other => panic!("unexpected stop {other:?} for {source}"),
+                }
+            }
+            NoMatchOutcome::EmptySentence => assert!(tokens.is_empty()),
+            other => panic!("unexpected outcome {other:?} for {source}"),
+        }
     }
 
     #[hegel::test(test_cases = 300, derandomize = true)]
@@ -1984,6 +2032,7 @@ mod tests {
             set_uses: BTreeMap::new(),
             tests: Vec::new(),
             test_uses: BTreeMap::new(),
+            token_spans: BTreeMap::new(),
         };
 
         let expected = oracle_matches(&program, &tokens);

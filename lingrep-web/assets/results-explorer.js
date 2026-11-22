@@ -9,6 +9,23 @@ const KWIC_PAGE_SIZE_KEY = "lingrep-web:kwic-page-size:v1";
 // Lets heavy users flip between patterns without losing their place.
 const patternUiState = new Map();
 
+/**
+ * `source` with `edit.text` inserted at the UTF-8 byte offset `edit.offset`,
+ * or null when the source no longer reads `edit.expects` there.
+ */
+export function applyClaimInsert(source, edit) {
+  const bytes = new TextEncoder().encode(source);
+  if (!Number.isInteger(edit.offset) || edit.offset < 0 || edit.offset > bytes.length) return null;
+  const decoder = new TextDecoder("utf-8", { fatal: true });
+  try {
+    const before = decoder.decode(bytes.slice(0, edit.offset));
+    const after = decoder.decode(bytes.slice(edit.offset));
+    return after.startsWith(edit.expects) ? before + edit.text + after : null;
+  } catch (_error) {
+    return null;
+  }
+}
+
 export function parseKwicPageSize(value) {
   const parsed = Number(value);
   return KWIC_PAGE_SIZES.includes(parsed) ? parsed : DEFAULT_KWIC_PAGE_SIZE;
@@ -1768,6 +1785,25 @@ if (typeof document !== "undefined") {
         input.value = [text, ...lines.filter(Boolean)].join("\n");
         input.dispatchEvent(new Event("input", { bubbles: true }));
       }
+      return;
+    }
+
+    const claimInsert = event.target.closest("[data-claim-insert]");
+    if (claimInsert) {
+      const pattern = document.querySelector("#sample-pattern, #corpus-pattern");
+      if (!pattern) return;
+      const edited = applyClaimInsert(pattern.value, {
+        offset: Number(claimInsert.dataset.claimOffset),
+        text: claimInsert.dataset.claimText,
+        expects: claimInsert.dataset.claimExpects,
+      });
+      if (edited === null) {
+        claimInsert.replaceChildren(t("sample.claim_stale"));
+        claimInsert.disabled = true;
+        return;
+      }
+      pattern.value = edited;
+      pattern.dispatchEvent(new Event("input", { bubbles: true }));
       return;
     }
 

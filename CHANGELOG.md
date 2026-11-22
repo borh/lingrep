@@ -18,6 +18,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   list each referenced attribute that tokenizer does not supply, and report a
   pattern that cannot bind to its token schema. The Workbench drawer also
   reports when the selected corpus was analyzed with a different token schema.
+- `ling check --verify-examples` and the Sample debugger explain why a
+  definition published no match for an example: the attempt that matched the
+  most tokens, the token and pattern element it stopped at, and each attribute
+  test of that element with the token's value. A lookaround failure, a `where`
+  clause rejection and a match that result policy did not publish are separate
+  outcomes. The Sample debugger shows the same explanation, per definition, for
+  each sample line without a published match.
+  `CompileOutput::explain_definition` is the library entry point.
+- The Sample debugger adds a sample sentence to a definition's claims: a
+  match offers its sentence for the definition's `examples`, and a sentence the
+  definition does not match offers itself for `counterexamples`. The action
+  edits the pattern text, creating the key above the definition when it is
+  absent, and the sample is checked again. It is not offered for a sentence the
+  list already holds, or for a list inherited from `defaults` or a bundle.
 
 ### Changed
 

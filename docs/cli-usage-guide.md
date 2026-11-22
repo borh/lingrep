@@ -87,6 +87,33 @@ to the sample token schema and all referenced attributes are available. Otherwis
 the debugger reports the schema error or lists the missing attributes. Select a
 failed claim's text to add it to the sample for inspection.
 
+Each `expected_match` failure carries an `explanation` of why the definition
+published no match for that example. Its `outcome` is one of:
+
+| `outcome` | Meaning |
+|---|---|
+| `stopped` | No start position matched the body. `attempt` is the attempt that matched the most tokens: where it started, the token it stopped at, the failing element's location in the catalog source, and each attribute test of that element with the token's value. `stop` distinguishes a failed token element, the end of the sentence, a sentence anchor, and each lookaround kind. |
+| `where_rejected` | The body matched the token `spans`, and the `where` clause or a span constraint rejected each. |
+| `not_published` | The definition matched the token `spans`, and result policy published none. |
+| `unexplained` | `detail` states why no explanation is available. |
+
+The matcher decides whether the definition matched and what policy published.
+The `stopped` and `where_rejected` outcomes come from a separate explanation
+pass that evaluates the definition body at each start position; `starts_tried`
+counts them, and `truncated` reports that the pass reached its step limit. The
+pass does not evaluate `same_as`, `within=` lookarounds, or definitions under
+`skip:`, and reports those as `unexplained`. Human output prints the same facts
+under each failure. The Sample debugger shows the explanation under each failed
+example and, for every sample line without a published match, per definition.
+
+The Sample debugger also writes claims. Each match has an action that adds its
+sentence to the definition's `examples`, and each definition that a sentence
+does not match has one that adds the sentence to its `counterexamples`. The
+action inserts into the pattern text, creating the key on the line above the
+definition when the definition does not write it, and the sample runs again.
+No action is offered when the list already holds the sentence or when the
+definition inherits the list from `defaults` or a bundle.
+
 ### Pattern diagrams
 
 `check --diagram` displays recognition flow instead of the check report. No
