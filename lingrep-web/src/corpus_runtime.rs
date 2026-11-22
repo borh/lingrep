@@ -936,7 +936,6 @@ fn prepare_artifact(
         .expect("the build semaphore is never closed");
     let artifact = build_artifact(
         inner,
-        handle,
         &destination,
         read_config,
         analysis,
@@ -1027,7 +1026,6 @@ fn adopt_declared_artifact(
 
 fn build_artifact(
     inner: &RuntimeInner,
-    handle: &tokio::runtime::Handle,
     destination: &Path,
     read_config: CorpusReadConfig,
     analysis: AnalysisInputs,
@@ -1064,25 +1062,24 @@ fn build_artifact(
     if inner.context.builds_stopping() {
         return Err(stopped("begin V1 artifact"));
     }
-    let mut builder = handle
-        .block_on(CorpusBuilder::begin_with_schema(
-            BuildConfig {
-                analysis,
-                analyzer: analyzer_record,
-                dictionary: DictionaryFingerprint::from_bytes(fingerprint),
-                trust: TrustClass::LocallyExecuted,
-                temp_budget: Arc::new(TempBudget::new(ARTIFACT_TEMP_BUDGET)),
-                sentence_metadata_keys: read_config
-                    .format()
-                    .sentence_metadata_keys()
-                    .iter()
-                    .map(|key| (*key).to_owned())
-                    .collect(),
-            },
-            destination,
-            schema,
-        ))
-        .map_err(classify(CacheFailureCategory::Cache, "begin V1 artifact"))?;
+    let mut builder = CorpusBuilder::begin_with_schema(
+        BuildConfig {
+            analysis,
+            analyzer: analyzer_record,
+            dictionary: DictionaryFingerprint::from_bytes(fingerprint),
+            trust: TrustClass::LocallyExecuted,
+            temp_budget: Arc::new(TempBudget::new(ARTIFACT_TEMP_BUDGET)),
+            sentence_metadata_keys: read_config
+                .format()
+                .sentence_metadata_keys()
+                .iter()
+                .map(|key| (*key).to_owned())
+                .collect(),
+        },
+        destination,
+        schema,
+    )
+    .map_err(classify(CacheFailureCategory::Cache, "begin V1 artifact"))?;
     let observation = builder.source_observation();
     let (mut events, documents, report) = ArtifactCorpusEvents::new(
         &inner.corpus_path,
@@ -1177,15 +1174,13 @@ fn build_artifact(
             } else {
                 None
             };
-            let location = handle
-                .block_on(builder.push_corpus_event(&event))
-                .map_err(classify(
-                    CacheFailureCategory::Cache,
-                    "push V1 corpus event",
-                ))?;
+            let location = builder.push_corpus_event(&event).map_err(classify(
+                CacheFailureCategory::Cache,
+                "push V1 corpus event",
+            ))?;
             if let (Some(location), Some(analyzed)) = (location, sentence) {
-                handle
-                    .block_on(builder.push_analyzed_sentence(&location, analyzed, &projection))
+                builder
+                    .push_analyzed_sentence(&location, analyzed, &projection)
                     .map_err(classify(
                         CacheFailureCategory::Cache,
                         "push V1 tokenized sentence",
@@ -1200,11 +1195,9 @@ fn build_artifact(
         }
     }
     let report = finish_discovery(&documents, &report)?;
-    let finished = handle.block_on(builder.finish_expected_analysis(
-        report,
-        expected_analysis,
-        || !inner.context.builds_stopping(),
-    ));
+    let finished = builder.finish_expected_analysis(report, expected_analysis, || {
+        !inner.context.builds_stopping()
+    });
     let artifact = match finished {
         Ok(Some(artifact)) => artifact,
         Ok(None) => return Err(stopped("publish immutable V1 artifact")),
@@ -1254,117 +1247,98 @@ pub(crate) fn test_ready_corpus(
 
     let directory = tempfile::tempdir().unwrap();
     let destination = directory.path().join("unit.lingcorpus");
-    let build_destination = destination.clone();
-    let artifact = std::thread::spawn(move || {
-        tokio::runtime::Runtime::new()
-            .unwrap()
-            .block_on(async move {
-                let mut builder = CorpusBuilder::begin(
-                    BuildConfig {
-                        analysis: AnalysisInputs::new(
-                            ReaderIdentity::from_bytes([1; 32]),
-                            AdmissionIdentity::from_bytes([2; 32]),
-                            &lingrep_corpus::vibrato_fixture_descriptor(),
-                        ),
-                        analyzer: lingrep_corpus::AnalyzerRecord::vibrato_fixture(),
-                        dictionary: DictionaryFingerprint::from_bytes([3; 32]),
-                        trust: TrustClass::LocallyExecuted,
-                        temp_budget: Arc::new(TempBudget::new(16 * 1024 * 1024)),
-                        sentence_metadata_keys: Vec::new(),
-                    },
-                    &build_destination,
-                )
-                .await
-                .unwrap();
-                let source = SourceDocument {
-                    ordinal: 0,
-                    logical_name: "unit.md".into(),
-                    path: PathBuf::from("/unused/unit.md"),
-                    target_group_ordinal: 0,
-                    external_target: false,
-                };
-                builder.register_source_document(&source).unwrap();
-                let observation = builder.source_observation();
-                observation.begin_source("unit.md").unwrap();
-                observation.update_source_bytes(b"unit").unwrap();
-                observation.end_source().unwrap();
-                builder
-                    .push_corpus_event(&AdmittedCorpusEvent::DocumentStart {
-                        id: DocumentId::new(0),
-                        source_name: "unit.md".into(),
-                        metadata: Box::new([]),
-                    })
-                    .await
-                    .unwrap();
-                builder
-                    .push_corpus_event(&AdmittedCorpusEvent::DivisionStart(std::sync::Arc::new(
-                        lingrep_core::corpus::Division {
-                            source_id: None,
-                            id: lingrep_core::corpus::DivisionId(0),
-                            document_id: DocumentId::new(0),
-                            kind: "paragraph".into(),
-                            parent_id: None,
-                            metadata: Box::new([]),
-                        },
-                    )))
-                    .await
-                    .unwrap();
-                for (ordinal, tokens) in sentences.iter().enumerate() {
-                    let location = builder
-                        .push_corpus_event(&AdmittedCorpusEvent::Sentence(AdmittedSentence {
-                            annotations: Box::new([]),
-                            structure: Default::default(),
-                            id: lingrep_core::corpus::SentenceId::new(ordinal as u64),
-                            document_id: DocumentId::new(0),
-                            document_sentence_ordinal: ordinal as u64,
-                            text: String::new(),
-                            words: None,
-                            enhanced_graph: None,
-                            active_labels: Box::new([]),
-                            metadata: Box::new([]),
-                        }))
-                        .await
-                        .unwrap()
-                        .unwrap();
-                    builder
-                        .push_tokenized_sentence(&location, tokens)
-                        .await
-                        .unwrap();
-                }
-                builder
-                    .push_corpus_event(&AdmittedCorpusEvent::DivisionEnd {
-                        id: lingrep_core::corpus::DivisionId(0),
-                    })
-                    .await
-                    .unwrap();
-                builder
-                    .push_corpus_event(&AdmittedCorpusEvent::DocumentEnd {
-                        id: DocumentId::new(0),
-                    })
-                    .await
-                    .unwrap();
-                let mut digest = blake3::Hasher::new();
-                digest.update(&7_u64.to_le_bytes());
-                digest.update(b"unit.md");
-                builder
-                    .finish(DiscoveryReport {
-                        inventory: InventoryStats {
-                            documents: 1,
-                            distinct_targets: 1,
-                            alias_documents: 0,
-                            max_target_multiplicity: 1,
-                            external_targets: 0,
-                        },
-                        configured_limits: TraversalLimits::default(),
-                        observed: TraversalHighWater::default(),
-                        ordered_inventory_digest: *digest.finalize().as_bytes(),
-                    })
-                    .await
-                    .unwrap()
-            })
-    })
-    .join()
+    let mut builder = CorpusBuilder::begin(
+        BuildConfig {
+            analysis: AnalysisInputs::new(
+                ReaderIdentity::from_bytes([1; 32]),
+                AdmissionIdentity::from_bytes([2; 32]),
+                &lingrep_corpus::vibrato_fixture_descriptor(),
+            ),
+            analyzer: lingrep_corpus::AnalyzerRecord::vibrato_fixture(),
+            dictionary: DictionaryFingerprint::from_bytes([3; 32]),
+            trust: TrustClass::LocallyExecuted,
+            temp_budget: Arc::new(TempBudget::new(16 * 1024 * 1024)),
+            sentence_metadata_keys: Vec::new(),
+        },
+        &destination,
+    )
     .unwrap();
+    let source = SourceDocument {
+        ordinal: 0,
+        logical_name: "unit.md".into(),
+        path: PathBuf::from("/unused/unit.md"),
+        target_group_ordinal: 0,
+        external_target: false,
+    };
+    builder.register_source_document(&source).unwrap();
+    let observation = builder.source_observation();
+    observation.begin_source("unit.md").unwrap();
+    observation.update_source_bytes(b"unit").unwrap();
+    observation.end_source().unwrap();
+    builder
+        .push_corpus_event(&AdmittedCorpusEvent::DocumentStart {
+            id: DocumentId::new(0),
+            source_name: "unit.md".into(),
+            metadata: Box::new([]),
+        })
+        .unwrap();
+    builder
+        .push_corpus_event(&AdmittedCorpusEvent::DivisionStart(std::sync::Arc::new(
+            lingrep_core::corpus::Division {
+                source_id: None,
+                id: lingrep_core::corpus::DivisionId(0),
+                document_id: DocumentId::new(0),
+                kind: "paragraph".into(),
+                parent_id: None,
+                metadata: Box::new([]),
+            },
+        )))
+        .unwrap();
+    for (ordinal, tokens) in sentences.iter().enumerate() {
+        let location = builder
+            .push_corpus_event(&AdmittedCorpusEvent::Sentence(AdmittedSentence {
+                annotations: Box::new([]),
+                structure: Default::default(),
+                id: lingrep_core::corpus::SentenceId::new(ordinal as u64),
+                document_id: DocumentId::new(0),
+                document_sentence_ordinal: ordinal as u64,
+                text: String::new(),
+                words: None,
+                enhanced_graph: None,
+                active_labels: Box::new([]),
+                metadata: Box::new([]),
+            }))
+            .unwrap()
+            .unwrap();
+        builder.push_tokenized_sentence(&location, tokens).unwrap();
+    }
+    builder
+        .push_corpus_event(&AdmittedCorpusEvent::DivisionEnd {
+            id: lingrep_core::corpus::DivisionId(0),
+        })
+        .unwrap();
+    builder
+        .push_corpus_event(&AdmittedCorpusEvent::DocumentEnd {
+            id: DocumentId::new(0),
+        })
+        .unwrap();
+    let mut digest = blake3::Hasher::new();
+    digest.update(&7_u64.to_le_bytes());
+    digest.update(b"unit.md");
+    let artifact = builder
+        .finish(DiscoveryReport {
+            inventory: InventoryStats {
+                documents: 1,
+                distinct_targets: 1,
+                alias_documents: 0,
+                max_target_multiplicity: 1,
+                external_targets: 0,
+            },
+            configured_limits: TraversalLimits::default(),
+            observed: TraversalHighWater::default(),
+            ordered_inventory_digest: *digest.finalize().as_bytes(),
+        })
+        .unwrap();
     let ready = ReadyCorpus::from_artifact(
         CorpusIdentity::new("fixture"),
         artifact,

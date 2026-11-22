@@ -97,10 +97,9 @@ async fn build_realization(
         },
         &staging,
     )
-    .await
     .unwrap();
     add_document(&mut builder, &documents[0], content, 0).await;
-    let artifact = builder.finish(discovery_for(&documents)).await.unwrap();
+    let artifact = builder.finish(discovery_for(&documents)).unwrap();
     let source = *artifact.source_identity();
     let path = canonical_artifact_path(
         root,

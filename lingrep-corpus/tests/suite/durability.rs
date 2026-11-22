@@ -230,9 +230,8 @@ async fn regenerate_fixtures() {
             },
             &destination,
         )
-        .await
         .unwrap();
         add_document(&mut builder, &documents[0], "durable text".as_bytes(), 0).await;
-        builder.finish(discovery_for(&documents)).await.unwrap();
+        builder.finish(discovery_for(&documents)).unwrap();
     }
 }

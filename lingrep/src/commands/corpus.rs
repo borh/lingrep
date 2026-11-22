@@ -73,22 +73,19 @@ pub fn run_build(
         markdown,
         input_format: args.input_format,
     };
+    let Some(artifact) = ensure_artifact(
+        &request,
+        config,
+        terminal,
+        true,
+        PublicationRole::RunCompletion,
+        output,
+    )?
+    else {
+        return Ok(CommandOutcome::Cancelled);
+    };
     let runtime = tokio::runtime::Runtime::new().map_err(CliError::Io)?;
-    runtime.block_on(async {
-        match ensure_artifact(
-            &request,
-            config,
-            terminal,
-            true,
-            PublicationRole::RunCompletion,
-            output,
-        )
-        .await?
-        {
-            None => Ok(CommandOutcome::Cancelled),
-            Some(artifact) => report_artifact(artifact.into_path(), output).await,
-        }
-    })
+    runtime.block_on(report_artifact(artifact.into_path(), output))
 }
 
 pub fn run_render(
@@ -210,7 +207,7 @@ pub(crate) struct BuildRequest {
 /// `Ok(None)` means either the run was cancelled, or `create` was false and no
 /// matching artifact exists — which the caller distinguishes by asking the
 /// terminal, because only one of the two is a reason to stop.
-pub(crate) async fn ensure_artifact(
+pub(crate) fn ensure_artifact(
     request: &BuildRequest,
     config: &ExecutionCliConfig,
     terminal: &TerminalArbiter,
@@ -283,8 +280,7 @@ pub(crate) async fn ensure_artifact(
         },
         &destination,
         schema,
-    )
-    .await?;
+    )?;
     let observation = builder.source_observation();
     let (events, documents, report) = PreparedBuildEvents::new(
         validated,
@@ -400,19 +396,15 @@ pub(crate) async fn ensure_artifact(
                 .filter(|sentence| sentence.words.is_none())
                 .and_then(|_| analyzed.next());
             let bound_words = sentence.and_then(|sentence| sentence.words.clone());
-            let location = builder.push_corpus_event(&event).await?;
+            let location = builder.push_corpus_event(&event)?;
             if sentence.is_some() {
                 stored_sentences += 1;
             }
             if let (Some(location), Some(analyzed)) = (location.as_ref(), analyzed_sentence) {
-                builder
-                    .push_analyzed_sentence(location, analyzed, &projection)
-                    .await?;
+                builder.push_analyzed_sentence(location, analyzed, &projection)?;
             }
             if let (Some(location), Some(words)) = (location.as_ref(), bound_words) {
-                builder
-                    .push_bound_sentence(location, words, &projection)
-                    .await?;
+                builder.push_bound_sentence(location, words, &projection)?;
             }
         }
         progress.snapshot(move || format!("build pass: stored {stored_sentences} sentences"));
@@ -432,20 +424,18 @@ pub(crate) async fn ensure_artifact(
     if let Some(session) = session.as_mut() {
         session.finish().map_err(CliError::from)?;
     }
-    let artifact = builder
-        .finish_guarded(
-            discovery,
-            || !terminal.cancellation().is_cancelled(),
-            || match role {
-                PublicationRole::RunCompletion => terminal.try_claim_completion(),
-                // Still the last cooperative cancellation checkpoint — the
-                // no-replace rename must not begin on a cancelled run — but it
-                // does not latch the terminal, because the answer has not been
-                // delivered yet.
-                PublicationRole::IntermediateCommit => !terminal.cancellation().is_cancelled(),
-            },
-        )
-        .await?;
+    let artifact = builder.finish_guarded(
+        discovery,
+        || !terminal.cancellation().is_cancelled(),
+        || match role {
+            PublicationRole::RunCompletion => terminal.try_claim_completion(),
+            // Still the last cooperative cancellation checkpoint — the
+            // no-replace rename must not begin on a cancelled run — but it
+            // does not latch the terminal, because the answer has not been
+            // delivered yet.
+            PublicationRole::IntermediateCommit => !terminal.cancellation().is_cancelled(),
+        },
+    )?;
     if artifact.is_none() {
         return Ok(None);
     }

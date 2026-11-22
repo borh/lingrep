@@ -169,15 +169,14 @@ fn decide(
         markdown: markdown.resolve().map_err(CliError::InvalidArgs)?,
         input_format: input.input_format,
     };
-    let runtime = tokio::runtime::Runtime::new().map_err(CliError::Io)?;
-    let found = runtime.block_on(ensure_artifact(
+    let found = ensure_artifact(
         &request,
         config,
         terminal,
         true,
         PublicationRole::IntermediateCommit,
         output,
-    ));
+    );
     // Caching is explicit, so lookup and preparation failures must be visible
     // rather than silently changing the requested execution mode.
     let found = found?;

@@ -41,174 +41,168 @@ struct Fixture {
 async fn fixture(words: Vec<String>, paragraphs: Vec<Range<usize>>) -> Fixture {
     let directory = tempfile::tempdir().unwrap();
     let path = directory.path().join("reading.lingcorpus");
-    let build_path = path.clone();
-    std::thread::spawn(move || {
-        tokio::runtime::Runtime::new()
-            .unwrap()
-            .block_on(async move {
-                let schema = TokenSchema::unidic_morphology();
-                let projection = schema
-                    .bind_projection(schema.keys().iter().cloned())
-                    .unwrap();
-                let mut builder = CorpusBuilder::begin(
-                    BuildConfig {
-                        analysis: AnalysisInputs::new(
-                            ReaderIdentity::from_bytes([1; 32]),
-                            AdmissionIdentity::from_bytes([2; 32]),
-                            &lingrep_corpus::vibrato_fixture_descriptor(),
-                        ),
-                        analyzer: lingrep_corpus::AnalyzerRecord::vibrato_fixture(),
-                        dictionary: DictionaryFingerprint::from_bytes([3; 32]),
-                        trust: lingrep_corpus::TrustClass::LocallyExecuted,
-                        temp_budget: Arc::new(TempBudget::new(32 * 1024 * 1024)),
-                        sentence_metadata_keys: Vec::new(),
-                    },
-                    &build_path,
+    let schema = TokenSchema::unidic_morphology();
+    let projection = schema
+        .bind_projection(schema.keys().iter().cloned())
+        .unwrap();
+    let mut builder = CorpusBuilder::begin(
+        BuildConfig {
+            analysis: AnalysisInputs::new(
+                ReaderIdentity::from_bytes([1; 32]),
+                AdmissionIdentity::from_bytes([2; 32]),
+                &lingrep_corpus::vibrato_fixture_descriptor(),
+            ),
+            analyzer: lingrep_corpus::AnalyzerRecord::vibrato_fixture(),
+            dictionary: DictionaryFingerprint::from_bytes([3; 32]),
+            trust: lingrep_corpus::TrustClass::LocallyExecuted,
+            temp_budget: Arc::new(TempBudget::new(32 * 1024 * 1024)),
+            sentence_metadata_keys: Vec::new(),
+        },
+        &path,
+    )
+    .unwrap();
+    let sources = (0..2)
+        .map(|id| SourceDocument {
+            ordinal: id,
+            logical_name: format!("doc-{id}.md"),
+            path: PathBuf::from(format!("/unused/doc-{id}.md")),
+            target_group_ordinal: id,
+            external_target: false,
+        })
+        .collect::<Vec<_>>();
+    let mut ordinal = 0;
+    for source in &sources {
+        builder.register_source_document(source).unwrap();
+        let observation = builder.source_observation();
+        observation.begin_source(&source.logical_name).unwrap();
+        observation
+            .update_source_bytes(source.logical_name.as_bytes())
+            .unwrap();
+        observation.end_source().unwrap();
+        let document_id = DocumentId::new(source.ordinal);
+        builder
+            .push_corpus_event(&Event::DocumentStart {
+                id: document_id,
+                source_name: source.logical_name.clone(),
+                metadata: lingrep_core::corpus::metadata_from_json(
+                    serde_json::json!({
+                        "title": if source.ordinal == 0 { "<Title & text>" } else { "OTHER_DOCUMENT_METADATA" },
+                        "authors": ["Alice", "Bob"],
+                        "year": 2024,
+                        "published": true
+                    }),
+                    "reading fixture",
                 )
-                .await
+                .unwrap(),
+            })
+            .unwrap();
+        if source.ordinal == 0 {
+            builder
+                .push_corpus_event(&Event::DivisionStart(Arc::new(Division {
+                    id: DivisionId(0),
+                    source_id: None,
+                    document_id,
+                    kind: "section".into(),
+                    parent_id: None,
+                    metadata: lingrep_core::corpus::metadata_from_json(
+                        serde_json::json!({"title": "Rural migration <study>", "level": 1}),
+                        "reading section fixture",
+                    )
+                    .unwrap(),
+                })))
                 .unwrap();
-                let sources = (0..2)
-                    .map(|id| SourceDocument {
-                        ordinal: id,
-                        logical_name: format!("doc-{id}.md"),
-                        path: PathBuf::from(format!("/unused/doc-{id}.md")),
-                        target_group_ordinal: id,
-                        external_target: false,
-                    })
-                    .collect::<Vec<_>>();
-                let mut ordinal = 0;
-                for source in &sources {
-                    builder.register_source_document(source).unwrap();
-                    let observation = builder.source_observation();
-                    observation.begin_source(&source.logical_name).unwrap();
-                    observation
-                        .update_source_bytes(source.logical_name.as_bytes())
-                        .unwrap();
-                    observation.end_source().unwrap();
-                    let document_id = DocumentId::new(source.ordinal);
+        }
+        let document_words = if source.ordinal == 0 {
+            words.clone()
+        } else {
+            vec!["OTHER_DOCUMENT_SECRET".into()]
+        };
+        for (index, word) in document_words.iter().enumerate() {
+            if source.ordinal == 0 {
+                for (id, range) in paragraphs
+                    .iter()
+                    .enumerate()
+                    .filter(|(_, range)| range.start == index)
+                {
+                    let parent_id = paragraphs
+                        .iter()
+                        .enumerate()
+                        .take(id)
+                        .rfind(|(_, other)| other.start <= range.start && range.end <= other.end)
+                        .map(|(parent, _)| DivisionId(parent as u64 + 1))
+                        .or(Some(DivisionId(0)));
                     builder
-                        .push_corpus_event(&Event::DocumentStart {
-                            id: document_id,
-                            source_name: source.logical_name.clone(),
-                            metadata: lingrep_core::corpus::metadata_from_json(
-                                serde_json::json!({
-                                    "title": if source.ordinal == 0 { "<Title & text>" } else { "OTHER_DOCUMENT_METADATA" },
-                                    "authors": ["Alice", "Bob"],
-                                    "year": 2024,
-                                    "published": true
-                                }),
-                                "reading fixture",
-                            ).unwrap(),
-                        })
-                        .await
-                        .unwrap();
-                    if source.ordinal == 0 {
-                        builder.push_corpus_event(&Event::DivisionStart(Arc::new(Division {
-                            id: DivisionId(0), source_id: None, document_id,
-                            kind: "section".into(), parent_id: None,
-                            metadata: lingrep_core::corpus::metadata_from_json(
-                                serde_json::json!({"title": "Rural migration <study>", "level": 1}),
-                                "reading section fixture",
-                            ).unwrap(),
-                        }))).await.unwrap();
-                    }
-                    let document_words = if source.ordinal == 0 {
-                        words.clone()
-                    } else {
-                        vec!["OTHER_DOCUMENT_SECRET".into()]
-                    };
-                    for (index, word) in document_words.iter().enumerate() {
-                        if source.ordinal == 0 {
-                            for (id, range) in paragraphs
-                                .iter()
-                                .enumerate()
-                                .filter(|(_, range)| range.start == index)
-                            {
-                                let parent_id = paragraphs
-                                    .iter()
-                                    .enumerate()
-                                    .take(id)
-                                    .rfind(|(_, other)| {
-                                        other.start <= range.start && range.end <= other.end
-                                    })
-                                    .map(|(parent, _)| DivisionId(parent as u64 + 1))
-                                    .or(Some(DivisionId(0)));
-                                builder
-                                    .push_corpus_event(&Event::DivisionStart(Arc::new(Division {
-                                        id: DivisionId(id as u64 + 1),
-                                        source_id: None,
-                                        document_id,
-                                        kind: "paragraph".into(),
-                                        parent_id,
-                                        metadata: Box::new([]),
-                                    })))
-                                    .await
-                                    .unwrap();
-                            }
-                        }
-                        let text = format!("  {word} \n");
-                        let tokens = vec![TokenInfo::default().with_orth(word)];
-                        let bound = BoundTokenSentence::project(&projection, &tokens)
-                            .unwrap()
-                            .with_char_offsets(Some(Arc::new(vec![CharSpan::new(
-                                2,
-                                2 + word.chars().count() as u32,
-                            )])));
-                        let location = builder
-                            .push_corpus_event(&Event::Sentence(AdmittedSentence {
-            annotations: Box::new([]),
-                                id: SentenceId::new(ordinal),
-                                document_id,
-                                document_sentence_ordinal: index as u64,
-                                text,
-                                words: Some(bound.clone()),
-                                enhanced_graph: None,
-                                structure: Default::default(),
-                                active_labels: if source.ordinal != 0 {
-                                    Box::new([])
-                                } else if index == 0 { Box::new(["abstract".into(), "introduction".into()]) } else { Box::new(["introduction".into()]) },
-                                metadata: Box::new([]),
-                            }))
-                            .await
-                            .unwrap()
-                            .unwrap();
-                        builder
-                            .push_bound_sentence(&location, bound, &projection)
-                            .await
-                            .unwrap();
-                        ordinal += 1;
-                        if source.ordinal == 0 {
-                            for (id, _) in paragraphs
-                                .iter()
-                                .enumerate()
-                                .rev()
-                                .filter(|(_, range)| range.end == index + 1)
-                            {
-                                builder
-                                    .push_corpus_event(&Event::DivisionEnd {
-                                        id: DivisionId(id as u64 + 1),
-                                    })
-                                    .await
-                                    .unwrap();
-                            }
-                        }
-                    }
-                    if source.ordinal == 0 {
-                        builder.push_corpus_event(&Event::DivisionEnd { id: DivisionId(0) }).await.unwrap();
-                    }
-                    builder
-                        .push_corpus_event(&Event::DocumentEnd { id: document_id })
-                        .await
+                        .push_corpus_event(&Event::DivisionStart(Arc::new(Division {
+                            id: DivisionId(id as u64 + 1),
+                            source_id: None,
+                            document_id,
+                            kind: "paragraph".into(),
+                            parent_id,
+                            metadata: Box::new([]),
+                        })))
                         .unwrap();
                 }
-                builder
-                    .finish(crate::v6_support::discovery_report(&sources))
-                    .await
-                    .unwrap();
-            });
-    })
-    .join()
-    .unwrap();
+            }
+            let text = format!("  {word} \n");
+            let tokens = vec![TokenInfo::default().with_orth(word)];
+            let bound = BoundTokenSentence::project(&projection, &tokens)
+                .unwrap()
+                .with_char_offsets(Some(Arc::new(vec![CharSpan::new(
+                    2,
+                    2 + word.chars().count() as u32,
+                )])));
+            let location = builder
+                .push_corpus_event(&Event::Sentence(AdmittedSentence {
+                    annotations: Box::new([]),
+                    id: SentenceId::new(ordinal),
+                    document_id,
+                    document_sentence_ordinal: index as u64,
+                    text,
+                    words: Some(bound.clone()),
+                    enhanced_graph: None,
+                    structure: Default::default(),
+                    active_labels: if source.ordinal != 0 {
+                        Box::new([])
+                    } else if index == 0 {
+                        Box::new(["abstract".into(), "introduction".into()])
+                    } else {
+                        Box::new(["introduction".into()])
+                    },
+                    metadata: Box::new([]),
+                }))
+                .unwrap()
+                .unwrap();
+            builder
+                .push_bound_sentence(&location, bound, &projection)
+                .unwrap();
+            ordinal += 1;
+            if source.ordinal == 0 {
+                for (id, _) in paragraphs
+                    .iter()
+                    .enumerate()
+                    .rev()
+                    .filter(|(_, range)| range.end == index + 1)
+                {
+                    builder
+                        .push_corpus_event(&Event::DivisionEnd {
+                            id: DivisionId(id as u64 + 1),
+                        })
+                        .unwrap();
+                }
+            }
+        }
+        if source.ordinal == 0 {
+            builder
+                .push_corpus_event(&Event::DivisionEnd { id: DivisionId(0) })
+                .unwrap();
+        }
+        builder
+            .push_corpus_event(&Event::DocumentEnd { id: document_id })
+            .unwrap();
+    }
+    builder
+        .finish(crate::v6_support::discovery_report(&sources))
+        .unwrap();
     let context =
         Arc::new(lingrep_web::server_context::ServerContext::new("/unused/dict").unwrap());
     let runtime = Arc::new(CorpusRuntime::from_ready(

@@ -75,7 +75,6 @@ async fn high_cardinality_target_indexes_are_charged_before_scratch_growth() {
         },
         &destination,
     )
-    .await
     .unwrap();
 
     for ordinal in 0..GROUPS {
@@ -122,7 +121,6 @@ async fn high_cardinality_admitted_targets_use_only_budgeted_indexes() {
         },
         &destination,
     )
-    .await
     .unwrap();
 
     for ordinal in 0..GROUPS {
@@ -134,12 +132,8 @@ async fn high_cardinality_admitted_targets_use_only_budgeted_indexes() {
             .unwrap();
         builder
             .push_corpus_event(&document_start(ordinal, &name))
-            .await
             .unwrap();
-        builder
-            .push_corpus_event(&document_end(ordinal))
-            .await
-            .unwrap();
+        builder.push_corpus_event(&document_end(ordinal)).unwrap();
     }
 
     assert_eq!(budget.used_bytes(), GROUPS * BYTES_PER_GROUP);
@@ -255,15 +249,12 @@ pub(crate) async fn add_document(
     observation.end_source().unwrap();
     builder
         .push_corpus_event(&document_start(source.ordinal, &source.logical_name))
-        .await
         .unwrap();
     builder
         .push_corpus_event(&paragraph_start(source.ordinal))
-        .await
         .unwrap();
     let location = builder
         .push_corpus_event(&sentence(sentence_ordinal, source.ordinal, 0))
-        .await
         .unwrap()
         .unwrap();
     builder
@@ -273,15 +264,12 @@ pub(crate) async fn add_document(
                 .with_orth(format!("token-{sentence_ordinal}"))
                 .with_pos("NOUN")],
         )
-        .await
         .unwrap();
     builder
         .push_corpus_event(&paragraph_end(source.ordinal))
-        .await
         .unwrap();
     builder
         .push_corpus_event(&document_end(source.ordinal))
-        .await
         .unwrap();
 }
 
@@ -298,11 +286,9 @@ async fn observe_and_add_empty_document(
     observation.end_source().unwrap();
     builder
         .push_corpus_event(&document_start(admitted_ordinal, &source.logical_name))
-        .await
         .unwrap();
     builder
         .push_corpus_event(&document_end(admitted_ordinal))
-        .await
         .unwrap();
 }
 
@@ -312,13 +298,11 @@ pub(crate) async fn build_two_document_artifact(parent: &Path) -> PathBuf {
         source_document(0, "a.md", 0, false),
         source_document(1, "nested/b.md", 0, true),
     ];
-    let mut builder = CorpusBuilder::begin(build_config(), &destination)
-        .await
-        .unwrap();
+    let mut builder = CorpusBuilder::begin(build_config(), &destination).unwrap();
     add_document(&mut builder, &documents[0], b"alpha", 0).await;
     add_document(&mut builder, &documents[1], b"beta", 1).await;
     let root = parent.join("fixture.lingcorpus");
-    builder.finish(discovery_for(&documents)).await.unwrap();
+    builder.finish(discovery_for(&documents)).unwrap();
     root
 }
 
@@ -366,9 +350,8 @@ async fn named_span_tree_measurements_match_before_and_after_preparation() {
         analyzer: lingrep_corpus::AnalyzerRecord::from_descriptor(&descriptor),
         ..build_config()
     };
-    let mut builder = CorpusBuilder::begin_with_schema(config, &destination, schema.clone())
-        .await
-        .unwrap();
+    let mut builder =
+        CorpusBuilder::begin_with_schema(config, &destination, schema.clone()).unwrap();
     builder.register_source_document(&source).unwrap();
     let observation = builder.source_observation();
     observation.begin_source(&source.logical_name).unwrap();
@@ -378,19 +361,14 @@ async fn named_span_tree_measurements_match_before_and_after_preparation() {
     observation.end_source().unwrap();
     builder
         .push_corpus_event(&document_start(0, &source.logical_name))
-        .await
         .unwrap();
-    builder
-        .push_corpus_event(&paragraph_start(0))
-        .await
-        .unwrap();
+    builder.push_corpus_event(&paragraph_start(0)).unwrap();
     let AdmittedCorpusEvent::Sentence(mut admitted) = sentence(0, 0, 0) else {
         panic!("expected a sentence event");
     };
     admitted.enhanced_graph = Some(parsed.enhanced_graph().clone());
     let location = builder
         .push_corpus_event(&AdmittedCorpusEvent::Sentence(admitted))
-        .await
         .unwrap()
         .unwrap();
     let words = parsed
@@ -400,11 +378,10 @@ async fn named_span_tree_measurements_match_before_and_after_preparation() {
         .unwrap();
     builder
         .push_bound_sentence(&location, words, &projection)
-        .await
         .unwrap();
-    builder.push_corpus_event(&paragraph_end(0)).await.unwrap();
-    builder.push_corpus_event(&document_end(0)).await.unwrap();
-    let artifact = builder.finish(discovery_for(&[source])).await.unwrap();
+    builder.push_corpus_event(&paragraph_end(0)).unwrap();
+    builder.push_corpus_event(&document_end(0)).unwrap();
+    let artifact = builder.finish(discovery_for(&[source])).unwrap();
 
     let catalog = compile_catalog(
         PatternSource::named("span-tree.lx", "p := ^ (?<v> []) [] $ measure count(tree(custom.layer).links) as $links, tree(\"custom.layer\").depth($v) as $depth."),
@@ -472,9 +449,8 @@ async fn enhanced_graph_component_round_trips_and_stays_lazy_for_morphology() {
         .unwrap();
     let direct = parsed.project(&projection).unwrap();
     let source = source_document(0, "fixture.conllu", 0, false);
-    let mut builder = CorpusBuilder::begin_with_schema(config, &destination, schema.clone())
-        .await
-        .unwrap();
+    let mut builder =
+        CorpusBuilder::begin_with_schema(config, &destination, schema.clone()).unwrap();
     builder.register_source_document(&source).unwrap();
     let observation = builder.source_observation();
     observation.begin_source(&source.logical_name).unwrap();
@@ -484,12 +460,8 @@ async fn enhanced_graph_component_round_trips_and_stays_lazy_for_morphology() {
     observation.end_source().unwrap();
     builder
         .push_corpus_event(&document_start(0, &source.logical_name))
-        .await
         .unwrap();
-    builder
-        .push_corpus_event(&paragraph_start(0))
-        .await
-        .unwrap();
+    builder.push_corpus_event(&paragraph_start(0)).unwrap();
     for ordinal in 0..2 {
         let event = AdmittedCorpusEvent::Sentence(AdmittedSentence {
             annotations: Box::new([]),
@@ -507,15 +479,14 @@ async fn enhanced_graph_component_round_trips_and_stays_lazy_for_morphology() {
             active_labels: Box::new([]),
             metadata: Box::new([]),
         });
-        let location = builder.push_corpus_event(&event).await.unwrap().unwrap();
+        let location = builder.push_corpus_event(&event).unwrap().unwrap();
         builder
             .push_bound_sentence(&location, direct.clone(), &projection)
-            .await
             .unwrap();
     }
-    builder.push_corpus_event(&paragraph_end(0)).await.unwrap();
-    builder.push_corpus_event(&document_end(0)).await.unwrap();
-    let artifact = builder.finish(discovery_for(&[source])).await.unwrap();
+    builder.push_corpus_event(&paragraph_end(0)).unwrap();
+    builder.push_corpus_event(&document_end(0)).unwrap();
+    let artifact = builder.finish(discovery_for(&[source])).unwrap();
 
     assert!(artifact.has_enhanced_graphs());
     let text_projection = schema
@@ -590,9 +561,7 @@ async fn one_observed_jsonl_source_can_back_multiple_admitted_documents() {
         "{\"title\":\"first\",\"sentences\":[\"猫。\"]}\n",
         "{\"title\":\"second\",\"sentences\":[\"犬。\"]}\n",
     );
-    let mut builder = CorpusBuilder::begin(build_config(), &destination)
-        .await
-        .unwrap();
+    let mut builder = CorpusBuilder::begin(build_config(), &destination).unwrap();
     let observation = builder.source_observation();
     observation.begin_source(&physical.logical_name).unwrap();
     observation.update_source_bytes(raw.as_bytes()).unwrap();
@@ -609,15 +578,12 @@ async fn one_observed_jsonl_source_can_back_multiple_admitted_documents() {
             .unwrap();
         builder
             .push_corpus_event(&document_start(document.ordinal, &document.logical_name))
-            .await
             .unwrap();
         builder
             .push_corpus_event(&paragraph_start(document.ordinal))
-            .await
             .unwrap();
         let location = builder
             .push_corpus_event(&sentence(ordinal as u64, document.ordinal, 0))
-            .await
             .unwrap()
             .unwrap();
         builder
@@ -625,19 +591,16 @@ async fn one_observed_jsonl_source_can_back_multiple_admitted_documents() {
                 &location,
                 &[TokenInfo::default().with_orth(if ordinal == 0 { "猫" } else { "犬" })],
             )
-            .await
             .unwrap();
         builder
             .push_corpus_event(&paragraph_end(document.ordinal))
-            .await
             .unwrap();
         builder
             .push_corpus_event(&document_end(document.ordinal))
-            .await
             .unwrap();
     }
 
-    let artifact = builder.finish(discovery_for(&[physical])).await.unwrap();
+    let artifact = builder.finish(discovery_for(&[physical])).unwrap();
 
     assert_eq!(artifact.inventory_stats().documents, 1);
     assert_eq!(artifact.documents().count(), 2);
@@ -649,19 +612,14 @@ async fn expected_analysis_identity_is_checked_before_publication() {
     let directory = tempfile::tempdir().unwrap();
     let destination = directory.path().join("changed-during-build.lingcorpus");
     let document = source_document(0, "a.md", 0, false);
-    let mut builder = CorpusBuilder::begin(build_config(), &destination)
-        .await
-        .unwrap();
+    let mut builder = CorpusBuilder::begin(build_config(), &destination).unwrap();
     add_document(&mut builder, &document, b"alpha", 0).await;
 
-    let error = match builder
-        .finish_expected_analysis(
-            discovery_for(&[document]),
-            AnalysisIdentity::from_bytes([0xff; 32]),
-            || true,
-        )
-        .await
-    {
+    let error = match builder.finish_expected_analysis(
+        discovery_for(&[document]),
+        AnalysisIdentity::from_bytes([0xff; 32]),
+        || true,
+    ) {
         Ok(_) => panic!("changed analysis identity was published"),
         Err(error) => error,
     };
@@ -680,9 +638,7 @@ async fn expected_analysis_finish_stopped_by_its_guard_publishes_nothing() {
     let directory = tempfile::tempdir().unwrap();
     let destination = directory.path().join("stopped.lingcorpus");
     let document = source_document(0, "a.md", 0, false);
-    let mut builder = CorpusBuilder::begin(build_config(), &destination)
-        .await
-        .unwrap();
+    let mut builder = CorpusBuilder::begin(build_config(), &destination).unwrap();
     add_document(&mut builder, &document, b"alpha", 0).await;
 
     let result = builder
@@ -691,7 +647,6 @@ async fn expected_analysis_finish_stopped_by_its_guard_publishes_nothing() {
             AnalysisIdentity::from_bytes([0xff; 32]),
             || false,
         )
-        .await
         .unwrap();
 
     assert!(result.is_none());
@@ -703,9 +658,7 @@ async fn guarded_finish_cancels_before_the_publication_commit() {
     let directory = tempfile::tempdir().unwrap();
     let destination = directory.path().join("cancelled.lingcorpus");
     let document = source_document(0, "a.md", 0, false);
-    let mut builder = CorpusBuilder::begin(build_config(), &destination)
-        .await
-        .unwrap();
+    let mut builder = CorpusBuilder::begin(build_config(), &destination).unwrap();
     add_document(&mut builder, &document, b"alpha", 0).await;
 
     let result = builder
@@ -714,7 +667,6 @@ async fn guarded_finish_cancels_before_the_publication_commit() {
             || false,
             || panic!("a cancelled finalization must not reach the rename claim"),
         )
-        .await
         .unwrap();
 
     assert!(result.is_none());
@@ -727,9 +679,7 @@ async fn guarded_finish_cancels_during_component_hashing_and_drops_staging() {
     let directory = tempfile::tempdir().unwrap();
     let destination = directory.path().join("cancelled-during-hash.lingcorpus");
     let document = source_document(0, "a.md", 0, false);
-    let mut builder = CorpusBuilder::begin(build_config(), &destination)
-        .await
-        .unwrap();
+    let mut builder = CorpusBuilder::begin(build_config(), &destination).unwrap();
     add_document(&mut builder, &document, b"alpha", 0).await;
     let checkpoints = Cell::new(0);
 
@@ -743,7 +693,6 @@ async fn guarded_finish_cancels_during_component_hashing_and_drops_staging() {
             },
             || panic!("hash cancellation must not reach the rename claim"),
         )
-        .await
         .unwrap();
 
     assert!(result.is_none());
@@ -770,24 +719,21 @@ async fn staging_owner_cleans_dropped_builders_and_failed_or_successful_finish()
     let sentinel = directory.path().join("unrelated");
     fs::create_dir(&sentinel).unwrap();
 
-    let builder = CorpusBuilder::begin(build_config(), &directory.path().join("drop.lingcorpus"))
-        .await
-        .unwrap();
+    let builder =
+        CorpusBuilder::begin(build_config(), &directory.path().join("drop.lingcorpus")).unwrap();
     assert_eq!(staging_entries(directory.path()).len(), 1);
     drop(builder);
     assert!(staging_entries(directory.path()).is_empty());
 
     let document = source_document(0, "unfinished.md", 0, false);
     let mut builder =
-        CorpusBuilder::begin(build_config(), &directory.path().join("error.lingcorpus"))
-            .await
-            .unwrap();
+        CorpusBuilder::begin(build_config(), &directory.path().join("error.lingcorpus")).unwrap();
     builder.register_source_document(&document).unwrap();
     builder
         .source_observation()
         .begin_source("unfinished.md")
         .unwrap();
-    assert!(builder.finish(discovery_for(&[document])).await.is_err());
+    assert!(builder.finish(discovery_for(&[document])).is_err());
     assert!(staging_entries(directory.path()).is_empty());
 
     let document = source_document(0, "complete.md", 0, false);
@@ -795,10 +741,9 @@ async fn staging_owner_cleans_dropped_builders_and_failed_or_successful_finish()
         build_config(),
         &directory.path().join("complete.lingcorpus"),
     )
-    .await
     .unwrap();
     add_document(&mut builder, &document, b"complete", 0).await;
-    builder.finish(discovery_for(&[document])).await.unwrap();
+    builder.finish(discovery_for(&[document])).unwrap();
     assert!(directory.path().join("complete.lingcorpus").is_dir());
     assert!(staging_entries(directory.path()).is_empty());
     assert!(sentinel.is_dir());
@@ -820,7 +765,6 @@ async fn tiny_shared_temp_budget_fails_typed_and_cleans_private_staging() {
         },
         &destination,
     )
-    .await
     .unwrap();
     let document = source_document(0, "document-name-needs-scratch.md", 0, false);
     let error = builder.register_source_document(&document).unwrap_err();
@@ -857,7 +801,6 @@ async fn postings_spill_failures_and_cancellation_release_budget_and_staging() {
             },
             &destination,
         )
-        .await
         .unwrap();
         let document = source_document(0, "spilled.md", 0, false);
         builder.register_source_document(&document).unwrap();
@@ -872,20 +815,15 @@ async fn postings_spill_failures_and_cancellation_release_budget_and_staging() {
         builder.source_observation().end_source().unwrap();
         builder
             .push_corpus_event(&document_start(0, "spilled.md"))
-            .await
             .unwrap();
         let location = builder
             .push_corpus_event(&sentence(0, 0, 0))
-            .await
             .unwrap()
             .unwrap();
         let mut reservation = None;
-        builder
-            .push_tokenized_sentence(&location, &tokens)
-            .await
-            .unwrap();
+        builder.push_tokenized_sentence(&location, &tokens).unwrap();
         {
-            builder.push_corpus_event(&document_end(0)).await.unwrap();
+            builder.push_corpus_event(&document_end(0)).unwrap();
             match mode {
                 "drop" => drop(builder),
                 "cancel" => {
@@ -896,7 +834,6 @@ async fn postings_spill_failures_and_cancellation_release_budget_and_staging() {
                                 || false,
                                 || panic!("cancelled build reached publication")
                             )
-                            .await
                             .unwrap()
                             .is_none()
                     );
@@ -910,7 +847,6 @@ async fn postings_spill_failures_and_cancellation_release_budget_and_staging() {
                                 || !index.exists(),
                                 || panic!("cancelled build reached publication")
                             )
-                            .await
                             .unwrap()
                             .is_none()
                     );
@@ -918,14 +854,13 @@ async fn postings_spill_failures_and_cancellation_release_budget_and_staging() {
                 "postings_io" => {
                     fs::create_dir(staging_entries(directory.path())[0].join("postings.v1"))
                         .unwrap();
-                    assert!(builder.finish(discovery_for(&[document])).await.is_err());
+                    assert!(builder.finish(discovery_for(&[document])).is_err());
                 }
                 "recorder_budget" => {
                     reservation = Some(budget.reserve(budget.snapshot().headroom_bytes()).unwrap());
                     assert_eq!(
                         builder
                             .finish(discovery_for(&[document]))
-                            .await
                             .err()
                             .unwrap()
                             .code(),
@@ -968,9 +903,7 @@ async fn document_without_sentences_opens_and_fully_verifies() {
     let directory = tempfile::tempdir().unwrap();
     let destination = directory.path().join("empty-document.lingcorpus");
     let document = source_document(0, "empty.md", 0, false);
-    let mut builder = CorpusBuilder::begin(build_config(), &destination)
-        .await
-        .unwrap();
+    let mut builder = CorpusBuilder::begin(build_config(), &destination).unwrap();
     builder.register_source_document(&document).unwrap();
     let observation = builder.source_observation();
     observation.begin_source(&document.logical_name).unwrap();
@@ -978,10 +911,9 @@ async fn document_without_sentences_opens_and_fully_verifies() {
     observation.end_source().unwrap();
     builder
         .push_corpus_event(&document_start(0, &document.logical_name))
-        .await
         .unwrap();
-    builder.push_corpus_event(&document_end(0)).await.unwrap();
-    builder.finish(discovery_for(&[document])).await.unwrap();
+    builder.push_corpus_event(&document_end(0)).unwrap();
+    builder.finish(discovery_for(&[document])).unwrap();
 
     let artifact = CorpusArtifact::open(&destination).unwrap();
     assert_eq!(artifact.documents().count(), 1);
@@ -1009,11 +941,9 @@ async fn regular_file_discovery_report_builds_opens_and_verifies_an_artifact() {
     assert_eq!(report.observed.examined_entries, 0);
 
     let destination = directory.path().join("regular-file.lingcorpus");
-    let mut builder = CorpusBuilder::begin(build_config(), &destination)
-        .await
-        .unwrap();
+    let mut builder = CorpusBuilder::begin(build_config(), &destination).unwrap();
     add_document(&mut builder, &document, raw, 0).await;
-    builder.finish(report).await.unwrap();
+    builder.finish(report).unwrap();
 
     let artifact = CorpusArtifact::open(&destination).unwrap();
     assert_eq!(artifact.documents().count(), 1);
@@ -1032,23 +962,19 @@ async fn finish_rejects_unfinished_or_divergent_source_inventories() {
     let directory = tempfile::tempdir().unwrap();
     let destination = directory.path().join("unfinished.lingcorpus");
     let document = source_document(0, "a.md", 0, false);
-    let mut builder = CorpusBuilder::begin(build_config(), &destination)
-        .await
-        .unwrap();
+    let mut builder = CorpusBuilder::begin(build_config(), &destination).unwrap();
     builder.register_source_document(&document).unwrap();
     let observed = builder.source_observation();
     observed.begin_source("a.md").unwrap();
     observed.update_source_bytes(b"raw bytes").unwrap();
     assert!(matches!(
-        builder.finish(discovery_for(&[document])).await,
+        builder.finish(discovery_for(&[document])),
         Err(CorpusError::Identity(IdentityError::InvalidState))
     ));
 
     let destination = directory.path().join("names.lingcorpus");
     let document = source_document(0, "b.md", 0, false);
-    let mut builder = CorpusBuilder::begin(build_config(), &destination)
-        .await
-        .unwrap();
+    let mut builder = CorpusBuilder::begin(build_config(), &destination).unwrap();
     builder.register_source_document(&document).unwrap();
     let observed = builder.source_observation();
     observed.begin_source("a.md").unwrap();
@@ -1056,9 +982,8 @@ async fn finish_rejects_unfinished_or_divergent_source_inventories() {
     observed.end_source().unwrap();
     builder
         .push_corpus_event(&document_start(0, "b.md"))
-        .await
         .unwrap();
-    let error = match builder.finish(discovery_for(&[document])).await {
+    let error = match builder.finish(discovery_for(&[document])) {
         Ok(_) => panic!("divergent source inventory was accepted"),
         Err(error) => error,
     };
@@ -1066,14 +991,12 @@ async fn finish_rejects_unfinished_or_divergent_source_inventories() {
 
     let destination = directory.path().join("report.lingcorpus");
     let document = source_document(0, "a.md", 0, false);
-    let mut builder = CorpusBuilder::begin(build_config(), &destination)
-        .await
-        .unwrap();
+    let mut builder = CorpusBuilder::begin(build_config(), &destination).unwrap();
     add_document(&mut builder, &document, b"raw bytes", 0).await;
     let observed = builder.source_observation();
     let mut report = discovery_for(&[document]);
     report.inventory.documents = 2;
-    let error = match builder.finish(report).await {
+    let error = match builder.finish(report) {
         Ok(_) => panic!("mismatched discovery report was accepted"),
         Err(error) => error,
     };
@@ -1137,9 +1060,7 @@ async fn convenience_then_mapped_alias_share_one_dense_target_group() {
         source_document(0, "direct.md", 0, false),
         source_document(1, "alias.md", 0, false),
     ];
-    let mut builder = CorpusBuilder::begin(build_config(), &destination)
-        .await
-        .unwrap();
+    let mut builder = CorpusBuilder::begin(build_config(), &destination).unwrap();
 
     builder.register_source_document(&documents[0]).unwrap();
     observe_and_add_empty_document(&mut builder, &documents[0], 0).await;
@@ -1149,7 +1070,7 @@ async fn convenience_then_mapped_alias_share_one_dense_target_group() {
         .unwrap();
     observe_and_add_empty_document(&mut builder, &documents[1], 1).await;
 
-    let artifact = builder.finish(discovery_for(&documents)).await.unwrap();
+    let artifact = builder.finish(discovery_for(&documents)).unwrap();
     assert_eq!(artifact.inventory_stats().distinct_targets, 1);
     assert_eq!(artifact.inventory_stats().alias_documents, 1);
     assert_eq!(artifact.inventory_stats().max_target_multiplicity, 2);
@@ -1171,9 +1092,7 @@ async fn mapped_alias_then_convenience_share_one_dense_target_group() {
         source_document(0, "alias.md", 0, false),
         source_document(1, "direct.md", 0, false),
     ];
-    let mut builder = CorpusBuilder::begin(build_config(), &destination)
-        .await
-        .unwrap();
+    let mut builder = CorpusBuilder::begin(build_config(), &destination).unwrap();
 
     builder.register_discovered_source(&documents[0]).unwrap();
     builder
@@ -1183,7 +1102,7 @@ async fn mapped_alias_then_convenience_share_one_dense_target_group() {
     builder.register_source_document(&documents[1]).unwrap();
     observe_and_add_empty_document(&mut builder, &documents[1], 1).await;
 
-    let artifact = builder.finish(discovery_for(&documents)).await.unwrap();
+    let artifact = builder.finish(discovery_for(&documents)).unwrap();
     assert_eq!(artifact.inventory_stats().distinct_targets, 1);
     assert_eq!(artifact.inventory_stats().alias_documents, 1);
     assert_eq!(artifact.inventory_stats().max_target_multiplicity, 2);
@@ -1348,9 +1267,7 @@ async fn artifact_composition_preserves_genuine_json_numbers_and_opaque_metadata
     let directory = tempfile::tempdir().unwrap();
     let destination = directory.path().join("numeric-metadata.lingcorpus");
     let source = source_document(0, "paper.md", 0, false);
-    let mut builder = CorpusBuilder::begin(build_config(), &destination)
-        .await
-        .unwrap();
+    let mut builder = CorpusBuilder::begin(build_config(), &destination).unwrap();
     builder.register_source_document(&source).unwrap();
     let observation = builder.source_observation();
     observation.begin_source("paper.md").unwrap();
@@ -1376,24 +1293,18 @@ async fn artifact_composition_preserves_genuine_json_numbers_and_opaque_metadata
             ]
             .into_boxed_slice(),
         })
-        .await
         .unwrap();
-    builder
-        .push_corpus_event(&paragraph_start(0))
-        .await
-        .unwrap();
+    builder.push_corpus_event(&paragraph_start(0)).unwrap();
     let location = builder
         .push_corpus_event(&sentence(0, 0, 0))
-        .await
         .unwrap()
         .unwrap();
     builder
         .push_tokenized_sentence(&location, &[TokenInfo::default()])
-        .await
         .unwrap();
-    builder.push_corpus_event(&paragraph_end(0)).await.unwrap();
-    builder.push_corpus_event(&document_end(0)).await.unwrap();
-    let artifact = builder.finish(discovery_for(&[source])).await.unwrap();
+    builder.push_corpus_event(&paragraph_end(0)).unwrap();
+    builder.push_corpus_event(&document_end(0)).unwrap();
+    let artifact = builder.finish(discovery_for(&[source])).unwrap();
     let view = artifact.provenance_view().await.unwrap();
     let sentence = artifact.sentence_provenance(&view, 0).await.unwrap();
     let metadata: serde_json::Value =
@@ -1409,9 +1320,7 @@ async fn artifact_composition_orders_regions_by_start_then_widest_span() {
     let directory = tempfile::tempdir().unwrap();
     let destination = directory.path().join("ordered-regions.lingcorpus");
     let source = source_document(0, "paper.md", 0, false);
-    let mut builder = CorpusBuilder::begin(build_config(), &destination)
-        .await
-        .unwrap();
+    let mut builder = CorpusBuilder::begin(build_config(), &destination).unwrap();
     builder.register_source_document(&source).unwrap();
     let observation = builder.source_observation();
     observation.begin_source("paper.md").unwrap();
@@ -1419,12 +1328,8 @@ async fn artifact_composition_orders_regions_by_start_then_widest_span() {
     observation.end_source().unwrap();
     builder
         .push_corpus_event(&document_start(0, "paper.md"))
-        .await
         .unwrap();
-    builder
-        .push_corpus_event(&paragraph_start(0))
-        .await
-        .unwrap();
+    builder.push_corpus_event(&paragraph_start(0)).unwrap();
     for (ordinal, labels) in [
         &["z-outer"][..],
         &["a-inner", "z-outer"][..],
@@ -1445,15 +1350,14 @@ async fn artifact_composition_orders_regions_by_start_then_widest_span() {
             active_labels: labels.iter().map(|label| (*label).into()).collect(),
             metadata: Box::new([]),
         });
-        let location = builder.push_corpus_event(&event).await.unwrap().unwrap();
+        let location = builder.push_corpus_event(&event).unwrap().unwrap();
         builder
             .push_tokenized_sentence(&location, &[TokenInfo::default()])
-            .await
             .unwrap();
     }
-    builder.push_corpus_event(&paragraph_end(0)).await.unwrap();
-    builder.push_corpus_event(&document_end(0)).await.unwrap();
-    let artifact = builder.finish(discovery_for(&[source])).await.unwrap();
+    builder.push_corpus_event(&paragraph_end(0)).unwrap();
+    builder.push_corpus_event(&document_end(0)).unwrap();
+    let artifact = builder.finish(discovery_for(&[source])).unwrap();
     let view = artifact.provenance_view().await.unwrap();
 
     let sentence = artifact.sentence_provenance(&view, 1).await.unwrap();
@@ -1476,9 +1380,7 @@ async fn artifact_composition_orders_regions_by_start_then_widest_span() {
 async fn source_registration_rejects_a_noncanonical_first_target_group() {
     let directory = tempfile::tempdir().unwrap();
     let destination = directory.path().join("noncanonical.lingcorpus");
-    let mut builder = CorpusBuilder::begin(build_config(), &destination)
-        .await
-        .unwrap();
+    let mut builder = CorpusBuilder::begin(build_config(), &destination).unwrap();
 
     let error = builder
         .register_source_document(&source_document(0, "a.md", 1, false))
@@ -2219,9 +2121,7 @@ fn assert_analysis_type(_: &AnalysisIdentity) {}
 async fn labelled_artifact(parent: &Path, labels: &[&[&str]]) -> CorpusArtifact {
     let destination = parent.join("labelled.lingcorpus");
     let source = source_document(0, "paper.md", 0, false);
-    let mut builder = CorpusBuilder::begin(build_config(), &destination)
-        .await
-        .unwrap();
+    let mut builder = CorpusBuilder::begin(build_config(), &destination).unwrap();
     builder.register_source_document(&source).unwrap();
     let observation = builder.source_observation();
     observation.begin_source("paper.md").unwrap();
@@ -2231,12 +2131,8 @@ async fn labelled_artifact(parent: &Path, labels: &[&[&str]]) -> CorpusArtifact 
     observation.end_source().unwrap();
     builder
         .push_corpus_event(&document_start(0, "paper.md"))
-        .await
         .unwrap();
-    builder
-        .push_corpus_event(&paragraph_start(0))
-        .await
-        .unwrap();
+    builder.push_corpus_event(&paragraph_start(0)).unwrap();
     for (ordinal, active) in labels.iter().enumerate() {
         let event = AdmittedCorpusEvent::Sentence(AdmittedSentence {
             annotations: Box::new([]),
@@ -2250,15 +2146,14 @@ async fn labelled_artifact(parent: &Path, labels: &[&[&str]]) -> CorpusArtifact 
             active_labels: active.iter().map(|label| (*label).into()).collect(),
             metadata: Box::new([]),
         });
-        let location = builder.push_corpus_event(&event).await.unwrap().unwrap();
+        let location = builder.push_corpus_event(&event).unwrap().unwrap();
         builder
             .push_tokenized_sentence(&location, &[TokenInfo::default()])
-            .await
             .unwrap();
     }
-    builder.push_corpus_event(&paragraph_end(0)).await.unwrap();
-    builder.push_corpus_event(&document_end(0)).await.unwrap();
-    builder.finish(discovery_for(&[source])).await.unwrap()
+    builder.push_corpus_event(&paragraph_end(0)).unwrap();
+    builder.push_corpus_event(&document_end(0)).unwrap();
+    builder.finish(discovery_for(&[source])).unwrap()
 }
 
 #[tokio::test]
@@ -2422,7 +2317,7 @@ async fn publication_refuses_a_different_featurization() {
         sentence_metadata_keys: Vec::new(),
     };
     let documents = [source_document(0, "a.md", 0, false)];
-    let Err(error) = CorpusBuilder::begin(stale, &destination).await else {
+    let Err(error) = CorpusBuilder::begin(stale, &destination) else {
         panic!("construction must refuse a mismatched schema identity");
     };
     let _ = documents;
@@ -2726,14 +2621,12 @@ async fn document_membership_accepts_sparse_ids_and_subsets() {
         source_document(0, "a.md", 0, false),
         source_document(1, "b.md", 1, false),
     ];
-    let mut builder = CorpusBuilder::begin(build_config(), &destination)
-        .await
-        .unwrap();
+    let mut builder = CorpusBuilder::begin(build_config(), &destination).unwrap();
     for (source, id) in documents.iter().zip([3, 100]) {
         builder.register_source_document(source).unwrap();
         observe_and_add_empty_document(&mut builder, source, id).await;
     }
-    builder.finish(discovery_for(&documents)).await.unwrap();
+    builder.finish(discovery_for(&documents)).unwrap();
     let artifact = CorpusArtifact::open(&destination).unwrap();
     for ids in [&[][..], &[3][..], &[100][..], &[3, 100][..]] {
         artifact.check_document_ids(ids).unwrap();

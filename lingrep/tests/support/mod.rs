@@ -305,7 +305,6 @@ pub async fn build_single_sentence_artifact(destination: &Path, text: &str, toke
         },
         destination,
     )
-    .await
     .expect("begin prepared test artifact");
     builder
         .register_source_document(&source)
@@ -326,7 +325,6 @@ pub async fn build_single_sentence_artifact(destination: &Path, text: &str, toke
             source_name: "a.md".into(),
             metadata: empty_metadata(),
         })
-        .await
         .expect("start prepared test document");
     builder
         .push_corpus_event(&AdmittedCorpusEvent::DivisionStart(std::sync::Arc::new(
@@ -339,7 +337,6 @@ pub async fn build_single_sentence_artifact(destination: &Path, text: &str, toke
                 metadata: empty_metadata(),
             },
         )))
-        .await
         .expect("start prepared test paragraph");
     let location = builder
         .push_corpus_event(&AdmittedCorpusEvent::Sentence(AdmittedSentence {
@@ -354,24 +351,20 @@ pub async fn build_single_sentence_artifact(destination: &Path, text: &str, toke
             active_labels: Box::new([]),
             metadata: Box::new([]),
         }))
-        .await
         .expect("append prepared test sentence")
         .expect("sentence has a location");
     builder
         .push_tokenized_sentence(&location, tokens)
-        .await
         .expect("append prepared test tokens");
     builder
         .push_corpus_event(&AdmittedCorpusEvent::DivisionEnd {
             id: lingrep_core::corpus::DivisionId(0),
         })
-        .await
         .expect("end prepared test paragraph");
     builder
         .push_corpus_event(&AdmittedCorpusEvent::DocumentEnd {
             id: DocumentId::new(0),
         })
-        .await
         .expect("end prepared test document");
     builder
         .finish(DiscoveryReport {
@@ -391,7 +384,6 @@ pub async fn build_single_sentence_artifact(destination: &Path, text: &str, toke
             },
             ordered_inventory_digest: inventory_digest(&["a.md"]),
         })
-        .await
         .expect("finish prepared test artifact");
 }
 

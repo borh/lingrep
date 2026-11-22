@@ -64,11 +64,11 @@ fn inventory_digest(name: &str) -> [u8; 32] {
     *hash.finalize().as_bytes()
 }
 
-async fn build_artifact(path: &Path) {
-    build_corpus(path, "研究", SENTENCES).await;
+fn build_artifact(path: &Path) {
+    build_corpus(path, "研究", SENTENCES);
 }
 
-async fn build_corpus(path: &Path, text: &str, sentences: usize) {
+fn build_corpus(path: &Path, text: &str, sentences: usize) {
     let source = SourceDocument {
         ordinal: 0,
         logical_name: "benchmark.md".into(),
@@ -87,7 +87,6 @@ async fn build_corpus(path: &Path, text: &str, sentences: usize) {
         },
         path,
     )
-    .await
     .unwrap();
     builder.register_source_document(&source).unwrap();
     let observation = builder.source_observation();
@@ -102,7 +101,6 @@ async fn build_corpus(path: &Path, text: &str, sentences: usize) {
             source_name: source.logical_name.clone(),
             metadata: Box::new([]),
         })
-        .await
         .unwrap();
     builder
         .push_corpus_event(&AdmittedCorpusEvent::DivisionStart(std::sync::Arc::new(
@@ -115,7 +113,6 @@ async fn build_corpus(path: &Path, text: &str, sentences: usize) {
                 metadata: Box::new([]),
             },
         )))
-        .await
         .unwrap();
     let plan = VibratoPlan::new(
         lingrep_core::testing::test_tokenizer().clone(),
@@ -141,7 +138,6 @@ async fn build_corpus(path: &Path, text: &str, sentences: usize) {
                 active_labels: Box::new([]),
                 metadata: Box::new([]),
             }))
-            .await
             .unwrap()
             .unwrap();
         let input = TextUnit::sentence(
@@ -157,20 +153,17 @@ async fn build_corpus(path: &Path, text: &str, sentences: usize) {
             .into_vec();
         builder
             .push_analyzed_sentence(&location, analyzed.pop().unwrap(), &projection)
-            .await
             .unwrap();
     }
     builder
         .push_corpus_event(&AdmittedCorpusEvent::DivisionEnd {
             id: lingrep_core::corpus::DivisionId(0),
         })
-        .await
         .unwrap();
     builder
         .push_corpus_event(&AdmittedCorpusEvent::DocumentEnd {
             id: DocumentId::new(0),
         })
-        .await
         .unwrap();
     builder
         .finish(DiscoveryReport {
@@ -190,7 +183,6 @@ async fn build_corpus(path: &Path, text: &str, sentences: usize) {
             },
             ordered_inventory_digest: inventory_digest(&source.logical_name),
         })
-        .await
         .unwrap();
 }
 
@@ -253,7 +245,7 @@ fn prepared_tokens(c: &mut Criterion) {
         .enable_time()
         .build()
         .unwrap();
-    runtime.block_on(build_artifact(&path));
+    build_artifact(&path);
     let artifact = CorpusArtifact::open(&path).unwrap();
     let matcher = matcher();
     let pool = Arc::new(
@@ -321,7 +313,7 @@ fn prepared_tokens(c: &mut Criterion) {
                     .path()
                     .join(format!("build-{iteration}.lingcorpus"));
                 let started = Instant::now();
-                runtime.block_on(build_corpus(&target, BUILD_SENTENCE, BUILD_SENTENCES));
+                build_corpus(&target, BUILD_SENTENCE, BUILD_SENTENCES);
                 elapsed += started.elapsed();
                 std::fs::remove_dir_all(&target).unwrap();
             }

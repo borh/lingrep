@@ -66,11 +66,9 @@ fn discovery_report() -> DiscoveryReport {
     }
 }
 
-async fn complete_builder(destination: &Path) -> CorpusBuilder {
+fn complete_builder(destination: &Path) -> CorpusBuilder {
     let source = source_document(0, "science.md", 0, false);
-    let mut builder = CorpusBuilder::begin(build_config(), destination)
-        .await
-        .unwrap();
+    let mut builder = CorpusBuilder::begin(build_config(), destination).unwrap();
     builder.register_source_document(&source).unwrap();
     let observation = builder.source_observation();
     observation.begin_source(&source.logical_name).unwrap();
@@ -82,13 +80,11 @@ async fn complete_builder(destination: &Path) -> CorpusBuilder {
             source_name: source.logical_name,
             metadata: Box::new([]),
         })
-        .await
         .unwrap();
     builder
         .push_corpus_event(&AdmittedCorpusEvent::DocumentEnd {
             id: DocumentId::new(0),
         })
-        .await
         .unwrap();
     builder
 }
@@ -109,9 +105,9 @@ fn staging_entries(parent: &Path) -> Vec<PathBuf> {
 async fn finish_publishes_one_complete_immutable_artifact() {
     let directory = tempfile::tempdir().unwrap();
     let destination = directory.path().join("science.lingcorpus");
-    let builder = complete_builder(&destination).await;
+    let builder = complete_builder(&destination);
 
-    let artifact = builder.finish(discovery_report()).await.unwrap();
+    let artifact = builder.finish(discovery_report()).unwrap();
 
     assert_eq!(artifact.documents().count(), 1);
     assert_eq!(
@@ -136,9 +132,9 @@ async fn no_replace_preserves_preexisting_empty_and_nonempty_directories() {
         if with_marker {
             std::fs::write(&marker, b"keep me").unwrap();
         }
-        let builder = complete_builder(&destination).await;
+        let builder = complete_builder(&destination);
 
-        let error = match builder.finish(discovery_report()).await {
+        let error = match builder.finish(discovery_report()) {
             Ok(_) => panic!("publication replaced an existing destination"),
             Err(error) => error,
         };
@@ -162,13 +158,14 @@ async fn no_replace_preserves_preexisting_empty_and_nonempty_directories() {
 async fn two_builders_for_one_absent_destination_publish_at_most_one() {
     let directory = tempfile::tempdir().unwrap();
     let destination = directory.path().join("science.lingcorpus");
-    let first = complete_builder(&destination).await;
-    let second = complete_builder(&destination).await;
+    let first = complete_builder(&destination);
+    let second = complete_builder(&destination);
 
-    let (first, second) = tokio::join!(
-        first.finish(discovery_report()),
-        second.finish(discovery_report())
-    );
+    let (first, second) = std::thread::scope(|scope| {
+        let first = scope.spawn(move || first.finish(discovery_report()));
+        let second = scope.spawn(move || second.finish(discovery_report()));
+        (first.join().unwrap(), second.join().unwrap())
+    });
 
     assert_eq!(usize::from(first.is_ok()) + usize::from(second.is_ok()), 1);
     let loser = if let Err(error) = first {

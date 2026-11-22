@@ -546,17 +546,16 @@ struct CurrentDocument {
 
 impl CorpusBuilder {
     /// Creates a uniquely named private sibling staging directory.
-    pub async fn begin(config: BuildConfig, destination: &Path) -> Result<Self, CorpusError> {
+    pub fn begin(config: BuildConfig, destination: &Path) -> Result<Self, CorpusError> {
         Self::begin_with_schema(
             config,
             destination,
             lingrep_core::token_match::TokenSchema::unidic_morphology(),
         )
-        .await
     }
 
     /// Creates a V1 artifact for one complete canonical analyzer profile schema.
-    pub async fn begin_with_schema(
+    pub fn begin_with_schema(
         config: BuildConfig,
         destination: &Path,
         storage_schema: lingrep_core::token_match::TokenSchema,
@@ -697,9 +696,8 @@ impl CorpusBuilder {
     }
 
     /// Finalizes and atomically publishes one immutable artifact.
-    pub async fn finish(self, discovery: DiscoveryReport) -> Result<CorpusArtifact, CorpusError> {
-        self.finish_guarded(discovery, || true, || true)
-            .await?
+    pub fn finish(self, discovery: DiscoveryReport) -> Result<CorpusArtifact, CorpusError> {
+        self.finish_guarded(discovery, || true, || true)?
             .ok_or_else(|| invalid_builder("unconditional publication guard cancelled"))
     }
 
@@ -710,15 +708,13 @@ impl CorpusBuilder {
     /// staging directory is finalized. Once it returns `false` the staging
     /// directory is removed and the result is `Ok(None)`; it is not called
     /// after finalization.
-    pub async fn finish_expected_analysis(
+    pub fn finish_expected_analysis(
         self,
         discovery: DiscoveryReport,
         expected: AnalysisIdentity,
         mut should_continue: impl FnMut() -> bool,
     ) -> Result<Option<CorpusArtifact>, CorpusError> {
-        let Some(mut completed) = self
-            .finalize_staging_guarded(discovery, &mut should_continue)
-            .await?
+        let Some(mut completed) = self.finalize_staging_guarded(discovery, &mut should_continue)?
         else {
             return Ok(None);
         };
@@ -739,15 +735,13 @@ impl CorpusBuilder {
     /// is called exactly once immediately before the no-replace rename and
     /// should atomically exclude later cancellation. Returning `false` from
     /// either guard drops the private staging directory and returns `Ok(None)`.
-    pub async fn finish_guarded(
+    pub fn finish_guarded(
         self,
         discovery: DiscoveryReport,
         mut should_continue: impl FnMut() -> bool,
         claim_commit: impl FnOnce() -> bool,
     ) -> Result<Option<CorpusArtifact>, CorpusError> {
-        let Some(mut completed) = self
-            .finalize_staging_guarded(discovery, &mut should_continue)
-            .await?
+        let Some(mut completed) = self.finalize_staging_guarded(discovery, &mut should_continue)?
         else {
             return Ok(None);
         };
@@ -908,7 +902,7 @@ impl CorpusBuilder {
     }
 
     /// Records one admitted structural event and returns its sentence location.
-    pub async fn push_corpus_event(
+    pub fn push_corpus_event(
         &mut self,
         event: &AdmittedCorpusEvent,
     ) -> Result<Option<SentenceLocation>, CorpusError> {
@@ -1111,7 +1105,7 @@ impl CorpusBuilder {
     }
 
     /// Writes the tokens paired with the immediately preceding sentence event.
-    pub async fn push_tokenized_sentence(
+    pub fn push_tokenized_sentence(
         &mut self,
         location: &SentenceLocation,
         tokens: &[TokenInfo],
@@ -1142,7 +1136,7 @@ impl CorpusBuilder {
     /// Writes one validated native-analysis sentence in its complete typed schema.
     /// Takes the analysis by value: the token writer buffers the sentence
     /// until its block flushes, and every caller already owns the value.
-    pub async fn push_analyzed_sentence(
+    pub fn push_analyzed_sentence(
         &mut self,
         location: &SentenceLocation,
         analyzed: AnalyzedInput,
@@ -1199,7 +1193,7 @@ impl CorpusBuilder {
     /// Pretokenized formats have no analyzer invocation to record. Their
     /// admitted text remains in provenance and their bound words are stored
     /// verbatim.
-    pub async fn push_bound_sentence(
+    pub fn push_bound_sentence(
         &mut self,
         location: &SentenceLocation,
         words: BoundTokenSentence,
@@ -1247,17 +1241,16 @@ impl CorpusBuilder {
 
     /// Finalizes a complete private artifact without publishing it.
     #[cfg(test)]
-    pub(crate) async fn finalize_staging(
+    pub(crate) fn finalize_staging(
         self,
         discovery: DiscoveryReport,
     ) -> Result<CompletedStagingArtifact, CorpusError> {
         let mut should_continue = || true;
-        self.finalize_staging_guarded(discovery, &mut should_continue)
-            .await?
+        self.finalize_staging_guarded(discovery, &mut should_continue)?
             .ok_or_else(|| invalid_builder("unconditional staging finalization cancelled"))
     }
 
-    async fn finalize_staging_guarded(
+    fn finalize_staging_guarded(
         mut self,
         discovery: DiscoveryReport,
         should_continue: &mut impl FnMut() -> bool,

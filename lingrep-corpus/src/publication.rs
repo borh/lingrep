@@ -645,7 +645,7 @@ mod tests {
         }
     }
 
-    async fn complete_staging(destination: &Path) -> CompletedStagingArtifact {
+    fn complete_staging(destination: &Path) -> CompletedStagingArtifact {
         let source = SourceDocument {
             ordinal: 0,
             logical_name: "science.md".into(),
@@ -653,9 +653,7 @@ mod tests {
             target_group_ordinal: 0,
             external_target: false,
         };
-        let mut builder = CorpusBuilder::begin(build_config(), destination)
-            .await
-            .unwrap();
+        let mut builder = CorpusBuilder::begin(build_config(), destination).unwrap();
         builder.register_source_document(&source).unwrap();
         let observation = builder.source_observation();
         observation.begin_source(&source.logical_name).unwrap();
@@ -667,22 +665,20 @@ mod tests {
                 source_name: source.logical_name,
                 metadata: Box::new([]),
             })
-            .await
             .unwrap();
         builder
             .push_corpus_event(&AdmittedCorpusEvent::DocumentEnd {
                 id: DocumentId::new(0),
             })
-            .await
             .unwrap();
-        builder.finalize_staging(discovery_report()).await.unwrap()
+        builder.finalize_staging(discovery_report()).unwrap()
     }
 
     #[tokio::test]
     async fn publication_orders_component_staging_rename_and_parent_durability() {
         let directory = tempfile::tempdir().unwrap();
         let destination = directory.path().join("science.lingcorpus");
-        let mut completed = complete_staging(&destination).await;
+        let mut completed = complete_staging(&destination);
         let staging = completed.path().to_path_buf();
         let ops = RecordingOps::default();
 
@@ -760,7 +756,7 @@ mod tests {
     async fn validated_publication_holds_nothing_under_staging_at_the_rename() {
         let directory = tempfile::tempdir().unwrap();
         let destination = directory.path().join("science.lingcorpus");
-        let mut completed = complete_staging(&destination).await;
+        let mut completed = complete_staging(&destination);
         let ops = RenameRequiresNothingHeld {
             held_at_rename: Mutex::new(None),
         };
@@ -778,7 +774,7 @@ mod tests {
     async fn pre_rename_fsync_failure_leaves_no_destination_and_cleans_staging() {
         let directory = tempfile::tempdir().unwrap();
         let destination = directory.path().join("science.lingcorpus");
-        let mut completed = complete_staging(&destination).await;
+        let mut completed = complete_staging(&destination);
         let staging = completed.path().to_path_buf();
         let ops = RecordingOps::failing_sync(staging.clone());
 
@@ -800,7 +796,7 @@ mod tests {
     async fn parent_fsync_failure_preserves_commit_for_inspect_retain_or_remove() {
         let directory = tempfile::tempdir().unwrap();
         let destination = directory.path().join("science.lingcorpus");
-        let mut completed = complete_staging(&destination).await;
+        let mut completed = complete_staging(&destination);
         let staging = completed.path().to_path_buf();
         let ops = RecordingOps::failing_sync(directory.path().to_path_buf());
 
@@ -820,7 +816,7 @@ mod tests {
         drop(artifact);
         assert!(destination.is_dir(), "inspection must retain the artifact");
 
-        let mut retry = complete_staging(&destination).await;
+        let mut retry = complete_staging(&destination);
         let retry_staging = retry.path().to_path_buf();
         assert!(matches!(
             publish(&mut retry),
@@ -841,7 +837,7 @@ mod tests {
         for &errno in UNSUPPORTED_RENAME_ERRNOS {
             let directory = tempfile::tempdir().unwrap();
             let destination = directory.path().join("science.lingcorpus");
-            let mut completed = complete_staging(&destination).await;
+            let mut completed = complete_staging(&destination);
             let staging = completed.path().to_path_buf();
             let ops = RecordingOps::failing_rename(errno);
 
@@ -871,7 +867,7 @@ mod tests {
     async fn a_failed_rename_names_the_staging_directory_and_the_destination() {
         let directory = tempfile::tempdir().unwrap();
         let destination = directory.path().join("science.lingcorpus");
-        let mut completed = complete_staging(&destination).await;
+        let mut completed = complete_staging(&destination);
         let staging = completed.path().to_path_buf();
 
         let error = publish_with_ops(&RecordingOps::failing_rename(libc::EACCES), &mut completed)
@@ -924,7 +920,7 @@ mod tests {
         for &errno in UNSUPPORTED_RENAME_ERRNOS {
             let directory = tempfile::tempdir().unwrap();
             let destination = directory.path().join("science.lingcorpus");
-            let mut completed = complete_staging(&destination).await;
+            let mut completed = complete_staging(&destination);
             let staging = completed.path().to_path_buf();
 
             publish_with_ops(&no_replace_rename_failing(errno), &mut completed).unwrap();
@@ -940,7 +936,7 @@ mod tests {
         for errno in [libc::EPERM, libc::EACCES, libc::EXDEV] {
             let directory = tempfile::tempdir().unwrap();
             let destination = directory.path().join("science.lingcorpus");
-            let mut completed = complete_staging(&destination).await;
+            let mut completed = complete_staging(&destination);
             let staging = completed.path().to_path_buf();
 
             let error =
@@ -961,7 +957,7 @@ mod tests {
         for errno in [libc::EEXIST, libc::ENOTEMPTY] {
             let directory = tempfile::tempdir().unwrap();
             let destination = directory.path().join("science.lingcorpus");
-            let mut completed = complete_staging(&destination).await;
+            let mut completed = complete_staging(&destination);
 
             let error =
                 publish_with_ops(&no_replace_rename_failing(errno), &mut completed).unwrap_err();
@@ -1051,10 +1047,10 @@ mod tests {
         std::fs::create_dir(&other_artifact).unwrap();
         let unlocked = directory.path().join(".science.lingcorpus.staging-1-2");
         std::fs::create_dir(&unlocked).unwrap();
-        let mut live = complete_staging(&destination).await;
+        let mut live = complete_staging(&destination);
         let live_staging = live.path().to_path_buf();
 
-        drop(complete_staging(&destination).await);
+        drop(complete_staging(&destination));
 
         assert!(!dead.exists() && !dead_lock.exists());
         assert!(other_host.exists() && other_host_lock.exists());
@@ -1075,7 +1071,7 @@ mod tests {
     async fn staging_leftovers_classify_each_lock_without_removing_anything() {
         let directory = tempfile::tempdir().unwrap();
         let destination = directory.path().join("science.lingcorpus");
-        let live = complete_staging(&destination).await;
+        let live = complete_staging(&destination);
         let (dead, dead_lock) =
             killed_builder_leftovers(directory.path(), "1-0", &host_name().unwrap());
         let (other_host, _) =
@@ -1107,8 +1103,8 @@ mod tests {
     async fn concurrent_rename_contenders_publish_exactly_one_complete_artifact() {
         let directory = tempfile::tempdir().unwrap();
         let destination = directory.path().join("science.lingcorpus");
-        let first = complete_staging(&destination).await;
-        let second = complete_staging(&destination).await;
+        let first = complete_staging(&destination);
+        let second = complete_staging(&destination);
         let first_staging = first.path().to_path_buf();
         let second_staging = second.path().to_path_buf();
         let barrier = Arc::new(Barrier::new(2));

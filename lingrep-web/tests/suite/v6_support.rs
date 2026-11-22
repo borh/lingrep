@@ -78,141 +78,117 @@ pub fn build_artifact_with_spans(
         .collect::<Vec<_>>();
     let directory = tempfile::tempdir().unwrap();
     let path = directory.path().join("fixture.lingcorpus");
-    let build_path = path.clone();
-    std::thread::spawn(move || {
-        tokio::runtime::Runtime::new()
-            .unwrap()
-            .block_on(async move {
-                let sources = documents
-                    .iter()
-                    .enumerate()
-                    .map(
-                        |(ordinal, (logical_name, target_group_ordinal, external_target, _))| {
-                            SourceDocument {
-                                ordinal: ordinal as u64,
-                                logical_name: logical_name.clone(),
-                                path: PathBuf::from(format!("/unused/{logical_name}")),
-                                target_group_ordinal: *target_group_ordinal,
-                                external_target: *external_target,
-                            }
-                        },
-                    )
-                    .collect::<Vec<_>>();
-                let mut builder = CorpusBuilder::begin(
-                    BuildConfig {
-                        analysis: AnalysisInputs::new(
-                            ReaderIdentity::from_bytes([1; 32]),
-                            AdmissionIdentity::from_bytes([2; 32]),
-                            &lingrep_corpus::vibrato_fixture_descriptor(),
-                        ),
-                        analyzer: lingrep_corpus::AnalyzerRecord::vibrato_fixture(),
-                        dictionary: DictionaryFingerprint::from_bytes([3; 32]),
-                        trust: lingrep_corpus::TrustClass::LocallyExecuted,
-                        temp_budget: Arc::new(TempBudget::new(16 * 1024 * 1024)),
-                        sentence_metadata_keys: Vec::new(),
-                    },
-                    &build_path,
-                )
-                .await
+    let sources = documents
+        .iter()
+        .enumerate()
+        .map(
+            |(ordinal, (logical_name, target_group_ordinal, external_target, _))| SourceDocument {
+                ordinal: ordinal as u64,
+                logical_name: logical_name.clone(),
+                path: PathBuf::from(format!("/unused/{logical_name}")),
+                target_group_ordinal: *target_group_ordinal,
+                external_target: *external_target,
+            },
+        )
+        .collect::<Vec<_>>();
+    let mut builder = CorpusBuilder::begin(
+        BuildConfig {
+            analysis: AnalysisInputs::new(
+                ReaderIdentity::from_bytes([1; 32]),
+                AdmissionIdentity::from_bytes([2; 32]),
+                &lingrep_corpus::vibrato_fixture_descriptor(),
+            ),
+            analyzer: lingrep_corpus::AnalyzerRecord::vibrato_fixture(),
+            dictionary: DictionaryFingerprint::from_bytes([3; 32]),
+            trust: lingrep_corpus::TrustClass::LocallyExecuted,
+            temp_budget: Arc::new(TempBudget::new(16 * 1024 * 1024)),
+            sentence_metadata_keys: Vec::new(),
+        },
+        &path,
+    )
+    .unwrap();
+    let observation = builder.source_observation();
+    let mut sentence_ordinal = 0_u64;
+    for (source, (_, _, _, sentences)) in sources.iter().zip(&documents) {
+        builder.register_source_document(source).unwrap();
+        observation.begin_source(&source.logical_name).unwrap();
+        observation
+            .update_source_bytes(source.logical_name.as_bytes())
+            .unwrap();
+        observation.end_source().unwrap();
+        builder
+            .push_corpus_event(&AdmittedCorpusEvent::DocumentStart {
+                id: DocumentId::new(source.ordinal),
+                source_name: source.logical_name.clone(),
+                metadata: metadata
+                    .get(source.ordinal as usize)
+                    .cloned()
+                    .unwrap_or_default(),
+            })
+            .unwrap();
+        builder
+            .push_corpus_event(&AdmittedCorpusEvent::DivisionStart(std::sync::Arc::new(
+                lingrep_core::corpus::Division {
+                    source_id: None,
+                    id: lingrep_core::corpus::DivisionId(source.ordinal),
+                    document_id: DocumentId::new(source.ordinal),
+                    kind: "paragraph".into(),
+                    parent_id: None,
+                    metadata: Box::new([]),
+                },
+            )))
+            .unwrap();
+        for (local_ordinal, tokens) in sentences.iter().enumerate() {
+            let location = builder
+                .push_corpus_event(&AdmittedCorpusEvent::Sentence(AdmittedSentence {
+                    annotations: Box::new([]),
+                    structure: Default::default(),
+                    id: lingrep_core::corpus::SentenceId::new(sentence_ordinal),
+                    document_id: DocumentId::new(source.ordinal),
+                    document_sentence_ordinal: local_ordinal as u64,
+                    text: String::new(),
+                    words: None,
+                    enhanced_graph: None,
+                    active_labels: sections
+                        .get(sentence_ordinal as usize)
+                        .cloned()
+                        .unwrap_or_default()
+                        .into_boxed_slice(),
+                    metadata: Box::new([]),
+                }))
+                .unwrap()
                 .unwrap();
-                let observation = builder.source_observation();
-                let mut sentence_ordinal = 0_u64;
-                for (source, (_, _, _, sentences)) in sources.iter().zip(&documents) {
-                    builder.register_source_document(source).unwrap();
-                    observation.begin_source(&source.logical_name).unwrap();
-                    observation
-                        .update_source_bytes(source.logical_name.as_bytes())
+            match spans.get(sentence_ordinal as usize) {
+                Some(spans) if !spans.is_empty() => {
+                    let schema = lingrep_core::token_match::TokenSchema::unidic_morphology();
+                    let projection = schema
+                        .bind_projection(schema.keys().iter().cloned())
                         .unwrap();
-                    observation.end_source().unwrap();
-                    builder
-                        .push_corpus_event(&AdmittedCorpusEvent::DocumentStart {
-                            id: DocumentId::new(source.ordinal),
-                            source_name: source.logical_name.clone(),
-                            metadata: metadata
-                                .get(source.ordinal as usize)
-                                .cloned()
-                                .unwrap_or_default(),
-                        })
-                        .await
-                        .unwrap();
-                    builder
-                        .push_corpus_event(&AdmittedCorpusEvent::DivisionStart(
-                            std::sync::Arc::new(lingrep_core::corpus::Division {
-                                source_id: None,
-                                id: lingrep_core::corpus::DivisionId(source.ordinal),
-                                document_id: DocumentId::new(source.ordinal),
-                                kind: "paragraph".into(),
-                                parent_id: None,
-                                metadata: Box::new([]),
-                            }),
-                        ))
-                        .await
-                        .unwrap();
-                    for (local_ordinal, tokens) in sentences.iter().enumerate() {
-                        let location = builder
-                            .push_corpus_event(&AdmittedCorpusEvent::Sentence(AdmittedSentence {
-                                annotations: Box::new([]),
-                                structure: Default::default(),
-                                id: lingrep_core::corpus::SentenceId::new(sentence_ordinal),
-                                document_id: DocumentId::new(source.ordinal),
-                                document_sentence_ordinal: local_ordinal as u64,
-                                text: String::new(),
-                                words: None,
-                                enhanced_graph: None,
-                                active_labels: sections
-                                    .get(sentence_ordinal as usize)
-                                    .cloned()
-                                    .unwrap_or_default()
-                                    .into_boxed_slice(),
-                                metadata: Box::new([]),
-                            }))
-                            .await
+                    let words =
+                        lingrep_core::token_match::BoundTokenSentence::project(&projection, tokens)
                             .unwrap()
+                            .with_spans(spans.clone())
                             .unwrap();
-                        match spans.get(sentence_ordinal as usize) {
-                            Some(spans) if !spans.is_empty() => {
-                                let schema =
-                                    lingrep_core::token_match::TokenSchema::unidic_morphology();
-                                let projection = schema
-                                    .bind_projection(schema.keys().iter().cloned())
-                                    .unwrap();
-                                let words = lingrep_core::token_match::BoundTokenSentence::project(
-                                    &projection,
-                                    tokens,
-                                )
-                                .unwrap()
-                                .with_spans(spans.clone())
-                                .unwrap();
-                                builder
-                                    .push_bound_sentence(&location, words, &projection)
-                                    .await
-                                    .unwrap();
-                            }
-                            _ => builder
-                                .push_tokenized_sentence(&location, tokens)
-                                .await
-                                .unwrap(),
-                        }
-                        sentence_ordinal += 1;
-                    }
                     builder
-                        .push_corpus_event(&AdmittedCorpusEvent::DivisionEnd {
-                            id: lingrep_core::corpus::DivisionId(source.ordinal),
-                        })
-                        .await
-                        .unwrap();
-                    builder
-                        .push_corpus_event(&AdmittedCorpusEvent::DocumentEnd {
-                            id: DocumentId::new(source.ordinal),
-                        })
-                        .await
+                        .push_bound_sentence(&location, words, &projection)
                         .unwrap();
                 }
-                builder.finish(discovery_report(&sources)).await.unwrap();
-            });
-    })
-    .join()
-    .unwrap();
+                _ => builder.push_tokenized_sentence(&location, tokens).unwrap(),
+            }
+            sentence_ordinal += 1;
+        }
+        builder
+            .push_corpus_event(&AdmittedCorpusEvent::DivisionEnd {
+                id: lingrep_core::corpus::DivisionId(source.ordinal),
+            })
+            .unwrap();
+        builder
+            .push_corpus_event(&AdmittedCorpusEvent::DocumentEnd {
+                id: DocumentId::new(source.ordinal),
+            })
+            .unwrap();
+    }
+    builder.finish(discovery_report(&sources)).unwrap();
     ArtifactFixture { directory, path }
 }
 
