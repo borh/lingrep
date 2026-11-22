@@ -101,7 +101,7 @@
       <span class="sample-match-span">[{{ m.start }}..{{ m.end }}] {{ m.pattern_name }}</span>
       {% match m.add_example %}{% when Some with (edit) %}<button type="button" class="btn btn-secondary btn-compact" data-claim-insert="examples" data-claim-offset="{{ edit.offset }}" data-claim-text="{{ edit.text }}" data-claim-expects="{{ edit.expects }}"><span data-i18n="sample.add_example">Add this sentence to the definition's examples</span></button>{% when None %}{% endmatch %}
       <div class="kwic-token-ribbon">
-      {% for t in m.tokens %}<button type="button" class="kwic-token kwic-token-match" lang="ja" data-sample-token="{{ t.index }}" aria-pressed="false"{% if !t.pos.is_empty() || !t.lemma.is_empty() %} title="{{ t.pos }}{% if !t.pos.is_empty() && !t.lemma.is_empty() %} · {% endif %}{{ t.lemma }}{% if !t.cform.is_empty() %} · {{ t.cform }}{% endif %}"{% endif %}>{{ t.orth }}</button>{% endfor %}
+      {% for t in m.tokens %}<button type="button" class="kwic-token kwic-token-match" lang="ja" data-sample-token="{{ t.index }}"{% if !t.source_ranges.is_empty() %} data-source-ranges="{{ t.source_ranges }}"{% endif %} aria-pressed="false"{% if !t.pos.is_empty() || !t.lemma.is_empty() %} title="{{ t.pos }}{% if !t.pos.is_empty() && !t.lemma.is_empty() %} · {% endif %}{{ t.lemma }}{% if !t.cform.is_empty() %} · {{ t.cform }}{% endif %}"{% endif %}>{{ t.orth }}</button>{% endfor %}
       </div>
       {% call macros::capture_lane(m.capture_lanes.iter(), "sample-capture-{}"|format(m.render_index), m.tokens.len()) %}{% endcall %}
       {% for capture in m.captures %}

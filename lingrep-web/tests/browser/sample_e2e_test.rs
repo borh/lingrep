@@ -325,6 +325,71 @@ async fn a_sample_sentence_becomes_an_example_and_a_counterexample_that_are_chec
 }
 
 #[tokio::test]
+async fn a_match_token_and_the_pattern_element_that_consumed_it_highlight_each_other()
+-> WebDriverResult<()> {
+    let Some(driver) = driver().await? else {
+        return Ok(());
+    };
+    let served = serve().await;
+    let set = "const field = document.querySelector(arguments[0]); field.value = arguments[1]; \
+               field.dispatchEvent(new Event('input', {bubbles: true}));";
+    let pattern = "fragment 動物 := [text=猫].\npattern p := @動物 [text=と] [text=犬].\n";
+    let offset = |needle: &str| {
+        pattern
+            .find(needle)
+            .map(|byte| pattern[..byte].encode_utf16().count())
+    };
+    let place_cursor = "return import(new URL('assets/editor/pattern-editor.js', document.baseURI).href) \
+        .then((editor) => { editor.selectSource(document.querySelector('#sample-pattern'), arguments[0]); return true; })";
+    let consumed = "return [...document.querySelectorAll('.sample-match [data-source-hit]')] \
+        .map((token) => token.textContent.trim())";
+    let result: WebDriverResult<()> = async {
+        driver.goto(&served.base).await?;
+        wait_for(&driver, CHECKED, "the editor's first check").await?;
+        driver
+            .execute(set, vec![json!("#sample-text"), json!("猫と犬")])
+            .await?;
+        driver
+            .execute(set, vec![json!("#sample-pattern"), json!(pattern)])
+            .await?;
+        wait_for(
+            &driver,
+            "return document.querySelectorAll('.sample-match').length === 1 \
+             && document.querySelectorAll('.sample-match [data-source-ranges]').length === 3",
+            "one match of three tokens with source ranges",
+        )
+        .await?;
+
+        driver
+            .execute(
+                "document.querySelector('.sample-match [data-source-ranges]').click()",
+                vec![],
+            )
+            .await?;
+        observed(
+            &driver,
+            "return [...document.querySelectorAll('.cm-sample-source')].map((mark) => mark.textContent).join('')",
+            json!("[text=猫]@動物"),
+            "the fragment element and the reference marked for 猫",
+        )
+        .await?;
+
+        driver
+            .execute(place_cursor, vec![json!(offset("@動物 [text=と]").map(|at| at + 1))])
+            .await?;
+        observed(&driver, consumed, json!(["猫"]), "the token the reference consumed").await?;
+        driver
+            .execute(place_cursor, vec![json!(offset("[text=犬]").map(|at| at + 2))])
+            .await?;
+        observed(&driver, consumed, json!(["犬"]), "the token the element consumed").await
+    }
+    .await;
+    driver.quit().await?;
+    served.server.abort();
+    result
+}
+
+#[tokio::test]
 async fn a_failed_sample_run_shows_the_servers_reason_but_not_a_gateway_page() -> WebDriverResult<()>
 {
     let Some(driver) = driver().await? else {

@@ -26,6 +26,30 @@ export function applyClaimInsert(source, edit) {
   }
 }
 
+/** The `[from, to]` pairs of a `data-source-ranges` value. */
+export function parseSourceRanges(value) {
+  return (value ?? "").split(" ").flatMap((pair) => {
+    const [from, to] = pair.split("-").map(Number);
+    return Number.isInteger(from) && Number.isInteger(to) && from < to ? [[from, to]] : [];
+  });
+}
+
+/** Whether the element a token's ranges begin with, or a reference that reached it, covers `offset`. */
+export function sourceRangesCover(ranges, offset) {
+  return ranges.some(([from, to]) => from <= offset && offset <= to);
+}
+
+function patternTextarea() {
+  return document.querySelector("#sample-pattern, #corpus-pattern");
+}
+
+function markTokensConsumedAt(offset) {
+  document.querySelectorAll("[data-source-ranges]").forEach((token) => {
+    const hit = offset !== null && sourceRangesCover(parseSourceRanges(token.dataset.sourceRanges), offset);
+    token.toggleAttribute("data-source-hit", hit);
+  });
+}
+
 export function parseKwicPageSize(value) {
   const parsed = Number(value);
   return KWIC_PAGE_SIZES.includes(parsed) ? parsed : DEFAULT_KWIC_PAGE_SIZE;
@@ -1695,6 +1719,7 @@ if (typeof document !== "undefined") {
     }
   });
 
+  document.addEventListener("pattern:cursor", (event) => markTokensConsumedAt(event.detail?.offset ?? null));
   document.addEventListener("click", (event) => {
     const fullscreen = event.target.closest("[data-dendrogram-fullscreen]");
     if (fullscreen) {
@@ -1822,6 +1847,9 @@ if (typeof document !== "undefined") {
       container.querySelectorAll(".sample-token-detail").forEach((panel) => {
         panel.hidden = wasPressed || panel.id !== `sample-token-${tokenIndex}`;
       });
+      patternTextarea()?.dispatchEvent(new CustomEvent("sample:source", {
+        detail: { ranges: wasPressed ? [] : parseSourceRanges(sampleToken.dataset.sourceRanges) },
+      }));
       return;
     }
 

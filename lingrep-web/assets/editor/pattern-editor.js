@@ -1465,6 +1465,34 @@ function patternTreeSitter(state, cm) {
   );
 }
 
+// Marks `state.sampleSource`, the source ranges that consumed the sample token
+// selected in the results. `sample:source` on the textarea sets them.
+function sampleSourceMarks(state, cm) {
+  const { ViewPlugin, Decoration } = cm;
+  const compute = (view) => {
+    const length = view.state.doc.length;
+    const ranges = (state.sampleSource ?? [])
+      .filter(([from, to]) => from < to && to <= length)
+      .sort(([a], [b]) => a - b);
+    return Decoration.set(
+      ranges.map(([from, to]) => Decoration.mark({ class: "cm-sample-source" }).range(from, to)),
+      true,
+    );
+  };
+  return ViewPlugin.fromClass(
+    class {
+      constructor(view) {
+        this.decorations = compute(view);
+      }
+      update(update) {
+        if (update.docChanged) state.sampleSource = [];
+        this.decorations = compute(update.view);
+      }
+    },
+    { decorations: (plugin) => plugin.decorations },
+  );
+}
+
 const PORTABLE_ATTRIBUTES = PATTERN_ATTRIBUTES.map(([key]) => key).filter((key) => !key.includes("."));
 
 export function localSyntaxMessage(errorText) {
@@ -1890,6 +1918,12 @@ async function enhance(textarea, grammar, cm, options = {}) {
     });
   }
   states.set(textarea, state);
+  textarea.addEventListener("sample:source", (event) => {
+    state.sampleSource = event.detail?.ranges ?? [];
+    if (!state.view) return;
+    const [first] = state.sampleSource;
+    state.view.dispatch(first ? { effects: cm.EditorView.scrollIntoView(first[0]) } : {});
+  });
 
   const view = new cm.EditorView({
     parent: wrapper,
@@ -1910,6 +1944,14 @@ async function enhance(textarea, grammar, cm, options = {}) {
       }),
       cm.lintGutter(),
       patternHoverTooltip(cm),
+      sampleSourceMarks(state, cm),
+      cm.EditorView.updateListener.of((update) => {
+        if (!update.selectionSet && !update.docChanged) return;
+        textarea.dispatchEvent(new CustomEvent("pattern:cursor", {
+          bubbles: true,
+          detail: { offset: update.docChanged ? null : update.state.selection.main.head },
+        }));
+      }),
       patternSignatureHelp(cm),
       patternTreeSitter(state, cm),
       patternTheme(cm),

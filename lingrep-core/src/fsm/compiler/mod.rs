@@ -56,8 +56,8 @@ pub use format::{FormatError, FormatOutcome, format_pattern_source};
 pub use limits::{CompileLimitError, CompileLimits, CompilerStats, TightenedCompileLimits};
 pub use model::{CatalogVectors, NearQuery, NearTest, SimilarityThreshold};
 pub use no_match::{
-    AttributeTestOutcome, ClaimSite, DefinitionExplanation, DefinitionOutcome, ElementLocation,
-    NoMatchExplainer, NoMatchOutcome, NoMatchReport, StopReason, StoppedAttempt,
+    AttributeTestOutcome, ClaimSite, ConsumedToken, DefinitionExplanation, DefinitionOutcome,
+    ElementLocation, NoMatchExplainer, NoMatchOutcome, NoMatchReport, StopReason, StoppedAttempt,
 };
 pub use render::{render_diagnostics, render_pattern_error};
 

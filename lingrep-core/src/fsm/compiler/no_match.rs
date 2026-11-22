@@ -220,6 +220,11 @@ enum Node<'p> {
         min: usize,
         max: Option<usize>,
     },
+    /// A reference written at `span`, expanded to the referenced body.
+    Reference {
+        body: Rc<Node<'p>>,
+        span: SourceSpan,
+    },
 }
 
 /// Bound expressions joined with their token spans, references expanded.
@@ -306,13 +311,16 @@ impl<'p> Nodes<'p> {
             },
             BoundExpr::Capture { expr, .. } => return self.node(expr, spans),
             BoundExpr::SameAs { .. } => return Err("a same-as reference to a capture"),
-            BoundExpr::Definition { id, .. } => {
+            BoundExpr::Definition { id, span } => {
                 let definition = self
                     .program
                     .definitions
                     .get(id.index())
                     .ok_or("an unresolved reference")?;
-                return self.definition(definition);
+                Node::Reference {
+                    body: self.definition(definition)?,
+                    span: *span,
+                }
             }
         }))
     }
@@ -438,6 +446,7 @@ impl<S: TokenSequence + ?Sized> Run<'_, S> {
                 }
                 at(held)
             }
+            Node::Reference { body, .. } => self.ends(body, start).as_ref().clone(),
             Node::Sequence(nodes) => {
                 let mut positions = BTreeSet::from([start]);
                 for node in nodes {
@@ -510,6 +519,112 @@ impl<S: TokenSequence + ?Sized> Run<'_, S> {
                 accepted
             }
         }
+    }
+
+    /// Records, for one derivation of `node` over `start..end`, each consumed
+    /// token with the source spans of its element and of the references that
+    /// enclose the element, innermost first. False when there is none.
+    fn derive(
+        &mut self,
+        node: &Rc<Node<'_>>,
+        start: usize,
+        end: usize,
+        enclosing: &mut Vec<SourceSpan>,
+        consumed: &mut Vec<(usize, Vec<SourceSpan>)>,
+    ) -> bool {
+        if !self.ends(node, start).contains(&end) {
+            return false;
+        }
+        match node.as_ref() {
+            Node::Token { span, .. } => {
+                let mut spans = vec![*span];
+                spans.extend(enclosing.iter().rev().copied());
+                consumed.push((start, spans));
+                true
+            }
+            Node::SentenceStart | Node::SentenceEnd | Node::Lookaround { .. } => true,
+            Node::Reference { body, span } => {
+                enclosing.push(*span);
+                let derived = self.derive(body, start, end, enclosing, consumed);
+                enclosing.pop();
+                derived
+            }
+            Node::Alternation(nodes) => nodes
+                .iter()
+                .any(|node| self.derive(node, start, end, enclosing, consumed)),
+            Node::Intersection(nodes) => nodes
+                .first()
+                .is_some_and(|node| self.derive(node, start, end, enclosing, consumed)),
+            Node::Sequence(nodes) => self.derive_sequence(nodes, start, end, enclosing, consumed),
+            Node::Repeat { node, min, max } => {
+                self.derive_repeat(node, (*min, *max), 0, start, end, enclosing, consumed)
+            }
+            // Operands may leave gaps, so the consumed tokens are not `start..end`.
+            Node::AnyOrder(_) => false,
+        }
+    }
+
+    fn derive_sequence(
+        &mut self,
+        nodes: &[Rc<Node<'_>>],
+        start: usize,
+        end: usize,
+        enclosing: &mut Vec<SourceSpan>,
+        consumed: &mut Vec<(usize, Vec<SourceSpan>)>,
+    ) -> bool {
+        let Some((first, rest)) = nodes.split_first() else {
+            return start == end;
+        };
+        let kept = consumed.len();
+        for middle in self.ends(first, start).as_ref().clone().into_iter().rev() {
+            if middle <= end
+                && self.derive(first, start, middle, enclosing, consumed)
+                && self.derive_sequence(rest, middle, end, enclosing, consumed)
+            {
+                return true;
+            }
+            consumed.truncate(kept);
+        }
+        false
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn derive_repeat(
+        &mut self,
+        node: &Rc<Node<'_>>,
+        (min, max): (usize, Option<usize>),
+        count: usize,
+        start: usize,
+        end: usize,
+        enclosing: &mut Vec<SourceSpan>,
+        consumed: &mut Vec<(usize, Vec<SourceSpan>)>,
+    ) -> bool {
+        if start == end && count >= min {
+            return true;
+        }
+        if max.is_some_and(|max| count >= max) {
+            return false;
+        }
+        let kept = consumed.len();
+        for middle in self.ends(node, start).as_ref().clone().into_iter().rev() {
+            if middle > start
+                && middle <= end
+                && self.derive(node, start, middle, enclosing, consumed)
+                && self.derive_repeat(
+                    node,
+                    (min, max),
+                    count + 1,
+                    middle,
+                    end,
+                    enclosing,
+                    consumed,
+                )
+            {
+                return true;
+            }
+            consumed.truncate(kept);
+        }
+        false
     }
 
     /// Places the remaining any-order operands, each at or after `position`.
@@ -770,6 +885,71 @@ impl super::CompileOutput {
                     key: key.start as usize..key.end as usize,
                 }
             }
+        })
+    }
+}
+
+/// One token of a match and the pattern source that consumed it.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ConsumedToken {
+    /// Sentence-local token index.
+    pub token: usize,
+    /// The token element, then each reference the element was reached
+    /// through, innermost first.
+    pub elements: Vec<ElementLocation>,
+}
+
+impl super::CompileOutput {
+    /// The elements of `definition` that consume the tokens `start..end`, in
+    /// one derivation of its body.
+    ///
+    /// `None` when the body has no derivation over that span, the explanation
+    /// pass reached its step limit, or the body uses a construct the pass does
+    /// not evaluate, which includes an any-order group. A body with several
+    /// derivations over the span reports one; it need not be the one whose
+    /// captures the matcher published.
+    #[must_use]
+    pub fn consumed_tokens<S: TokenSequence + ?Sized>(
+        &self,
+        definition: &str,
+        tokens: &S,
+        start: usize,
+        end: usize,
+    ) -> Option<Vec<ConsumedToken>> {
+        let explainer = &self.no_match;
+        let target = explainer
+            .program
+            .definitions
+            .iter()
+            .find(|candidate| candidate.name == definition && candidate.expr().is_some())?;
+        let mut nodes = Nodes {
+            program: &explainer.program,
+            by_definition: HashMap::new(),
+            has_where: false,
+        };
+        let root = nodes.definition(target).ok()?;
+        let mut run = Run {
+            tokens,
+            memo: HashMap::new(),
+            steps: 0,
+            truncated: false,
+            start,
+            recording: false,
+            best: None,
+        };
+        let mut consumed = Vec::new();
+        let derived = run.derive(&root, start, end, &mut Vec::new(), &mut consumed);
+        (derived && !run.truncated).then(|| {
+            consumed
+                .into_iter()
+                .map(|(token, spans)| ConsumedToken {
+                    token,
+                    elements: spans
+                        .into_iter()
+                        .map(|span| explainer.location(span))
+                        .collect(),
+                })
+                .collect()
         })
     }
 }

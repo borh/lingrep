@@ -255,3 +255,53 @@ fn a_claim_site_is_the_definitions_own_key_or_its_start() {
     );
     assert_eq!(output.claim_site("missing", "examples"), None);
 }
+
+#[test]
+fn consumed_tokens_name_the_element_and_the_reference_that_reached_it() {
+    let source = "fragment N := [lemma=猫].\npattern p := [text=の]? @N{1,2} [text=だ].\n";
+    let output = compile(source);
+    let pairs = |surfaces: &[&str]| {
+        let tokens = surfaces
+            .iter()
+            .map(|surface| word(surface, surface))
+            .collect::<Vec<_>>();
+        output
+            .consumed_tokens("p", &tokens[..], 0, tokens.len())
+            .expect("the body derives the span")
+            .into_iter()
+            .map(|consumed| {
+                let elements = consumed
+                    .elements
+                    .iter()
+                    .map(|element| {
+                        source
+                            .get(element.byte_range.clone())
+                            .expect("a source range")
+                    })
+                    .collect::<Vec<_>>();
+                (consumed.token, elements)
+            })
+            .collect::<Vec<_>>()
+    };
+
+    // The optional element is skipped and the repetition runs twice.
+    assert_eq!(
+        pairs(&["猫", "猫", "だ"]),
+        vec![
+            (0, vec!["[lemma=猫]", "@N"]),
+            (1, vec!["[lemma=猫]", "@N"]),
+            (2, vec!["[text=だ]"]),
+        ]
+    );
+    // The optional element is taken and the repetition runs once.
+    assert_eq!(
+        pairs(&["の", "猫", "だ"]),
+        vec![
+            (0, vec!["[text=の]"]),
+            (1, vec!["[lemma=猫]", "@N"]),
+            (2, vec!["[text=だ]"]),
+        ]
+    );
+    let tokens = [word("猫", "猫"), word("だ", "だ")];
+    assert_eq!(output.consumed_tokens("p", &tokens[..], 0, 1), None);
+}

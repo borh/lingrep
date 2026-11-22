@@ -32,6 +32,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   edits the pattern text, creating the key above the definition when it is
   absent, and the sample is checked again. It is not offered for a sentence the
   list already holds, or for a list inherited from `defaults` or a bundle.
+- The Sample debugger links a match to the pattern text. Selecting a token of
+  a match marks, in the editor, the element that consumed it and each
+  reference the element was reached through. Placing the cursor in an element
+  or a reference underlines the tokens it consumed in every match.
+  `CompileOutput::consumed_tokens` is the library entry point. It reports one
+  derivation of the body and nothing for a body with an any-order group,
+  `same_as`, a `within=` lookaround or `skip:`.
 
 ### Changed
 

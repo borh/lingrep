@@ -494,3 +494,42 @@ fn a_sample_sentence_can_be_inserted_into_a_definitions_claims_once() {
     let inherited = "defaults\n  examples: [\"犬\"]\nend\npattern p := 猫.";
     assert_eq!(edits(inherited).0, None, "a default's list is not edited");
 }
+
+#[test]
+fn a_match_token_carries_the_source_ranges_of_the_element_and_reference_that_consumed_it() {
+    use lingrep_web::sample::SampleAnalysis;
+    let dictionary = lingrep_core::testing::MiniDictionary::new();
+    let tokenizer =
+        lingrep_core::dictionary::create_tokenizer_from_path(&dictionary.path().to_string_lossy())
+            .expect("the dictionary loads");
+    let plan = lingrep_core::analysis::VibratoPlan::new(tokenizer, dictionary.path())
+        .expect("the plan builds");
+    let source = "fragment 動物 := [text=猫].\npattern p := @動物 [text=と] [text=犬].\n";
+    let report = lingrep_web::sample::analyze_sample(source, "猫と犬", &plan, "test".into());
+    let SampleAnalysis::Matched { matches, .. } = report.analysis else {
+        panic!("猫と犬 matches");
+    };
+    let utf16 = source.encode_utf16().collect::<Vec<_>>();
+    let texts = matches[0]
+        .tokens
+        .iter()
+        .map(|token| {
+            token
+                .source_ranges
+                .split(' ')
+                .map(|range| {
+                    let (from, to) = range.split_once('-').expect("from-to");
+                    String::from_utf16(&utf16[from.parse().unwrap()..to.parse().unwrap()]).unwrap()
+                })
+                .collect::<Vec<_>>()
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(
+        texts,
+        vec![
+            vec!["[text=猫]".to_owned(), "@動物".to_owned()],
+            vec!["[text=と]".to_owned()],
+            vec!["[text=犬]".to_owned()],
+        ]
+    );
+}

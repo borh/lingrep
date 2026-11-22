@@ -27,6 +27,10 @@ pub struct TokenView {
     pub pos: String,
     pub cform: String,
     pub inspection_html: TrustedFragmentHtml,
+    /// In a match: the pattern source ranges that consumed this token, as
+    /// space-separated `from-to` UTF-16 offsets, the token element first and
+    /// then each reference that reached it. Empty when not derived.
+    pub source_ranges: String,
 }
 
 impl TokenView {
@@ -42,6 +46,7 @@ impl TokenView {
             pos: token.pos().unwrap_or_default().to_owned(),
             cform: token.cform().unwrap_or_default().to_owned(),
             inspection_html: TrustedFragmentHtml::from_rendered(render_sample_token(token)?),
+            source_ranges: String::new(),
         })
     }
 }
@@ -231,12 +236,41 @@ fn build_line_analysis<'a>(
             .iter()
             .filter_map(|t| t.surface().or(t.orth()))
             .collect();
-        let tokens: Vec<TokenView> = line[m.start..m.end]
+        let mut tokens: Vec<TokenView> = line[m.start..m.end]
             .iter()
             .enumerate()
             .map(|(i, t)| TokenView::from_token_info(t, base_index + m.start + i))
             .collect::<Result<_, _>>()
             .map_err(rendering_failed)?; // propagate, do NOT unwrap_or_default
+        let utf16 = |byte: usize| {
+            pattern_source
+                .get(..byte)
+                .map(|before| before.encode_utf16().count())
+        };
+        for consumed in output
+            .consumed_tokens(&m.pattern, line, m.start, m.end)
+            .unwrap_or_default()
+        {
+            let Some(view) = consumed
+                .token
+                .checked_sub(m.start)
+                .and_then(|offset| tokens.get_mut(offset))
+            else {
+                continue;
+            };
+            view.source_ranges = consumed
+                .elements
+                .iter()
+                .filter_map(|element| {
+                    Some(format!(
+                        "{}-{}",
+                        utf16(element.byte_range.start)?,
+                        utf16(element.byte_range.end)?
+                    ))
+                })
+                .collect::<Vec<_>>()
+                .join(" ");
+        }
         let capture_view = sample_capture_view(line, m, base_index).map_err(rendering_failed)?; // propagate
         out.push(MatchView {
             render_index: render_offset + out.len(),
