@@ -81,10 +81,11 @@ claims, not linguistic correctness or recall. External adapters are rejected by 
 verification path.
 
 The Sample debugger of `ling serve` and the Workbench "Test on sample" drawer
-check the same claims on every sample run, tokenized with the server's Vibrato
-dictionary, and list each failed claim above the sample's matches. They skip the
-check and name the missing attributes when the catalog references an attribute
-that the dictionary's token schema does not carry.
+use the server's Vibrato dictionary to tokenize each example and counterexample
+independently of the sample text. They check these claims when the catalog binds
+to the sample token schema and all referenced attributes are available. Otherwise,
+the debugger reports the schema error or lists the missing attributes. Select a
+failed claim's text to add it to the sample for inspection.
 
 ### Pattern diagrams
 

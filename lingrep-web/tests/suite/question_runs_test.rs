@@ -1086,7 +1086,7 @@ async fn a_run_that_names_a_count_only_definition_searches_it() {
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn paused_export_streams_do_not_starve_concurrent_read_endpoints() {
+async fn read_endpoints_complete_while_export_streams_are_paused() {
     let (_fixture, store, identity) = fixture(8);
     let app = lingrep_web::app_router(store.clone());
     let id = submit(&app, SOURCE, "", Some(&identity)).await;

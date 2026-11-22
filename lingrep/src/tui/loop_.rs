@@ -1202,7 +1202,7 @@ mod tests {
     }
 
     #[test]
-    fn kwic_column_widths_use_horizontal_area_width_not_height() {
+    fn kwic_displays_both_context_columns_in_a_wide_short_pane() {
         let mut model = Model::default();
         let request = RequestId(73);
         let pattern = model.get_or_create_pattern_id("wide");

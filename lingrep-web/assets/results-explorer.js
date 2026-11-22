@@ -1758,8 +1758,6 @@ if (typeof document !== "undefined") {
       return;
     }
 
-    // A failing claim's text joins the sample, so the token ribbon and the
-    // candidates below show why it fails.
     const claimText = event.target.closest("[data-sample-claim-text]");
     if (claimText) {
       const input = document.querySelector("[data-inline-sample-text], #sample-text");

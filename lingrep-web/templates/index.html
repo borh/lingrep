@@ -63,7 +63,7 @@
                 {% for option in retained_options %}<option value="{{ option }}"{% if self.is_default_retention(option) %} selected{% endif %}>{{ option }}</option>{% endfor %}
                 </select>
             </label>
-            <small class="compound-help" data-i18n="editor.retained_help">Concordance lines kept for each pattern. Counts stay exact; when a pattern has more hits, the lines kept are a random sample.</small>
+            <small class="compound-help" data-i18n="editor.retained_help">Limit on concordance lines kept per pattern. When more matches are found, the retained lines are sampled at random.</small>
             </span>
             <span class="compound-control-group" title="Creates an independent derived pattern for every chain of adjacent matches." data-i18n-title="editor.derive_compounds_help">
                 <label class="retained-control"><input type="checkbox" name="derive_compounds" value="true"{% if run_options.derive_compounds %} checked{% endif %}>

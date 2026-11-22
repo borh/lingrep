@@ -356,11 +356,10 @@ pub struct UnavailableAttribute {
 /// Whether the catalog binds to the sample tokenizer's token schema.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum SampleBinding {
-    /// Tests over an unavailable attribute match nothing on any sample token.
     Bound {
         unavailable: Vec<UnavailableAttribute>,
     },
-    /// The refusal a corpus run over this schema fails with.
+    /// Binding error for the sample token schema.
     Refused(String),
 }
 
@@ -369,8 +368,7 @@ pub enum SampleBinding {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum SampleClaims {
     Undeclared,
-    /// Declared but not run: a counterexample cannot pass on evidence when a
-    /// referenced attribute is absent from every token.
+    /// Skipped because binding failed or a referenced attribute was unavailable.
     Unverifiable,
     Checked(ClaimsReport),
     Failed(String),
@@ -468,8 +466,7 @@ pub fn sample_run(
     }
 }
 
-/// One failure per claim: a claim the definition already contradicts is not
-/// repeated as a publication failure.
+// Skip publication failures whose definition and text already have a raw-match failure.
 fn claims_report(report: ExampleReport) -> ClaimsReport {
     let raw = |failure: ExampleFailure| ClaimFailure {
         kind: match failure.kind {
@@ -507,8 +504,7 @@ fn claims_report(report: ExampleReport) -> ClaimsReport {
     }
 }
 
-/// A sample's matches together with the run that produced them; `run` is
-/// `None` when the pattern does not compile.
+/// Sample analysis and its run details. `run` is absent when compilation fails.
 #[derive(Debug, Clone)]
 pub struct SampleReport {
     pub analysis: SampleAnalysis,

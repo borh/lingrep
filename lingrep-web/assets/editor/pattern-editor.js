@@ -1467,9 +1467,6 @@ function patternTreeSitter(state, cm) {
 
 const PORTABLE_ATTRIBUTES = PATTERN_ATTRIBUTES.map(([key]) => key).filter((key) => !key.includes("."));
 
-// The translation key and arguments for a local ERROR node: an unprefixed
-// attribute outside the portable set is named, because the grammar rejects it
-// before the server can.
 export function localSyntaxMessage(errorText) {
   const name = /^[\s&|!(]*([A-Za-z_][A-Za-z0-9_]*)\s*(?:!?[=~]|\s(?:not\s+)?in\b)/.exec(errorText)?.[1];
   if (!name || PORTABLE_ATTRIBUTES.includes(name)) return { key: "editor.diag_syntax_local", args: null };

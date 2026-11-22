@@ -1,38 +1,38 @@
 {% import "macros.html" as macros %}
 <section class="sample-results" aria-live="polite">
 {% match run %}{% when Some with (run) %}
-  <p class="sample-run" data-sample-run><span data-i18n="sample.tokenized_by">Sample tokenized by</span> <code>{{ run.analyzer }}</code>{% match run.corpus_analyzer %}{% when Some with (corpus) %} <span class="sample-run-warning" data-sample-corpus-differs><span data-i18n="sample.corpus_differs">The selected corpus was analyzed by</span> <code>{{ corpus }}</code><span data-i18n="sample.corpus_differs_note">; a corpus search can match differently.</span></span>{% when None %}{% endmatch %}</p>
+  <p class="sample-run" data-sample-run><span data-i18n="sample.tokenized_by">Sample tokenized by</span> <code>{{ run.analyzer }}</code>{% match run.corpus_analyzer %}{% when Some with (corpus) %} <span class="sample-run-warning" data-sample-corpus-differs><span data-i18n="sample.corpus_differs">The selected corpus uses a different token schema. Its analyzer is</span> <code>{{ corpus }}</code><span data-i18n="sample.corpus_differs_note">. Corpus searches can return different matches.</span></span>{% when None %}{% endmatch %}</p>
   {% match run.binding %}
   {% when SampleBinding::Bound with { unavailable } %}
   {% if unavailable.len() > 0 %}
   <ul class="sample-run-warnings" data-sample-unavailable>
   {% for item in unavailable %}
-    <li class="sample-run-warning"><span data-i18n="sample.attribute_unavailable">The sample tokenizer does not supply</span> <code>{{ item.attribute }}</code>{% if item.definitions.len() > 0 %} <span data-i18n="sample.attribute_referenced_by">(referenced by</span> {% for definition in item.definitions %}<code>{{ definition }}</code>{% if !loop.last %}, {% endif %}{% endfor %}){% endif %}<span data-i18n="sample.attribute_unavailable_note">; tests over it match nothing here, and only <code>!(…)</code> complements hold.</span></li>
+    <li class="sample-run-warning"><span data-i18n="sample.attribute_unavailable">The sample tokenizer does not supply</span> <code>{{ item.attribute }}</code>{% if item.definitions.len() > 0 %} <span data-i18n="sample.attribute_referenced_by">(referenced by</span> {% for definition in item.definitions %}<code>{{ definition }}</code>{% if !loop.last %}, {% endif %}{% endfor %}){% endif %}<span data-i18n="sample.attribute_unavailable_note">. Comparisons on this attribute fail on every token. The complement <code>!(…)</code> of a failed comparison succeeds.</span></li>
   {% endfor %}
   </ul>
   {% endif %}
   {% when SampleBinding::Refused with (reason) %}
-  <p class="sample-run-warning" data-sample-refused><span data-i18n="sample.binding_refused">The pattern cannot bind to the sample tokenizer's token schema, so the sample cannot show what a corpus run would match:</span> <span lang="en">{{ reason }}</span></p>
+  <p class="sample-run-warning" data-sample-refused><span data-i18n="sample.binding_refused">The catalog cannot run with the sample token schema.</span> <span lang="en">{{ reason }}</span></p>
   {% endmatch %}
   {% match run.claims %}
   {% when SampleClaims::Undeclared %}
   {% when SampleClaims::Unverifiable %}
-  <p class="sample-claims" data-sample-claims="unverifiable" data-i18n="sample.claims_unverifiable">The catalog's examples and counterexamples were not checked, because the sample tokenizer cannot supply every attribute the catalog references.</p>
+  <p class="sample-claims" data-sample-claims="unverifiable" data-i18n="sample.claims_unverifiable">The sample skipped the catalog's examples and counterexamples. See the token schema diagnostics above.</p>
   {% when SampleClaims::Failed with (reason) %}
-  <p class="sample-claims" data-sample-claims="failed"><span data-i18n="sample.claims_failed">The catalog's examples and counterexamples could not be checked:</span> <span lang="en">{{ reason }}</span></p>
+  <p class="sample-claims" data-sample-claims="failed"><span data-i18n="sample.claims_failed">The example and counterexample checks stopped before completion.</span> <span lang="en">{{ reason }}</span></p>
   {% when SampleClaims::Checked with (report) %}
   <section class="sample-claims" data-sample-claims="{% if report.failures.len() > 0 %}violated{% else %}hold{% endif %}">
     {% if report.failures.len() > 0 %}
-    <p class="sample-claims-summary" data-i18n="sample.claims_violated" data-i18n-args='{"failed": {{ report.failures.len() }}, "checked": {{ report.checked }}}'>{{ report.failures.len() }} of the catalog's {{ report.checked }} example and counterexample claims fail.</p>
+    <p class="sample-claims-summary" data-i18n="sample.claims_violated" data-i18n-args='{"failed": {{ report.failures.len() }}, "checked": {{ report.checked }}}'>Examples and counterexamples checked ({{ report.checked }}). Failed checks or invalid entries ({{ report.failures.len() }}).</p>
     <ul class="sample-claim-failures">
     {% for failure in report.failures %}
-      <li><code>{{ failure.definition }}</code> <span class="sample-claim-kind">{% match failure.kind %}{% when ClaimFailureKind::ExpectedMatch %}<span data-i18n="sample.claim_expected_match">does not match its example</span>{% when ClaimFailureKind::UnexpectedMatch %}<span data-i18n="sample.claim_unexpected_match">matches its counterexample</span>{% when ClaimFailureKind::Malformed %}<span data-i18n="sample.claim_malformed">has a claim that is not a list of strings</span>{% when ClaimFailureKind::ExpectedPublication %}<span data-i18n="sample.claim_expected_publication">matches its example, but result policy publishes no record for it</span>{% when ClaimFailureKind::UnexpectedPublication %}<span data-i18n="sample.claim_unexpected_publication">is published for its counterexample by result policy</span>{% endmatch %}</span> <button type="button" class="sample-claim-text" lang="ja" data-sample-claim-text title="Use as sample text" data-i18n-title="sample.claim_use">{{ failure.example }}</button></li>
+      <li><code>{{ failure.definition }}</code> <span class="sample-claim-kind">{% match failure.kind %}{% when ClaimFailureKind::ExpectedMatch %}<span data-i18n="sample.claim_expected_match">does not match its example</span>{% when ClaimFailureKind::UnexpectedMatch %}<span data-i18n="sample.claim_unexpected_match">matches its counterexample</span>{% when ClaimFailureKind::Malformed %}<span data-i18n="sample.claim_malformed">has invalid example or counterexample metadata. Expected a list of strings.</span>{% when ClaimFailureKind::ExpectedPublication %}<span data-i18n="sample.claim_expected_publication">matches its example. The result policy omits it.</span>{% when ClaimFailureKind::UnexpectedPublication %}<span data-i18n="sample.claim_unexpected_publication">is published for its counterexample by the result policy</span>{% endmatch %}</span> <button type="button" class="sample-claim-text" lang="ja" data-sample-claim-text title="Add to sample text" data-i18n-title="sample.claim_use">{{ failure.example }}</button></li>
     {% endfor %}
     </ul>
     {% else %}
-    <p class="sample-claims-summary" data-i18n="sample.claims_hold" data-i18n-args='{"checked": {{ report.checked }}}'>All {{ report.checked }} of the catalog's example and counterexample claims hold.</p>
+    <p class="sample-claims-summary" data-i18n="sample.claims_hold" data-i18n-args='{"checked": {{ report.checked }}}'>Example and counterexample checks passed ({{ report.checked }}).</p>
     {% endif %}
-    <p class="sample-claims-note" data-i18n="sample.claims_note">Claims are checked with the sample tokenizer. Passing shows agreement with the authored claims, not that the patterns are correct or complete.</p>
+    <p class="sample-claims-note" data-i18n="sample.claims_note">These checks compare the catalog's expectations with match results from the sample tokenizer.</p>
   </section>
   {% endmatch %}
 {% when None %}{% endmatch %}

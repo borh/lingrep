@@ -696,9 +696,7 @@ struct Entry {
     /// straddle two corpora.
     corpus: CorpusName,
     runtime: Arc<CorpusRuntime>,
-    /// Revision state, active cancellation flag, and running task handle share
-    /// one lock so superseding, cancelling, evicting, and shutting down a
-    /// revision transition atomically.
+    /// The revision, its cancellation flag, and its task handle change under one lock.
     state: Mutex<EntryState>,
     view_tx: watch::Sender<CoordinatorView>,
     subscribed: Notify,
@@ -960,9 +958,7 @@ impl CoordinatorRegistry {
                 )
                 .await;
         });
-        // The swapped cancellation flag already signalled the prior task to
-        // stop; aborting its handle under the same lock guarantees an older
-        // accept_revision call cannot interleave and abort a newer task.
+        // Keep the task swap and abort under the lock so an older call cannot abort a newer task.
         if let Some(previous) = entry_state.handle.replace(handle) {
             previous.abort();
         }

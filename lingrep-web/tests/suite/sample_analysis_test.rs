@@ -343,7 +343,7 @@ fn an_attribute_the_tokenizer_lacks_is_named_and_leaves_claims_unchecked() {
 }
 
 #[test]
-fn a_dependency_clause_the_tokenizer_cannot_satisfy_is_a_refused_binding() {
+fn sample_binding_rejects_dependency_clause_without_dependency_attributes() {
     use lingrep_web::sample::SampleBinding;
     let run = run_of("pattern a := (?<n> [text=甲]) where (?<v> [text=乙]) -[nsubj]-> $n.");
     assert!(

@@ -281,6 +281,22 @@ fn a_run_names_its_tokenizer_its_missing_attributes_and_each_failed_claim() {
     );
 
     let html = render(
+        SampleBinding::Bound {
+            unavailable: Vec::new(),
+        },
+        SampleClaims::Checked(ClaimsReport {
+            checked: 0,
+            failures: vec![ClaimFailure {
+                definition: "v".into(),
+                example: "not a list".into(),
+                kind: ClaimFailureKind::Malformed,
+            }],
+        }),
+    );
+    assert!(html.contains("Examples and counterexamples checked (0)."));
+    assert!(html.contains("Failed checks or invalid entries (1)."));
+
+    let html = render(
         SampleBinding::Refused("no dep.head".into()),
         SampleClaims::Checked(ClaimsReport {
             checked: 2,

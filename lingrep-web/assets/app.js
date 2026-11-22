@@ -4,10 +4,6 @@
 
 import { localize, onLocaleChange, t } from "./i18n.js";
 
-/**
- * The run options a closed "Run options" disclosure states: the hits kept,
- * then each option that changes what the run counts or publishes.
- */
 export function runOptionsSummary({ retained, deriveCompounds, documentReach, overlaps }, translate) {
     return [
         translate("editor.run_options_retained", { n: retained }),

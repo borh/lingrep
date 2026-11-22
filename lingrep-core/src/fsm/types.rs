@@ -652,7 +652,7 @@ mod tests {
     use std::cmp::Ordering;
 
     #[test]
-    fn state_info_ord_agrees_with_eq_across_all_fields() {
+    fn state_info_orders_states_at_different_positions() {
         let earlier = StateInfo {
             state: 3,
             start_token: 1,

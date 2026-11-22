@@ -604,10 +604,7 @@ impl CorpusRuntimeInvalidator {
             (discard, rebuild)
         };
         if discard.is_some() || rebuild {
-            // Spawn the blocking deletion and optional rebuild after releasing
-            // `lifecycle` so directory removal neither holds the mutex nor
-            // blocks an async worker thread, while remaining cancel-safe if
-            // the caller drops this future after the state transition.
+            // Cleanup continues if the caller drops its future after the lifecycle transition.
             let inner = Arc::clone(&self.inner);
             let cleanup = tokio::spawn(async move {
                 if let Some(path) = discard {

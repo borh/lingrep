@@ -517,7 +517,7 @@ mod tests {
     use super::*;
 
     #[test]
-    fn discovery_error_fuses_stream_instead_of_repeating_forever() {
+    fn corpus_stream_ends_after_discovery_error() {
         let dir = tempfile::tempdir().expect("tempdir");
         let corpus_dir = dir.path().join("corpus");
         fs::create_dir(&corpus_dir).expect("create corpus dir");

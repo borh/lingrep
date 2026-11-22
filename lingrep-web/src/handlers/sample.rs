@@ -47,8 +47,7 @@ static SAMPLE_SLOTS: LazyLock<Semaphore> = LazyLock::new(|| {
 pub struct SampleForm {
     pub pattern: String,
     pub sample: String,
-    /// The key of the corpus the workbench is searching. When its token schema
-    /// differs from the sample tokenizer's, the result says so.
+    /// Corpus key for comparing the corpus and sample token schemas.
     #[serde(default)]
     pub corpus: Option<String>,
 }

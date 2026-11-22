@@ -9,10 +9,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
-- The Sample debugger and the Workbench "Test on sample" drawer check a
-  catalog's `examples` and `counterexamples` on every run and list each claim
-  that fails, including a claim that the definition satisfies and result policy
-  does not publish. Selecting a failed claim adds its text to the sample.
+- The Sample debugger and the Workbench "Test on sample" drawer verify a
+  catalog's `examples` and `counterexamples` when the sample token schema
+  supports the catalog. They report invalid entries, unexpected match results,
+  and unexpected publication decisions. Select a listed text to add it to
+  the sample.
 - Sample results name the analyzer and dictionary that tokenized the sample,
   list each referenced attribute that tokenizer does not supply, and report a
   pattern that cannot bind to its token schema. The Workbench drawer also
@@ -37,9 +38,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
-- Placeholder text in the web UI meets 4.5:1 contrast in the light and dark
-  themes; provenance chips are at least 11px; links, selects, checkboxes and
-  disclosure summaries show the same focus ring as buttons.
+- The Workbench has higher-contrast placeholder text in both themes, larger
+  provenance labels, and the same focus ring on buttons, links, selects,
+  checkboxes, and disclosure summaries.
 
 ## [0.9.1] - 2026-11-20
 

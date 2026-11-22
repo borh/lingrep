@@ -1139,8 +1139,7 @@ async fn export(State(store): State<RequestStore>, Path(id): Path<String>) -> Re
             let (rows, next, finished) = if let Some(prefix) = prefix {
                 (prefix, cursor, false)
             } else {
-                // Acquire a reading permit per page so slow HTTP clients cannot
-                // hold server-wide reading capacity across network backpressure.
+                // Release the read permit before yielding each page to the HTTP stream.
                 let _permit = coordinators.acquire_reading_permit().await;
                 let page = index
                     .export_page(cursor, 16)

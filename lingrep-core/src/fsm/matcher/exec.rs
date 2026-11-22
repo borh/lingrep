@@ -1,10 +1,4 @@
-//! Advancement kernel: the per-token NFA simulation loop.
-//!
-//! Provides the `Matcher` struct with NFA simulation and epsilon closure for
-//! pattern matching. Emission (`MatchSink`) lives in `emit.rs`; the
-//! compile-time spawn table lives in `spawn.rs`; the dense machine view lives
-//! in `dense.rs`. This module owns advancing the frontier:
-//! `find_matches_internal` and `epsilon_closure_into`.
+//! Advances the NFA frontier and evaluates epsilon closures.
 
 use super::dense::DenseMachine;
 use super::pool::{FastBuild, HASHSET_POOL, StateSet};
@@ -639,26 +633,12 @@ impl Matcher {
         predicates.matches_at_site::<SITE, S>(predicate_id, tokens, position)
     }
 
-    /// Epsilon closure of `states`, appended to `closure`.
+    /// Appends the epsilon closure of `states` to `closure`.
     ///
-    /// [`Self::create_epsilon_state`] copies `start_token` and `position`, so a
-    /// state derived from a seed carries that seed's provenance and reaches a
-    /// fixed point after one hop. Reachability is provenance-independent too:
-    /// an `Assert` edge is evaluated at this call's single token position, not
-    /// at anything the seed carries.
-    ///
-    /// Together those make the traversal deduplicable by **state id alone**,
-    /// once per provenance group, against the generation-stamped `visited`
-    /// array. That replaced a `HashSet<StateInfo>` keyed on the whole tuple
-    /// which was measured rejecting nothing at all --- 99,976,726 inserts and
-    /// 99,976,726 successes over `patterns/sfe.lx` --- so it was being paid
-    /// for as a deduplicator and used as a container.
-    ///
-    /// The emitted multiset is unchanged. Within a group each seed claims its
-    /// id up front. Order does change: seeds are grouped rather than
-    /// visited in hash order. Frontier order is not observable --- successors
-    /// land in a deduplicating `next_states`, and matches land in a
-    /// `MatchSink` keyed on `(pattern, start, end)`.
+    /// Epsilon transitions preserve each seed's start token and position.
+    /// Assertions use the token position supplied for the call. Within each
+    /// group of seeds sharing a start token and position, the traversal visits
+    /// each state ID once.
     pub(crate) fn epsilon_closure_into<
         S: TokenSequence + ?Sized,
         I: IntoIterator<Item = StateInfo>,
