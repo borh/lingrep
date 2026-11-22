@@ -5,6 +5,7 @@ use crate::{
 
 use super::{
     ExecutionBatch, ExecutionError, ExecutionLimits, ExecutionSentence, SentenceBatchSource,
+    runner::{AnalyzedTextInput, analyze_text_batch},
 };
 
 /// Converts bounded admitted text batches into schema-bound native analysis.
@@ -96,32 +97,15 @@ where
                 message: "native analyzer source requires admitted text input".to_owned(),
             });
         };
-        let locations = sentences
-            .iter()
-            .map(|sentence| sentence.location.clone())
-            .collect::<Vec<_>>();
-        let inputs = sentences
-            .into_iter()
-            .map(|sentence| sentence.value)
-            .collect::<Vec<_>>();
-        let analyzed = self
-            .analyzer
-            .analyze_bounded_batch(inputs, &self.projection)
-            .map_err(|error| ExecutionError::Analysis {
-                ordinal: Some(self.next_corpus_sentence),
-                source_name: None,
-                source: Box::new(error),
-            })?;
-        if analyzed.inputs().len() != locations.len() {
-            return Err(ExecutionError::Source {
-                ordinal: self.next_corpus_sentence,
-                message: "native analyzer changed admitted input cardinality".to_owned(),
-            });
-        }
+        let analyzed = analyze_text_batch(
+            &mut self.analyzer,
+            sentences,
+            &self.projection,
+            self.next_corpus_sentence,
+        )?;
         let output_count = analyzed
-            .inputs()
             .iter()
-            .map(|input| input.sentences().len())
+            .map(|entry| entry.analyzed.sentences().len())
             .sum::<usize>();
         if output_count > limits.max_stage_sentences {
             return Err(ExecutionError::Source {
@@ -137,8 +121,11 @@ where
         let mut aggregate = 0_usize;
         let mut candidate_ordinal = self.next_corpus_sentence;
         let mut document_position = self.next_document_sentence;
-        for (analyzed_input, input_location) in
-            analyzed.into_inputs().into_vec().into_iter().zip(locations)
+        for AnalyzedTextInput {
+            location: input_location,
+            analyzed: analyzed_input,
+            ..
+        } in analyzed
         {
             for analyzed_sentence in analyzed_input.into_parts().1.into_vec() {
                 let sentence_bytes = analyzed_sentence.source_range().as_usize().len();
