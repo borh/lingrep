@@ -1336,6 +1336,17 @@ fn pinned_grammar_parses_match_mode_operators() {
 }
 
 #[test]
+fn pinned_tree_sitter_exposes_named_tree_layers() {
+    let source = r#"p := (?<v> []) measure count(tree(custom.layer).nodes) as $n, tree("custom layer").depth($v) as $d."#;
+    let tree = parse_with_pinned_grammar(source);
+    let root = tree.root_node();
+    assert!(!root.has_error(), "{root}");
+    assert_eq!(count_named_nodes(root, "tree_layer"), 2);
+    assert_eq!(count_named_nodes(root, "span_layer_name"), 1);
+    assert_eq!(count_named_nodes(root, "metadata_string"), 1);
+}
+
+#[test]
 fn pinned_tree_sitter_exposes_each_span_operand() {
     let tree = parse_with_pinned_grammar(
         r#"span := (?<a> []) (?<b> []) where span(sudachi.c, $a.whole@"name->with punctuation" -> $b)."#,

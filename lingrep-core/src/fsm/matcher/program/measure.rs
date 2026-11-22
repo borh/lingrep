@@ -27,8 +27,8 @@ pub(super) fn compile(m: &ExecutionMeasure, predicates: &mut PredicateCatalog) -
             .collect(),
     };
     let source = match &m.source {
-        MeasureSource::Tree(layer, series) => MeasureSource::Tree(*layer, *series),
-        MeasureSource::Depth(layer, capture) => MeasureSource::Depth(*layer, *capture),
+        MeasureSource::Tree(layer, series) => MeasureSource::Tree(layer.clone(), *series),
+        MeasureSource::Depth(layer, capture) => MeasureSource::Depth(layer.clone(), *capture),
         MeasureSource::Words(test) => MeasureSource::Words(compile_test(test)),
         MeasureSource::Links { head, labels, test } => MeasureSource::Links {
             head: *head,
@@ -53,7 +53,7 @@ struct Tree {
 }
 
 impl Tree {
-    fn read<S: TokenSequence + ?Sized>(tokens: &S, layer: TreeLayer) -> Result<Self, Measurement> {
+    fn read<S: TokenSequence + ?Sized>(tokens: &S, layer: &TreeLayer) -> Result<Self, Measurement> {
         let head_key = dependency_head_key();
         let rel_key = dependency_relation_key();
         let n = tokens.len();
@@ -83,15 +83,23 @@ impl Tree {
                 }
                 (parents, Vec::new())
             }
-            TreeLayer::Bunsetsu => {
+            TreeLayer::Bunsetsu | TreeLayer::Span(_) => {
+                let kind = match layer {
+                    TreeLayer::Span(kind) => kind.as_str(),
+                    _ => "bunsetsu",
+                };
+                let requires_word_root = matches!(layer, TreeLayer::Bunsetsu);
                 let mut spans = tokens
                     .spans()
                     .iter()
                     .enumerate()
-                    .filter(|(_, s)| s.kind == "bunsetsu")
+                    .filter(|(_, s)| s.kind == kind)
                     .collect::<Vec<_>>();
                 if spans.is_empty() {
                     return Err(Measurement::Unavailable);
+                }
+                if !requires_word_root && spans.len() == 1 {
+                    return Err(Measurement::InvalidTree);
                 }
                 spans.sort_unstable_by_key(|(_, s)| s.start);
                 let ranks: BTreeMap<_, _> = spans
@@ -110,15 +118,16 @@ impl Tree {
                     let range = s.start..s.end;
                     let parent = match s.governor {
                         Some(id) => *ranks.get(&id).ok_or(Measurement::InvalidTree)?,
-                        None if range.clone().any(|i| {
-                            tokens
-                                .scalar_key(i, &head_key)
-                                .and_then(|s| s.parse::<usize>().ok())
-                                == Some(0)
-                                && tokens
-                                    .scalar_key(i, &rel_key)
-                                    .is_some_and(|r| r == "root" || r.starts_with("root:"))
-                        }) =>
+                        None if !requires_word_root
+                            || range.clone().any(|i| {
+                                tokens
+                                    .scalar_key(i, &head_key)
+                                    .and_then(|s| s.parse::<usize>().ok())
+                                    == Some(0)
+                                    && tokens
+                                        .scalar_key(i, &rel_key)
+                                        .is_some_and(|r| r == "root" || r.starts_with("root:"))
+                            }) =>
                         {
                             0
                         }
@@ -177,30 +186,46 @@ impl Tree {
 }
 
 #[derive(Default)]
-pub(super) struct Observations {
-    words: OnceCell<Result<Tree, Measurement>>,
-    bunsetsu: OnceCell<Result<Tree, Measurement>>,
-    /// Whole-tree series reduced once per sentence, by layer and series.
-    series: [[OnceCell<Tally>; 3]; 2],
+struct LayerObservations {
+    tree: OnceCell<Result<Tree, Measurement>>,
+    series: [OnceCell<Tally>; 3],
 }
 
-impl Observations {
-    fn series(&self, layer: TreeLayer, series: TreeSeries) -> &OnceCell<Tally> {
-        &self.series[layer as usize][series as usize]
-    }
-
+impl LayerObservations {
     fn tree<S: TokenSequence + ?Sized>(
         &self,
-        layer: TreeLayer,
+        layer: &TreeLayer,
         tokens: &S,
     ) -> Result<&Tree, Measurement> {
-        let cell = match layer {
-            TreeLayer::Word => &self.words,
-            TreeLayer::Bunsetsu => &self.bunsetsu,
-        };
-        cell.get_or_init(|| Tree::read(tokens, layer))
+        self.tree
+            .get_or_init(|| Tree::read(tokens, layer))
             .as_ref()
             .map_err(|e| *e)
+    }
+}
+
+#[derive(Default)]
+pub(super) struct Observations<'a> {
+    words: LayerObservations,
+    bunsetsu: LayerObservations,
+    named: BTreeMap<&'a str, LayerObservations>,
+}
+
+impl<'a> Observations<'a> {
+    fn cached(&self, layer: &TreeLayer) -> Option<&LayerObservations> {
+        match layer {
+            TreeLayer::Word => Some(&self.words),
+            TreeLayer::Bunsetsu => Some(&self.bunsetsu),
+            TreeLayer::Span(kind) => self.named.get(kind.as_str()),
+        }
+    }
+
+    fn layer(&mut self, layer: &'a TreeLayer) -> &LayerObservations {
+        match layer {
+            TreeLayer::Word => &self.words,
+            TreeLayer::Bunsetsu => &self.bunsetsu,
+            TreeLayer::Span(kind) => self.named.entry(kind.as_str()).or_default(),
+        }
     }
 
     pub(super) fn charge<S: TokenSequence + ?Sized>(
@@ -211,25 +236,47 @@ impl Observations {
         budget: &mut MatchBudget,
         pattern: &str,
     ) -> Result<(), MatchResourceError> {
+        let word_layer = TreeLayer::Word;
         let (layer, scan) = match &m.source {
             MeasureSource::Words(_) => (None, words),
-            MeasureSource::Depth(l, _) => (Some(*l), 1),
-            MeasureSource::Tree(l, s) if self.series(*l, *s).get().is_some() => (Some(*l), 1),
-            MeasureSource::Tree(l, _) => (Some(*l), tokens.len().saturating_add(1)),
-            MeasureSource::Links { .. } => (Some(TreeLayer::Word), tokens.len()),
+            MeasureSource::Depth(layer, _) => (Some(layer), 1),
+            MeasureSource::Tree(layer, series) => {
+                let cached = self
+                    .cached(layer)
+                    .is_some_and(|entry| entry.series[*series as usize].get().is_some());
+                let scan = if cached {
+                    1
+                } else {
+                    tokens.len().saturating_add(1)
+                };
+                (Some(layer), scan)
+            }
+            MeasureSource::Links { .. } => (Some(&word_layer), tokens.len()),
         };
         budget.work(pattern, scan)?;
-        let units = match layer {
-            Some(TreeLayer::Word) if self.words.get().is_none() => tokens.len(),
-            Some(TreeLayer::Bunsetsu) if self.bunsetsu.get().is_none() => {
-                budget.work(pattern, tokens.spans().len().saturating_add(tokens.len()))?;
-                tokens
-                    .spans()
-                    .iter()
-                    .filter(|s| s.kind == "bunsetsu")
-                    .count()
-            }
-            _ => return Ok(()),
+        let Some(layer) = layer else {
+            return Ok(());
+        };
+        let cached = self.cached(layer);
+        if cached.is_some_and(|entry| entry.tree.get().is_some()) {
+            return Ok(());
+        }
+        if cached.is_none() {
+            let levels = self.named.len().saturating_add(1).ilog2() as usize + 1;
+            budget.allocate(
+                pattern,
+                levels * 16 * size_of::<(&str, LayerObservations)>(),
+            )?;
+        }
+        let units = if matches!(layer, TreeLayer::Word) {
+            tokens.len()
+        } else {
+            let kind = match layer {
+                TreeLayer::Span(kind) => kind.as_str(),
+                _ => "bunsetsu",
+            };
+            budget.work(pattern, tokens.spans().len().saturating_add(tokens.len()))?;
+            tokens.spans().iter().filter(|s| s.kind == kind).count()
         };
         budget.work(pattern, units)?;
         // Parent and child tables, DFS stack, boundary deltas, depths and span ranks.
@@ -242,8 +289,8 @@ impl Observations {
     }
 
     pub(super) fn observations<S: TokenSequence + ?Sized>(
-        &self,
-        m: &RuntimeMeasure,
+        &mut self,
+        m: &'a RuntimeMeasure,
         range: Range<usize>,
         captured_word: impl Fn(CaptureId) -> Option<usize>,
         predicates: &PredicateSession<'_>,
@@ -269,8 +316,9 @@ impl Observations {
         };
         match &m.source {
             MeasureSource::Tree(layer, series) => {
-                let t = self.tree(*layer, tokens)?;
-                return Ok(*self.series(*layer, *series).get_or_init(|| {
+                let observations = self.layer(layer);
+                let t = observations.tree(layer, tokens)?;
+                return Ok(*observations.series[*series as usize].get_or_init(|| {
                     let mut tally = Tally::default();
                     match series {
                         TreeSeries::Length => {
@@ -295,11 +343,13 @@ impl Observations {
                 }));
             }
             MeasureSource::Depth(layer, c) => {
-                let t = self.tree(*layer, tokens)?;
+                let t = self.layer(layer).tree(layer, tokens)?;
                 let i = capture(*c)?;
                 let rank = match layer {
                     TreeLayer::Word => i,
-                    TreeLayer::Bunsetsu => t.word_units.partition_point(|r| r.end <= i),
+                    TreeLayer::Bunsetsu | TreeLayer::Span(_) => {
+                        t.word_units.partition_point(|r| r.end <= i)
+                    }
                 };
                 tally.add(t.depths[rank]);
             }
@@ -311,7 +361,7 @@ impl Observations {
                 }
             }
             MeasureSource::Links { head, labels, test } => {
-                let t = self.tree(TreeLayer::Word, tokens)?;
+                let t = self.words.tree(&TreeLayer::Word, tokens)?;
                 let head = capture(*head)?;
                 let rel_key = dependency_relation_key();
                 for (i, &parent) in t.parents.iter().enumerate() {

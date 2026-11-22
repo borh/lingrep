@@ -1168,8 +1168,9 @@ mod tests {
 
     #[test]
     fn occurrence_reductions_match_parent_walks_and_boundary_counts() {
+        use crate::fsm::GraphBinding;
         use crate::token_match::{BoundTokenSentence, SentenceSpan, TokenSequence};
-        let source = "p := (?<v> []) []+ measure count(match.words[]) as $n, mean(tree(word).links.length) as $distance, max(tree(word).boundaries.open_links) as $peak, mean(tree(bunsetsu).nodes.depth) as $depth, tree(word).depth($v) as $at, count($v -[*]-> []) as $children.";
+        let source = "p := (?<v> []) []+ measure count(match.words[]) as $n, mean(tree(word).links.length) as $distance, max(tree(word).boundaries.open_links) as $peak, mean(tree(bunsetsu).nodes.depth) as $depth, tree(word).depth($v) as $at, count($v -[*]-> []) as $children, mean(tree(custom.layer).nodes.depth) as $custom, tree(custom.layer).depth($v) as $custom_at, count(tree(missing).nodes) as $missing.";
         let definition = execution_definition(source);
         let catalog = compile_catalog(
             PatternSource::named("measure", source),
@@ -1226,15 +1227,68 @@ mod tests {
                     },
                 ],
             ] {
-                let annotated = sentence.clone().with_spans(spans).unwrap();
-                let rows = (0..3)
-                    .map(|i| SequenceToken::new(&annotated, i).unwrap())
-                    .collect::<Vec<_>>();
-                assert_eq!(
-                    bound.find_matches(&annotated).unwrap(),
-                    execution_oracle_with_spans(&definition, &rows, annotated.spans())
-                );
+                for (custom_spans, status) in [
+                    (vec![], "unavailable"),
+                    (vec![custom_span(0, 3, None)], "invalid_tree"),
+                    (
+                        vec![custom_span(0, 1, Some(1)), custom_span(1, 3, None)],
+                        "ok",
+                    ),
+                    (
+                        vec![custom_span(0, 1, None), custom_span(1, 3, None)],
+                        "invalid_tree",
+                    ),
+                    (
+                        vec![custom_span(0, 1, Some(1)), custom_span(2, 3, None)],
+                        "invalid_tree",
+                    ),
+                ] {
+                    let offset = spans.len();
+                    let annotations = spans
+                        .iter()
+                        .cloned()
+                        .chain(custom_spans.into_iter().map(|mut span| {
+                            span.governor = span.governor.map(|id| id + offset);
+                            span
+                        }))
+                        .collect();
+                    let annotated = sentence.clone().with_spans(annotations).unwrap();
+                    let rows = (0..3)
+                        .map(|i| SequenceToken::new(&annotated, i).unwrap())
+                        .collect::<Vec<_>>();
+                    let actual = bound.find_matches(&annotated).unwrap();
+                    let custom = actual[0]
+                        .graph_bindings
+                        .iter()
+                        .find_map(|binding| match binding {
+                            GraphBinding::Measure { name, value } if name == "custom" => {
+                                Some(*value)
+                            }
+                            _ => None,
+                        })
+                        .unwrap();
+                    assert_eq!(custom.status(), status);
+                    assert_eq!(
+                        actual,
+                        execution_oracle_with_spans(&definition, &rows, annotated.spans())
+                    );
+                }
             }
+        }
+    }
+
+    fn custom_span(
+        start: usize,
+        end: usize,
+        governor: Option<usize>,
+    ) -> crate::token_match::SentenceSpan {
+        crate::token_match::SentenceSpan {
+            kind: "custom.layer".into(),
+            start,
+            end,
+            governor,
+            head: None,
+            label: None,
         }
     }
 

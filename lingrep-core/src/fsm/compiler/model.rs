@@ -502,10 +502,11 @@ pub(crate) enum Reducer {
     Max,
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) enum TreeLayer {
     Word,
     Bunsetsu,
+    Span(CompactString),
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]

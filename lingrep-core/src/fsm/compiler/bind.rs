@@ -708,8 +708,8 @@ fn bind_definition(
             span: m.span,
             reducer: m.reducer,
             source: match &m.source {
-                MeasureSource::Tree(l, s) => MeasureSource::Tree(*l, *s),
-                MeasureSource::Depth(l, c) => MeasureSource::Depth(*l, c.clone()),
+                MeasureSource::Tree(l, s) => MeasureSource::Tree(l.clone(), *s),
+                MeasureSource::Depth(l, c) => MeasureSource::Depth(l.clone(), c.clone()),
                 MeasureSource::Words(t) => {
                     MeasureSource::Words(bind_token_test(t, &ctx, &mut uses, diagnostics))
                 }

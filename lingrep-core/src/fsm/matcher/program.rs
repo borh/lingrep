@@ -528,7 +528,7 @@ impl Program {
         }
         let span_probes = spans.len().saturating_mul(constraint_count);
         let mut matches = Vec::new();
-        let observations = measure::Observations::default();
+        let mut observations = measure::Observations::default();
         let mut basic_observation_usable = None;
         for start in 0..tokens.len() {
             let mut accepted = Vec::new();
@@ -594,7 +594,7 @@ impl Program {
                         Some(self.measure(
                             candidate,
                             start,
-                            &observations,
+                            &mut observations,
                             predicates,
                             tokens,
                             budget,
@@ -857,11 +857,11 @@ impl Program {
     }
 
     /// The measures of one candidate, read from its own captures.
-    fn measure<S: TokenSequence + ?Sized>(
-        &self,
+    fn measure<'a, S: TokenSequence + ?Sized>(
+        &'a self,
         candidate: &Candidate,
         start: usize,
-        observations: &measure::Observations,
+        observations: &mut measure::Observations<'a>,
         predicates: &PredicateSession<'_>,
         tokens: &S,
         budget: &mut MatchBudget,
@@ -1049,8 +1049,13 @@ impl Program {
         let mut attributes = Vec::new();
         collect_attributes(&self.definition.expr, &mut attributes);
         for m in &self.definition.measures {
-            use crate::fsm::compiler::model::MeasureSource;
-            if !matches!(m.source, MeasureSource::Words(_)) {
+            use crate::fsm::compiler::model::{MeasureSource, TreeLayer};
+            if matches!(
+                m.source,
+                MeasureSource::Links { .. }
+                    | MeasureSource::Tree(TreeLayer::Word | TreeLayer::Bunsetsu, _)
+                    | MeasureSource::Depth(TreeLayer::Word | TreeLayer::Bunsetsu, _)
+            ) {
                 attributes.extend([dependency_head_key(), dependency_relation_key()]);
             }
             if let Some(test) = m.source.test() {

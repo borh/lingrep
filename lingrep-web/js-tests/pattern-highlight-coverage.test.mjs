@@ -189,7 +189,7 @@ test("grouping parentheses inside a token test are highlighted", async () => {
   }
 });
 
-test("span paths highlight their layer, selectors, labels and arrows", async () => {
+test("span constraints and tree measurements highlight named layers", async () => {
   const vendor = `${process.cwd()}/lingrep-web/assets/editor/vendor`;
   const { Parser, Language, Query } = await import(`${vendor}/web-tree-sitter.js`);
   await Parser.init({ locateFile: (name) => `${vendor}/${name}` });
@@ -197,7 +197,7 @@ test("span paths highlight their layer, selectors, labels and arrows", async () 
   const language = await Language.load(`${vendor}/tree-sitter-lingrep.wasm`);
   parser.setLanguage(language);
   const query = new Query(language, readFileSync(`${vendor}/highlights.scm`, "utf8"));
-  const source = 'p := (?<a> []) (?<b> []) where span(sudachi.c, $a.head@"P-X" -> $b.whole).';
+  const source = 'p := (?<a> []) (?<b> []) where span(sudachi.c, $a.head@"P-X" -> $b.whole) measure count(tree(custom.layer).nodes) as $n, tree("custom layer").depth($b) as $d.';
   const tree = parser.parse(source);
   assert.equal(tree.rootNode.hasError, false);
   const ranges = highlightRangesFromCaptures(query.captures(tree.rootNode).map(({name, node}) => ({
@@ -206,6 +206,7 @@ test("span paths highlight their layer, selectors, labels and arrows", async () 
   for (const [word, cls] of [
     ["span", "pattern-keyword"], ["sudachi.c", "pattern-property"], ["head", "pattern-property"],
     ['"P-X"', "pattern-string"], ["->", "pattern-operator"], ["whole", "pattern-property"],
+    ["custom.layer", "pattern-property"], ['"custom layer"', "pattern-string"],
   ]) {
     const start = source.indexOf(word);
     assert.ok(ranges.some(range => range.start === start && range.end === start + word.length && range.cls === cls), word);

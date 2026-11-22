@@ -2197,10 +2197,14 @@ impl<'a, 'src> Lowerer<'a, 'src> {
                     .named_children(&mut n.walk())
                     .find(|n| n.kind() == "tree_source")
                     .expect("tree source");
-                Ok(if this.text(field(source, "layer"))? == "word" {
-                    TreeLayer::Word
-                } else {
-                    TreeLayer::Bunsetsu
+                let layer = field(source, "layer")
+                    .named_child(0)
+                    .expect("tree layer name");
+                let kind = this.lower_span_kind(layer)?;
+                Ok(match kind.as_str() {
+                    "word" if layer.kind() != "metadata_string" => TreeLayer::Word,
+                    "bunsetsu" => TreeLayer::Bunsetsu,
+                    _ => TreeLayer::Span(kind.into()),
                 })
             };
             let (reducer, source) = if value.kind() == "capture_depth" {
@@ -2290,17 +2294,7 @@ impl<'a, 'src> Lowerer<'a, 'src> {
         Ok(measures.into_boxed_slice())
     }
 
-    fn lower_span_path(
-        &self,
-        node: Node<'_>,
-    ) -> Result<super::model::ParsedSpanPath, CompileError> {
-        use super::model::{ParsedSpanOperand, ParsedSpanPath, SpanPosition};
-        if node.has_error() {
-            self.check_recovery_subtree(node)?;
-        }
-        let layer = node
-            .child_by_field_name("layer")
-            .ok_or_else(|| self.error(node, DiagnosticCode::Syntax, "expected a span layer"))?;
+    fn lower_span_kind(&self, layer: Node<'_>) -> Result<String, CompileError> {
         let kind = if layer.kind() == "metadata_string" {
             self.metadata_string_text(layer)?
         } else {
@@ -2315,6 +2309,21 @@ impl<'a, 'src> Lowerer<'a, 'src> {
         if kind.is_empty() {
             return Err(self.error(layer, DiagnosticCode::Syntax, "span layer must be nonempty"));
         }
+        Ok(kind)
+    }
+
+    fn lower_span_path(
+        &self,
+        node: Node<'_>,
+    ) -> Result<super::model::ParsedSpanPath, CompileError> {
+        use super::model::{ParsedSpanOperand, ParsedSpanPath, SpanPosition};
+        if node.has_error() {
+            self.check_recovery_subtree(node)?;
+        }
+        let layer = node
+            .child_by_field_name("layer")
+            .ok_or_else(|| self.error(node, DiagnosticCode::Syntax, "expected a span layer"))?;
+        let kind = self.lower_span_kind(layer)?;
         let mut operands = Vec::new();
         for operand in node.children_by_field_name("operand", &mut node.walk()) {
             let capture = required_field(

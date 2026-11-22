@@ -655,12 +655,16 @@ verb := (?<v> [upos=VERB])
 | `tree(LAYER).nodes.depth` | Distances to the sentence root, including the root at zero. `tree(LAYER).depth($v)` reads the depth of the unit containing the single captured word. |
 | `tree(LAYER).boundaries.open_links` | Links crossing each unit boundary, including the two sentence edges with load zero. The maximum is zero for a singleton. |
 
-Choose `word` for the basic dependency tree or `bunsetsu` for annotated
-bunsetsu ordered by surface position. A valid tree has one root and a path to
-that root from every unit. Bunsetsu must partition the sentence and their root
-must contain an observed root word. Punctuation and skipped tokens retain their
-positions. `count`, `mean`, and `max` reduce numeric collections; `count` also
-accepts the collection itself.
+Use `tree(word)` for basic word dependencies. For stored spans, name the layer
+with an identifier, dotted name, or quoted string, as in `tree(custom.layer)`.
+The spans must partition the sentence in surface order and their governor links
+must lead to one root in the same layer. For bunsetsu, the root span must
+contain an observed root word. Other span layers require at least two spans
+connected by recorded governor links. Quoting `"word"` selects a stored layer
+with that name.
+
+Punctuation and skipped tokens retain their positions. `count`, `mean`, and
+`max` reduce numeric collections. `count` also accepts the collection itself.
 
 JSON match records publish a binding of kind `measure` with its name, numeric
 value, and status. An observed value has status `ok`. The count of an observed

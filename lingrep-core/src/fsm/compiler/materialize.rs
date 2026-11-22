@@ -118,6 +118,11 @@ pub(crate) fn materialize_program(
                         bytes.saturating_add(std::mem::size_of_val(label) + label.authored().len());
                 }
             }
+            if let MeasureSource::Tree(super::model::TreeLayer::Span(kind), _)
+            | MeasureSource::Depth(super::model::TreeLayer::Span(kind), _) = &m.source
+            {
+                bytes = bytes.saturating_add(kind.len());
+            }
             state.owned_bytes = state.owned_bytes.saturating_add(bytes);
             if state.owned_bytes > limits.max_generated_owned_bytes() {
                 return Err(state.at(
@@ -127,9 +132,9 @@ pub(crate) fn materialize_program(
                 ));
             }
             let source = match &m.source {
-                MeasureSource::Tree(l, s) => MeasureSource::Tree(*l, *s),
+                MeasureSource::Tree(l, s) => MeasureSource::Tree(l.clone(), *s),
                 MeasureSource::Depth(l, c) => MeasureSource::Depth(
-                    *l,
+                    l.clone(),
                     state.resolve_operand("measure", &captures, c, m.span)?,
                 ),
                 MeasureSource::Words(t) => MeasureSource::Words(t.clone()),

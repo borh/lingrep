@@ -323,6 +323,129 @@ pub(crate) async fn build_two_document_artifact(parent: &Path) -> PathBuf {
 }
 
 #[tokio::test]
+async fn named_span_tree_measurements_match_before_and_after_preparation() {
+    use lingrep_core::fsm::{CompileLimits, GraphBinding, PatternSource, compile_catalog};
+    use lingrep_core::token_match::SentenceSpan;
+
+    let directory = tempfile::tempdir().unwrap();
+    let destination = directory.path().join("span-tree.lingcorpus");
+    let source = source_document(0, "fixture.conllu", 0, false);
+    let schema = conllu::token_schema();
+    let projection = schema
+        .bind_projection(schema.keys().iter().cloned())
+        .unwrap();
+    let parsed = conllu::Reader::new(ENHANCED_FIXTURE.as_bytes(), "fixture.conllu")
+        .next()
+        .unwrap()
+        .unwrap();
+    let spans = vec![
+        SentenceSpan {
+            kind: "custom.layer".into(),
+            start: 0,
+            end: 1,
+            head: None,
+            label: None,
+            governor: Some(1),
+        },
+        SentenceSpan {
+            kind: "custom.layer".into(),
+            start: 1,
+            end: 2,
+            head: None,
+            label: None,
+            governor: None,
+        },
+    ];
+    let descriptor = conllu::analyzer_descriptor();
+    let config = BuildConfig {
+        analysis: AnalysisInputs::new(
+            ReaderIdentity::from_bytes([11; 32]),
+            AdmissionIdentity::from_bytes([12; 32]),
+            &descriptor,
+        ),
+        analyzer: lingrep_corpus::AnalyzerRecord::from_descriptor(&descriptor),
+        ..build_config()
+    };
+    let mut builder = CorpusBuilder::begin_with_schema(config, &destination, schema.clone())
+        .await
+        .unwrap();
+    builder.register_source_document(&source).unwrap();
+    let observation = builder.source_observation();
+    observation.begin_source(&source.logical_name).unwrap();
+    observation
+        .update_source_bytes(ENHANCED_FIXTURE.as_bytes())
+        .unwrap();
+    observation.end_source().unwrap();
+    builder
+        .push_corpus_event(&document_start(0, &source.logical_name))
+        .await
+        .unwrap();
+    builder
+        .push_corpus_event(&paragraph_start(0))
+        .await
+        .unwrap();
+    let AdmittedCorpusEvent::Sentence(mut admitted) = sentence(0, 0, 0) else {
+        panic!("expected a sentence event");
+    };
+    admitted.enhanced_graph = Some(parsed.enhanced_graph().clone());
+    let location = builder
+        .push_corpus_event(&AdmittedCorpusEvent::Sentence(admitted))
+        .await
+        .unwrap()
+        .unwrap();
+    let words = parsed
+        .project(&projection)
+        .unwrap()
+        .with_spans(spans.clone())
+        .unwrap();
+    builder
+        .push_bound_sentence(&location, words, &projection)
+        .await
+        .unwrap();
+    builder.push_corpus_event(&paragraph_end(0)).await.unwrap();
+    builder.push_corpus_event(&document_end(0)).await.unwrap();
+    let artifact = builder.finish(discovery_for(&[source])).await.unwrap();
+
+    let catalog = compile_catalog(
+        PatternSource::named("span-tree.lx", "p := ^ (?<v> []) [] $ measure count(tree(custom.layer).links) as $links, tree(\"custom.layer\").depth($v) as $depth."),
+        CompileLimits::default(),
+    ).unwrap().matcher;
+    let bound = catalog.bind(&schema).unwrap();
+    assert!(bound.projection().keys().is_empty());
+    let direct = parsed
+        .project(bound.projection())
+        .unwrap()
+        .with_spans(spans)
+        .unwrap();
+    let mut prepared = artifact.bound_sentence_source(bound.projection()).unwrap();
+    let Some(ExecutionBatch::BoundTokenized { sentences, .. }) =
+        prepared.next_batch(&ExecutionLimits::default()).unwrap()
+    else {
+        panic!("expected prepared tokens");
+    };
+    let direct = bound.find_matches(&direct).unwrap();
+    assert_eq!(
+        direct,
+        bound.find_matches(sentences[0].value.words()).unwrap()
+    );
+    assert_eq!(direct.len(), 1);
+    let measures = direct[0]
+        .graph_bindings
+        .iter()
+        .map(|binding| match binding {
+            GraphBinding::Measure { name, value } => {
+                (name.as_str(), value.number(), value.status())
+            }
+            _ => panic!("expected a measurement"),
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(
+        measures,
+        [("depth", Some(1.0), "ok"), ("links", Some(1.0), "ok")]
+    );
+}
+
+#[tokio::test]
 async fn enhanced_graph_component_round_trips_and_stays_lazy_for_morphology() {
     let directory = tempfile::tempdir().unwrap();
     let destination = directory.path().join("enhanced.lingcorpus");
