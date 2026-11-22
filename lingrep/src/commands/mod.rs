@@ -11,6 +11,7 @@ pub mod corpus;
 mod corpus_metadata;
 pub mod describe;
 pub mod dictionary;
+pub mod diff;
 pub mod disk;
 pub mod doctor;
 mod ending_report;
@@ -74,6 +75,7 @@ pub fn dispatch(
             DictionaryCommand::Install(args) => dictionary::run_install(args, output),
         },
         Command::Neighbors(args) => neighbors::run(args, output),
+        Command::Diff(args) => diff::run(args, output),
         Command::Check(args)
             if args.diagram && output == crate::presentation::OutputMode::Jsonl =>
         {

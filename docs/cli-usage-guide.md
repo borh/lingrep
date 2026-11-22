@@ -15,6 +15,7 @@ ling explore
 ling serve
 ling corpus build|inspect|inventory|variants|disk|prune|render
 ling check
+ling diff
 ling neighbors
 ling dictionary install
 ling analyzer prepare
@@ -369,8 +370,61 @@ completed. `--evidence` requires `--json` or `--tsv`.
 ### Comparing two patterns' occurrences
 
 Counts cannot show which passages one pattern finds and another misses.
-[`examples/compare_occurrences.py`](../examples/compare_occurrences.py) compares
-two saved `--json --evidence` runs and requires only Python 3:
+`ling diff` compares two saved `ling --json matches` runs over the same corpus
+and reports, per definition, the occurrences both runs have (`shared`) and
+those only one has (`a_only`, `b_only`), with the first differing sentences:
+
+```bash
+ling --json matches --corpus natsume.lingcorpus --evidence --limit all \
+  --patterns before.lx > before.jsonl
+ling --json matches --corpus natsume.lingcorpus --evidence --limit all \
+  --patterns after.lx > after.jsonl
+ling diff before.jsonl after.jsonl
+```
+
+Without `--a-pattern` and `--b-pattern`, every pattern name both runs define is
+compared with itself, which compares two revisions of a catalog; a name only
+one run defines is listed with its record count. `--a-pattern NAME --b-pattern
+NAME` compares two definitions, and both files may be one run of a catalog that
+defines both.
+
+`--level` states what identifies an occurrence within its sentence, and the
+report repeats it:
+
+| `--level` | Two records are the same occurrence when |
+|---|---|
+| `span` (default) | their token spans are equal |
+| `roles` | each compared capture, graph node and named edge occupies the same tokens, whatever the spans; `--roles n,p` selects the names, and the default is the names every compared record binds |
+| `record` | the published records are equal: span, captures, graph bindings, interpretations, lexical identity, unit and key |
+
+Two definitions that match the same spans with different captures are `shared`
+at `span` and one-sided at `record`.
+
+The report states the sentences compared. A run stopped at `--limit` is
+compared over the sentences before the one it stopped in, the lowest such bound
+when both stopped, and requires a prepared corpus, which records its identity
+before the first sentence. Runs made with the same `--sample` or `--where`
+are compared within that selection. The last line is either the one-sided
+totals or `no difference in N sentences scanned`; it describes those sentences
+at that level and makes no statement about the rest of the corpus. `ling diff`
+exits with status 2 when either file lacks its completion record, kept a
+`--retain` sample, or was run over a different corpus, analysis, `--sample` or
+`--where` scope than the other. A direct run and a prepared run of the same
+files have different analysis identities, so compare two runs of the same kind.
+`--examples N` sets how many one-sided occurrences are listed per definition
+and side (default 3), and `ling --json diff` writes `lingrep.diff/v1` records.
+Sentence text appears when the runs were made with `--evidence`.
+
+In the Workbench, "Compare with the last search" under the pattern editor runs
+the last searched pattern and the editor's pattern over the selected corpus and
+search scope with the same command, at the level chosen there. Each run stops
+at 20,000 records, so the panel states whether every sentence or only a prefix
+was compared, and each one-sided occurrence opens its sentence in the reader.
+
+[`examples/compare_occurrences.py`](../examples/compare_occurrences.py) is the
+role-level comparison as a script that requires only Python 3. It writes one
+TSV row per occurrence, including the shared ones, with each role's dependency
+relation:
 
 ```bash
 ling matches --corpus natsume.lingcorpus --json --evidence --limit all --pattern \

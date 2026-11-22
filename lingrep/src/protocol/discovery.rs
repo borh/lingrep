@@ -48,6 +48,7 @@ contract_ids! {
     Conllu => "lingrep.conllu/v1",
     Contrast => "lingrep.contrast/v1",
     Diagnostic => "lingrep.diagnostic/v1",
+    Diff => "lingrep.diff/v1",
     Disk => "lingrep.disk/v1",
     Dictionary => "lingrep.dictionary/v1",
     Doctor => "lingrep.doctor/v1",

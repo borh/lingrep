@@ -328,6 +328,13 @@ static SEMANTICS: &[CommandSemantics] = &[
         },
     },
     CommandSemantics {
+        command: "diff",
+        input_modes: &[],
+        examples: ExamplePublication::Omitted {
+            reason: "reads two match streams the user produces",
+        },
+    },
+    CommandSemantics {
         command: "neighbors",
         input_modes: &[],
         examples: ExamplePublication::Omitted {

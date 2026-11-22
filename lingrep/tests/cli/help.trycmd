@@ -16,6 +16,7 @@ Commands:
   corpus       Save analyzed corpora for reuse, inspect them, and list corpus sources
   check        Validate patterns without reading a corpus; --help lists the syntax
   neighbors    Print the values nearest a word in a word-vector file as a `set` definition
+  diff         Compare the occurrences of two `ling matches --json` runs over one corpus
   dictionary   Download a UniDic dictionary for Japanese analysis
   analyzer     Prepare a Python analyzer in a directory you choose
   doctor       Check the named dictionary, catalog and prepared corpus

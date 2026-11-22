@@ -273,6 +273,16 @@ pub enum Command {
     /// definition into a catalog and test an attribute against it, as in
     /// `[lemma in @NEIGHBORS]`; --json reports each value with its similarity.
     Neighbors(NeighborsArgs),
+    /// Compare the occurrences of two `ling matches --json` runs over one corpus.
+    ///
+    /// Reports, per definition, the occurrences both runs have and those only
+    /// one has, with the first differing sentences. Run the two catalog
+    /// revisions (or one catalog holding both definitions) over the same
+    /// corpus with `ling --json matches`, then name the two files. --level
+    /// states what identifies an occurrence. A run stopped at --limit is
+    /// compared over the sentences both runs completed; the report states
+    /// the sentences compared and never that the definitions are equivalent.
+    Diff(DiffArgs),
     /// Download a UniDic dictionary for Japanese analysis.
     Dictionary(DictionaryArgs),
     /// Prepare a Python analyzer in a directory you choose.
@@ -316,6 +326,61 @@ pub struct CompletionsArgs {
     /// Shell for which to generate a completion definition.
     #[arg(value_enum)]
     pub shell: CompletionShell,
+}
+
+#[derive(Debug, Args)]
+pub struct DiffArgs {
+    /// First `ling --json matches` stream.
+    #[arg(value_name = "A")]
+    pub a: PathBuf,
+
+    /// Second stream; the same file compares two of its definitions.
+    #[arg(value_name = "B")]
+    pub b: PathBuf,
+
+    /// Definition to read from A. Without --a-pattern and --b-pattern, every
+    /// pattern name both runs define is compared with itself.
+    #[arg(long, value_name = "NAME", help_heading = "Selection")]
+    pub a_pattern: Option<String>,
+
+    /// Definition to read from B; defaults to the --a-pattern name.
+    #[arg(long, value_name = "NAME", help_heading = "Selection")]
+    pub b_pattern: Option<String>,
+
+    /// What identifies an occurrence within its sentence: `span` is the
+    /// match's token span; `roles` is the tokens each compared capture or
+    /// graph binding occupies, whatever the span; `record` is the published
+    /// record (span, captures, graph bindings, interpretations, lexical
+    /// identity, unit and key).
+    #[arg(long, value_enum, default_value_t = DiffLevel::Span, help_heading = "Selection")]
+    pub level: DiffLevel,
+
+    /// Comma-separated role names compared at --level roles; the default is
+    /// the names every compared record of a definition pair binds.
+    #[arg(
+        long,
+        value_name = "NAMES",
+        value_delimiter = ',',
+        help_heading = "Selection"
+    )]
+    pub roles: Vec<String>,
+
+    /// Differing occurrences shown per definition pair and side, the first in
+    /// corpus order.
+    #[arg(
+        long,
+        value_name = "COUNT",
+        default_value_t = 3,
+        help_heading = "Output"
+    )]
+    pub examples: usize,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum)]
+pub enum DiffLevel {
+    Span,
+    Roles,
+    Record,
 }
 
 #[derive(Debug, Args)]
@@ -2344,6 +2409,7 @@ impl Cli {
             Command::Doctor(_)
             | Command::Dictionary(_)
             | Command::Neighbors(_)
+            | Command::Diff(_)
             | Command::Analyzer(_)
             | Command::Check(_)
             | Command::Table(_)
@@ -2375,6 +2441,7 @@ impl Cli {
             Command::Doctor(_)
             | Command::Dictionary(_)
             | Command::Neighbors(_)
+            | Command::Diff(_)
             | Command::Analyzer(_)
             | Command::Check(_)
             | Command::Matches(_)
@@ -2439,6 +2506,7 @@ impl Cli {
             Command::Doctor(_)
             | Command::Dictionary(_)
             | Command::Neighbors(_)
+            | Command::Diff(_)
             | Command::Analyzer(_)
             | Command::Table(_)
             | Command::Contrast(_)
