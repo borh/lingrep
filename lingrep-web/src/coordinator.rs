@@ -1,35 +1,32 @@
-use std::collections::{HashMap, HashSet};
+use std::collections::HashMap;
 use std::num::NonZeroUsize;
+use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
-use std::sync::{Arc, Mutex as StdMutex};
-use std::time::{Duration, Instant};
+use std::time::Duration;
 
-use lingrep_core::analysis::VibratoSession;
-use lingrep_core::execution::{
-    AnalysisBinding, CancellationFlag, ExecutionError, ExecutionLimits, ExecutionProgress,
-    OversizedSentenceOmissions, PolicySelection, ProgressSink, RunOutcome, SentenceAdmission,
-    TokenizedAdmission, execute_analyzed,
-};
+use lingrep_core::execution::{CancellationFlag, ExecutionProgress};
+use lingrep_core::fsm::policy_program::Overlaps;
+use lingrep_core::token_match::AttributeKey;
 use tokio::sync::{Mutex, Notify, Semaphore, watch};
 
-use crate::corpus_runtime::{CacheReadiness, CorpusIdentity, CorpusRuntime, ReadyCorpus};
+use crate::corpus_runtime::{CacheReadiness, CorpusRuntime, ReadyCorpus};
 use crate::corpus_set::{CorpusName, CorpusSlot};
-use crate::patterns::{compile_web_pattern, format_pattern_compile_error};
 use crate::revision::{
     AttemptFailure, CacheReadinessView, CancelReason, CoordinatorEvent, ErrorCategory,
     RevisionCoordinatorState, RevisionId, WorkbenchId,
 };
-use crate::section_tally::{self, spawn_span_producer};
 use crate::snapshot::{CompletedSnapshot, CompoundCategory};
-use crate::snapshot_sink::{
-    SectionScanState, SnapshotSink, SnapshotSinkInitError, SnapshotSinkMeta,
-};
-use lingrep_core::fsm::policy_program::Overlaps;
-use lingrep_core::fsm::{CompileOutput, SchemaBindError};
-use lingrep_core::token_match::AttributeKey;
 
-const DEFAULT_BATCH_SIZE: usize = 1_024;
-const LIVE_SUMMARY_INTERVAL: Duration = Duration::from_millis(100);
+mod scan;
+
+#[cfg(test)]
+pub(crate) use scan::scan_projection_attributes;
+pub(crate) use scan::{BoundScan, ScanOptions, ScanSetupError};
+use scan::{
+    Prepared, ScanProgress, ScanTaskResult, cache_unavailable_failure, prepare_scan, resolve_scan,
+    run_scan_blocking_with_options,
+};
+
 const ABANDONED_SCAN_GRACE: Duration = Duration::from_secs(30);
 
 #[derive(Debug, Clone)]
@@ -69,548 +66,6 @@ impl Default for RevisionRequest {
     }
 }
 
-#[derive(Debug, Clone)]
-pub(crate) struct ScanOptions {
-    pub(crate) pattern: Option<String>,
-    pub(crate) index_results: bool,
-    pub(crate) expected_analysis_identity: Option<String>,
-    pub(crate) expected_vectors_blake3: Option<blake3::Hash>,
-    pub(crate) search_scope: crate::search_scope::SearchScope,
-    pub(crate) retained: usize,
-    pub(crate) derive_compounds: bool,
-    pub(crate) compound_category: CompoundCategory,
-    pub(crate) document_reach: bool,
-    pub(crate) overlaps: Overlaps,
-}
-
-fn execution_failure() -> AttemptFailure {
-    AttemptFailure {
-        category: ErrorCategory::Execution,
-        message:
-            "Try the search again. If it fails again, ask the server operator to check the logs."
-                .into(),
-    }
-}
-
-fn integrity_failure() -> AttemptFailure {
-    AttemptFailure {
-        category: ErrorCategory::Integrity,
-        message: "The corpus data could not be verified or read. Search again when the corpus is ready; if it remains unavailable, ask the server operator to check the logs.".into(),
-    }
-}
-
-fn binding_failure(
-    error: &SchemaBindError,
-    analyzer: &lingrep_corpus::AnalyzerRecord,
-) -> AttemptFailure {
-    AttemptFailure {
-        category: ErrorCategory::Binding,
-        message: format!(
-            "The catalog cannot bind to this corpus's token schema ({} {}): {error}.",
-            analyzer.family, analyzer.profile
-        ),
-    }
-}
-
-fn cli_arguments(ready: &ReadyCorpus, clause: Option<&str>, overlaps: Overlaps) -> String {
-    use crate::frequency::shell_word;
-    let artifact = ready.artifact.directory().file_name().map_or_else(
-        || "CORPUS".into(),
-        |name| name.to_string_lossy().into_owned(),
-    );
-    let mut command = format!(
-        "--patterns query.lx --corpus {}",
-        shell_word(&format!("./{artifact}"))
-    );
-    if let Some(clause) = clause {
-        command.push_str(&format!(" --where {}", shell_word(clause)));
-    }
-    if let Some(value) = crate::templates::overlaps_value(overlaps) {
-        command.push_str(&format!(" --overlaps {value}"));
-    }
-    command
-}
-
-fn scope_failure(error: crate::search_scope::ResolveError) -> AttemptFailure {
-    match error {
-        crate::search_scope::ResolveError::Unanswerable(message) => AttemptFailure {
-            category: ErrorCategory::Scope,
-            message,
-        },
-        crate::search_scope::ResolveError::Corpus(error) => {
-            tracing::warn!(%error, "scope resolution failed");
-            integrity_failure()
-        }
-    }
-}
-
-fn classify_execution_error(error: &ExecutionError) -> AttemptFailure {
-    tracing::warn!(%error, "corpus scan execution error");
-    match error {
-        ExecutionError::Matching(lingrep_core::fsm::BoundExecutionError::Resource(error)) => {
-            AttemptFailure {
-                category: ErrorCategory::Execution,
-                message: match error {
-                    lingrep_core::fsm::MatchResourceError::BatchOutput { .. } => format!(
-                        "{error} Narrow the pattern to produce fewer matches in one sentence."
-                    ),
-                    lingrep_core::fsm::MatchResourceError::Sentence { .. }
-                    | lingrep_core::fsm::MatchResourceError::InterpretationReplay { .. }
-                    | lingrep_core::fsm::MatchResourceError::Cancelled => error.to_string(),
-                },
-            }
-        }
-        ExecutionError::TokenizedSentenceTooLarge { actual, limit, .. }
-        | ExecutionError::LookaroundWindowTooLarge { actual, limit } => AttemptFailure {
-            category: ErrorCategory::Execution,
-            message: format!(
-                "The analyzed input exceeds the server's token-memory limit: estimated {actual} bytes; limit {limit}. Narrow the search scope or ask the server operator to review the limit."
-            ),
-        },
-        ExecutionError::SentenceTooLarge { actual, limit, .. } => AttemptFailure {
-            category: ErrorCategory::Execution,
-            message: format!(
-                "An input sentence is {actual} bytes; the server limit is {limit}. Ask the server operator to review the source and sentence limit."
-            ),
-        },
-        ExecutionError::Sink(message)
-            if *message == crate::result_index::ResultIndexError::BudgetExceeded.to_string()
-                || *message == crate::derived_patterns::CompoundLimitExceeded.to_string() =>
-        {
-            AttemptFailure {
-                category: ErrorCategory::ResultLimit,
-                message: message.clone(),
-            }
-        }
-        ExecutionError::Cache(_) | ExecutionError::Source { .. } => integrity_failure(),
-        _ => execution_failure(),
-    }
-}
-
-fn cache_unavailable_failure() -> AttemptFailure {
-    AttemptFailure {
-        category: ErrorCategory::Cache,
-        message: "The corpus cache is unavailable.".into(),
-    }
-}
-
-// `Finished` carries the full scan outcome (including the retained-match
-// sink); `Panicked` is a rare terminal case with no payload. Boxing would
-// only add an allocation on every successful scan to shrink an enum that
-// lives for a single match expression, so the size skew is accepted here.
-#[allow(clippy::large_enum_variant)]
-#[allow(clippy::type_complexity)]
-enum ScanTaskResult {
-    Finished(
-        Result<(RunOutcome, SnapshotSink, Option<OversizedSentenceOmissions>), AttemptFailure>,
-    ),
-    Panicked,
-}
-
-struct ScanResolution {
-    event: CoordinatorEvent,
-    invalidate_corrupt: bool,
-    progress: ExecutionProgress,
-}
-
-fn resolve_scan(
-    result: ScanTaskResult,
-    workbench: WorkbenchId,
-    revision: RevisionId,
-    identity: CorpusIdentity,
-    expected_sentence_count: Option<u64>,
-    source: std::sync::Arc<str>,
-    cancel_reason: CancelReason,
-) -> ScanResolution {
-    match result {
-        ScanTaskResult::Finished(Ok((RunOutcome::Completed(report), ref sink, ref omissions)))
-            if expected_sentence_count.is_some_and(|count| {
-                count
-                    != report.sentences_admitted
-                        + sink.excluded_sentences()
-                        + omissions.as_ref().map_or(0, |o| o.count)
-            }) =>
-        {
-            ScanResolution {
-                event: CoordinatorEvent::Failed {
-                    workbench,
-                    revision,
-                    failure: integrity_failure(),
-                },
-                invalidate_corrupt: true,
-                progress: ExecutionProgress::default(),
-            }
-        }
-        ScanTaskResult::Finished(Ok((RunOutcome::Completed(ref report), ref sink, _)))
-            if report.sentences_admitted != sink.observed_sentences() =>
-        {
-            tracing::warn!(
-                reported = report.sentences_admitted,
-                observed = sink.observed_sentences(),
-                "sentence count disagreement between the report and the sink"
-            );
-            ScanResolution {
-                event: CoordinatorEvent::Failed {
-                    workbench,
-                    revision,
-                    failure: integrity_failure(),
-                },
-                invalidate_corrupt: true,
-                progress: ExecutionProgress::default(),
-            }
-        }
-        // The lifecycle guard: `finish` transitions sections to `Finalized`, so
-        // `into_completed_snapshot` returning `None` means the scan never
-        // reached finalization and the span stream was never drained.
-        ScanTaskResult::Finished(Ok((RunOutcome::Completed(_), sink, oversized_omissions))) => {
-            match sink.into_completed_snapshot(revision, identity, source, oversized_omissions) {
-                Some(snapshot) => ScanResolution {
-                    event: CoordinatorEvent::Completed {
-                        workbench,
-                        revision,
-                        snapshot: Arc::new(snapshot),
-                    },
-                    invalidate_corrupt: false,
-                    progress: ExecutionProgress::default(),
-                },
-                None => ScanResolution {
-                    event: CoordinatorEvent::Failed {
-                        workbench,
-                        revision,
-                        failure: integrity_failure(),
-                    },
-                    invalidate_corrupt: false,
-                    progress: ExecutionProgress::default(),
-                },
-            }
-        }
-        ScanTaskResult::Finished(Ok((RunOutcome::Cancelled(report), _, _))) => ScanResolution {
-            event: CoordinatorEvent::Cancelled {
-                workbench,
-                revision,
-                reason: cancel_reason,
-            },
-            invalidate_corrupt: false,
-            progress: ExecutionProgress {
-                sentences_admitted: report.sentences_admitted,
-                sentences_matched: report.sentences_matched,
-                tokens_scanned: report.tokens_scanned,
-                matches_found: report.matches_found,
-                records_emitted: report.records_emitted,
-            },
-        },
-        ScanTaskResult::Finished(Err(failure)) => ScanResolution {
-            event: CoordinatorEvent::Failed {
-                workbench,
-                revision,
-                failure,
-            },
-            invalidate_corrupt: false,
-            progress: ExecutionProgress::default(),
-        },
-        ScanTaskResult::Panicked => ScanResolution {
-            event: CoordinatorEvent::Failed {
-                workbench,
-                revision,
-                failure: execution_failure(),
-            },
-            invalidate_corrupt: false,
-            progress: ExecutionProgress::default(),
-        },
-    }
-}
-
-/// Everything the scan needs that can fail before matching begins.
-enum Prepared {
-    Ready {
-        // Boxed: a compiled catalog dwarfs an `AttemptFailure`, and this enum
-        // lives for exactly one match expression.
-        compiled: Box<CompileOutput>,
-        provenance: Arc<lingrep_corpus::ProvenanceView>,
-        /// `None` when `admit` rejected the vocabulary: a producer with no
-        /// consumer fills its channel and parks forever, so it is never started.
-        producer: Option<tokio::task::JoinHandle<()>>,
-        sections: SectionScanState,
-    },
-    Failed(AttemptFailure),
-}
-
-/// Compiles the catalog, reads the corpus's section vocabulary, decides whether
-/// an exact projection fits, and — only if it does — starts the span producer.
-///
-/// The order is load-bearing. Availability is decided *before* the producer
-/// exists, because a producer whose consumer was never built parks on a full
-/// channel with nothing to drain it.
-async fn prepare_scan(
-    registry: &CoordinatorRegistry,
-    permit: Arc<tokio::sync::OwnedSemaphorePermit>,
-    ready: &ReadyCorpus,
-    source: &str,
-    pattern: Option<&str>,
-    expected_vectors: Option<blake3::Hash>,
-    scope: &crate::search_scope::SearchScope,
-) -> Prepared {
-    let source = source.to_owned();
-    let pattern = pattern.map(str::to_owned);
-    let compiled = match registry
-        .pattern_task(move || {
-            let _permit = permit;
-            pattern.as_deref().map_or_else(
-                || compile_web_pattern(&source),
-                |pattern| crate::patterns::compile_web_catalog_pattern(&source, pattern),
-            )
-        })
-        .await
-    {
-        Ok(compiled) => compiled,
-        Err(error) => {
-            tracing::warn!(%error, "pattern preparation failed");
-            return Prepared::Failed(AttemptFailure {
-                category: ErrorCategory::Execution,
-                message: "The pattern could not be checked. Try the search again.".into(),
-            });
-        }
-    };
-    if let Err(message) = crate::patterns::check_question_vectors(
-        &compiled,
-        crate::patterns::word_vectors(),
-        expected_vectors,
-    ) {
-        return Prepared::Failed(AttemptFailure {
-            category: ErrorCategory::VectorsChanged,
-            message,
-        });
-    }
-    let compiled = match compiled {
-        Ok(output) => output,
-        Err(error) => {
-            return Prepared::Failed(AttemptFailure {
-                category: ErrorCategory::Compile,
-                message: format_pattern_compile_error(&error),
-            });
-        }
-    };
-    let pattern_count = crate::pattern_catalog::pattern_metadata_pairs(&compiled.matcher).len();
-
-    let provenance = match ready.provenance().await {
-        Ok(view) => view,
-        Err(error) => {
-            tracing::warn!(%error, "provenance view unavailable");
-            return Prepared::Failed(integrity_failure());
-        }
-    };
-    let mut vocabulary = match provenance
-        .section_coverage(lingrep_corpus::MAX_SECTION_LABELS)
-        .await
-    {
-        Ok(vocabulary) => vocabulary,
-        Err(error) => {
-            tracing::warn!(%error, "section coverage unavailable");
-            return Prepared::Failed(integrity_failure());
-        }
-    };
-
-    if let Some(selected) = &scope.included_sections {
-        let selected = selected.iter().map(String::as_str).collect::<HashSet<_>>();
-        vocabulary.retain(|section| selected.contains(section.label.as_str()));
-    }
-
-    // `admit` runs the ceiling test and calls the closure only if it passes, so
-    // the producer cannot be started for a vocabulary that has no consumer.
-    let scope_provenance = Arc::clone(&provenance);
-    let mut producer = None;
-    let sections = match section_tally::admit(&vocabulary, pattern_count, || {
-        // The producer maps label → slot from this same order, so the slot
-        // assignment has one owner.
-        let labels = vocabulary
-            .iter()
-            .map(|entry| entry.label.clone())
-            .collect::<Vec<_>>();
-        let (handle, events) = spawn_span_producer(provenance, labels);
-        producer = Some(handle);
-        events
-    }) {
-        Ok(builder) => SectionScanState::Building(Box::new(builder)),
-        Err(refusal) => SectionScanState::Refused(refusal),
-    };
-    Prepared::Ready {
-        compiled: Box::new(compiled),
-        provenance: scope_provenance,
-        producer,
-        sections,
-    }
-}
-
-/// Runs the scan on a blocking thread.
-///
-/// Takes the already-compiled catalog: the caller needs its pattern count to
-/// decide section availability before the span producer is started, and
-/// compiling in both places would either double the work or admit sections
-/// against a zero-pattern catalog.
-#[cfg(test)]
-fn run_scan_blocking(
-    ready: &ReadyCorpus,
-    output: CompileOutput,
-    max_refs: usize,
-    sections: SectionScanState,
-    cancel: &CancellationFlag,
-    progress_tx: watch::Sender<Option<ScanProgress>>,
-) -> Result<(RunOutcome, SnapshotSink, Option<OversizedSentenceOmissions>), AttemptFailure> {
-    run_scan_blocking_with_options(
-        ready,
-        output,
-        max_refs,
-        sections,
-        cancel,
-        progress_tx,
-        false,
-        CompoundCategory::Compound,
-        false,
-        Default::default(),
-        Default::default(),
-        None,
-        false,
-    )
-}
-
-fn run_scan_blocking_with_options(
-    ready: &ReadyCorpus,
-    output: CompileOutput,
-    max_refs: usize,
-    sections: SectionScanState,
-    cancel: &CancellationFlag,
-    progress_tx: watch::Sender<Option<ScanProgress>>,
-    derive_compounds: bool,
-    compound_category: CompoundCategory,
-    document_reach: bool,
-    overlaps: Overlaps,
-    search_scope: crate::search_scope::SearchScope,
-    provenance: Option<Arc<lingrep_corpus::ProvenanceView>>,
-    index_results: bool,
-) -> Result<(RunOutcome, SnapshotSink, Option<OversizedSentenceOmissions>), AttemptFailure> {
-    let (resolved, scope) = match provenance {
-        Some(provenance) => {
-            let resolved = crate::search_scope::resolve(
-                &search_scope,
-                &provenance,
-                &tokio::runtime::Handle::current(),
-            )
-            .map_err(scope_failure)?;
-            let scope =
-                crate::search_scope::BoundScope::new(resolved.admission.clone(), provenance);
-            (resolved, scope)
-        }
-        None => Default::default(),
-    };
-    let mut output = output;
-    output.matcher = output.matcher.with_overlaps(overlaps);
-    let schema = ready.artifact.token_schema().map_err(|error| {
-        tracing::warn!(%error, "artifact schema admission failed");
-        integrity_failure()
-    })?;
-    let mut attributes = lingrep_core::execution::cached_run_attributes(&output.matcher);
-    attributes.extend(lingrep_core::token_match::display_surface_attributes(
-        &schema,
-    ));
-    attributes.sort_unstable();
-    attributes.dedup();
-    let attributes: Arc<[AttributeKey]> = attributes.into();
-    let bound = output
-        .matcher
-        .bind_with_projection(&schema, attributes.iter().cloned())
-        .map_err(|error| binding_failure(&error, ready.artifact.analyzer()))?;
-    let unavailable_attributes = (!bound.unavailable_attributes().is_empty()).then(|| {
-        let analyzer = ready.artifact.analyzer();
-        crate::snapshot::UnavailableAttributes {
-            keys: bound.unavailable_attributes().into(),
-            schema: format!("{} {}", analyzer.family, analyzer.profile).into(),
-        }
-    });
-    let patterns = crate::pattern_catalog::pattern_metadata_pairs(&output.matcher);
-    let metadata_conflicts = crate::pattern_catalog::pattern_metadata_conflicts(&output.matcher);
-    let meta = SnapshotSinkMeta {
-        search_scope,
-        admission: resolved.admission,
-        excluded_sentences: resolved.excluded_sentences,
-        cli_arguments: cli_arguments(ready, resolved.clause.as_deref(), overlaps),
-        overlaps,
-        unavailable_attributes,
-        vectors_binding: crate::patterns::bound_word_vectors(&output.matcher),
-        derive_compounds,
-        compound_category,
-        document_reach,
-    };
-    let mut sink = SnapshotSink::new_for_scan(
-        max_refs,
-        patterns,
-        metadata_conflicts,
-        sections,
-        index_results.then_some(attributes),
-        meta,
-    )
-    .map_err(|error| match error {
-        SnapshotSinkInitError::PatternSpaceExhausted => execution_failure(),
-        SnapshotSinkInitError::ResultIndex(error) => AttemptFailure {
-            category: ErrorCategory::Execution,
-            message: error.to_string(),
-        },
-    })?;
-    let mut progress = WatchProgress::new(progress_tx, LIVE_SUMMARY_INTERVAL);
-    // Prepared artifacts may contain oversized sentences. Omit and count them
-    // so the result banner can disclose a degraded run.
-    let omissions = Arc::new(StdMutex::new(OversizedSentenceOmissions::default()));
-    let execution_source = scope
-        .open_source(
-            &ready.artifact,
-            bound.projection(),
-            output.matcher.lookaround_division_kinds(),
-            Arc::clone(&ready.pool),
-        )
-        .map_err(|error| {
-            tracing::warn!(%error, "sentence source construction failed");
-            integrity_failure()
-        })?
-        .with_tokenized_admission(TokenizedAdmission::Omit(Arc::clone(&omissions)))
-        .with_cancellation(cancel.clone());
-    let mut observer = |_: lingrep_core::execution::TokenizedBatchObservation| Ok(());
-    let outcome = execute_analyzed::<_, VibratoSession, _, _, _>(
-        execution_source,
-        AnalysisBinding::Prepared(schema),
-        &bound,
-        &ready.pool,
-        &ExecutionLimits::default(),
-        DEFAULT_BATCH_SIZE,
-        cancel,
-        &mut sink,
-        &mut progress,
-        &mut observer,
-        PolicySelection::Apply,
-        &SentenceAdmission::All,
-    )
-    .map_err(|error| classify_execution_error(&error))?;
-    // Finalization runs here, on the blocking thread, because the span source
-    // drains its channel with `blocking_recv`, which panics on a runtime
-    // worker. Either way the builder — and with it the channel receiver — is
-    // dropped before the caller joins the producer.
-    if matches!(outcome, RunOutcome::Completed(_)) {
-        sink.finish().map_err(|error| {
-            tracing::warn!(%error, "span stream did not drain cleanly");
-            integrity_failure()
-        })?;
-        sink.finish_result_index().map_err(|error| AttemptFailure {
-            category: match error {
-                crate::result_index::ResultIndexError::BudgetExceeded => ErrorCategory::ResultLimit,
-                _ => ErrorCategory::Execution,
-            },
-            message: error.to_string(),
-        })?;
-    } else {
-        sink.discard_sections();
-    }
-    let oversized_omissions = omissions.lock().map_err(|_| execution_failure())?.summary();
-    Ok((outcome, sink, oversized_omissions))
-}
-
 #[derive(Debug, Clone, Copy, PartialEq, Eq, thiserror::Error)]
 pub enum SnapshotLookupError {
     #[error("workbench not found")]
@@ -645,15 +100,6 @@ pub struct LiveSummary {
     pub preview: Arc<[crate::result_index::ResultOccurrence]>,
     pub capture_catalog: Arc<[crate::snapshot::CaptureDescriptor]>,
     pub publication_attributes: Arc<[AttributeKey]>,
-}
-
-#[derive(Debug, Clone)]
-struct ScanProgress {
-    progress: ExecutionProgress,
-    rows: Arc<[LivePatternTotal]>,
-    preview: Arc<[crate::result_index::ResultOccurrence]>,
-    capture_catalog: Arc<[crate::snapshot::CaptureDescriptor]>,
-    publication_attributes: Arc<[AttributeKey]>,
 }
 
 struct EntryState {
@@ -698,12 +144,61 @@ fn new_entry(workbench: &WorkbenchId, slot: &CorpusSlot, touch: u64) -> Entry {
 
 /// Document reads that may run at once, each bounded by the reading limits.
 const READING_CONCURRENCY: usize = 2;
+/// Pattern compilation / inspection tasks that may run at once.
+const COMPILE_CONCURRENCY: usize = 2;
+
+/// Bounded concurrency permits shared across live scans, document reads, and
+/// pattern compilation tasks.
+struct ConcurrencyBudgets {
+    scan: Arc<Semaphore>,
+    reading: Arc<Semaphore>,
+    compiling: Arc<Semaphore>,
+}
+
+impl ConcurrencyBudgets {
+    fn new(scan_concurrency: NonZeroUsize) -> Self {
+        Self {
+            scan: Arc::new(Semaphore::new(scan_concurrency.get())),
+            reading: Arc::new(Semaphore::new(READING_CONCURRENCY)),
+            compiling: Arc::new(Semaphore::new(COMPILE_CONCURRENCY)),
+        }
+    }
+
+    #[cfg(test)]
+    fn available_scan_permits(&self) -> usize {
+        self.scan.available_permits()
+    }
+
+    fn try_acquire_scan_permit(&self) -> Option<tokio::sync::OwnedSemaphorePermit> {
+        Arc::clone(&self.scan).try_acquire_owned().ok()
+    }
+
+    async fn acquire_scan_permit(&self) -> tokio::sync::OwnedSemaphorePermit {
+        Arc::clone(&self.scan)
+            .acquire_owned()
+            .await
+            .expect("scan permit semaphore is never closed")
+    }
+
+    async fn acquire_reading_permit(&self) -> tokio::sync::OwnedSemaphorePermit {
+        Arc::clone(&self.reading)
+            .acquire_owned()
+            .await
+            .expect("reading permit semaphore is never closed")
+    }
+
+    fn try_acquire_compile_permit(
+        &self,
+    ) -> Result<tokio::sync::OwnedSemaphorePermit, PatternTaskError> {
+        Arc::clone(&self.compiling)
+            .try_acquire_owned()
+            .map_err(|_| PatternTaskError::Busy)
+    }
+}
 
 struct RegistryInner {
     entries: Mutex<HashMap<WorkbenchId, Arc<Entry>>>,
-    permit: Arc<Semaphore>,
-    reading: Arc<Semaphore>,
-    compiling: Arc<Semaphore>,
+    budgets: ConcurrencyBudgets,
     max_refs: usize,
     max_entries: NonZeroUsize,
     tick: AtomicU64,
@@ -761,9 +256,7 @@ impl CoordinatorRegistry {
         Self {
             inner: Arc::new(RegistryInner {
                 entries: Mutex::new(HashMap::new()),
-                permit: Arc::new(Semaphore::new(scan_concurrency.get())),
-                reading: Arc::new(Semaphore::new(READING_CONCURRENCY)),
-                compiling: Arc::new(Semaphore::new(2)),
+                budgets: ConcurrencyBudgets::new(scan_concurrency),
                 max_refs,
                 max_entries,
                 tick: AtomicU64::new(0),
@@ -773,7 +266,7 @@ impl CoordinatorRegistry {
 
     #[cfg(test)]
     fn available_scan_permits(&self) -> usize {
-        self.inner.permit.available_permits()
+        self.inner.budgets.available_scan_permits()
     }
 
     fn next_touch(&self) -> u64 {
@@ -1007,9 +500,7 @@ impl CoordinatorRegistry {
         &self,
         task: impl FnOnce() -> T + Send + 'static,
     ) -> Result<T, PatternTaskError> {
-        let permit = Arc::clone(&self.inner.compiling)
-            .try_acquire_owned()
-            .map_err(|_| PatternTaskError::Busy)?;
+        let permit = self.inner.budgets.try_acquire_compile_permit()?;
         tokio::task::spawn_blocking(move || {
             let _permit = permit;
             task()
@@ -1022,25 +513,17 @@ impl CoordinatorRegistry {
     /// blocking task so it is released when the scan actually ends — not when the
     /// request future drops — and so exports never oversubscribe the Rayon pool.
     pub(crate) fn try_acquire_scan_permit(&self) -> Option<tokio::sync::OwnedSemaphorePermit> {
-        std::sync::Arc::clone(&self.inner.permit)
-            .try_acquire_owned()
-            .ok()
+        self.inner.budgets.try_acquire_scan_permit()
     }
 
     pub async fn acquire_scan_permit(&self) -> tokio::sync::OwnedSemaphorePermit {
-        std::sync::Arc::clone(&self.inner.permit)
-            .acquire_owned()
-            .await
-            .expect("scan permit semaphore is never closed")
+        self.inner.budgets.acquire_scan_permit().await
     }
 
     /// Acquire one of the permits for bounded document reads, which are
     /// separate from the scan permit.
     pub async fn acquire_reading_permit(&self) -> tokio::sync::OwnedSemaphorePermit {
-        std::sync::Arc::clone(&self.inner.reading)
-            .acquire_owned()
-            .await
-            .expect("reading permit semaphore is never closed")
+        self.inner.budgets.acquire_reading_permit().await
     }
 
     pub async fn cancel(
@@ -1120,7 +603,7 @@ impl CoordinatorRegistry {
                 }
                 entry.publish(&state.coordinator, ExecutionProgress::default());
             }
-            let permit = Arc::clone(&self.inner.permit).acquire_owned().await.ok()?;
+            let permit = self.inner.budgets.acquire_scan_permit().await;
             Some((ready, permit))
         };
         let admitted = tokio::select! {
@@ -1174,11 +657,10 @@ impl CoordinatorRegistry {
         )));
         // What this revision was accepted with, not the registry's ceiling:
         // the reader chose it and the clamp already happened at admission.
-        let max_refs = options.retained;
         let scanned = ready.clone();
         let identity = ready.identity.clone();
         let expected_sentence_count = ready.sentence_count().ok();
-        let source: std::sync::Arc<str> = source.into();
+        let source: Arc<str> = source.into();
 
         let permit = Arc::new(permit);
         let scan_cancel = cancel.clone();
@@ -1211,17 +693,11 @@ impl CoordinatorRegistry {
                         run_scan_blocking_with_options(
                             &ready,
                             *compiled,
-                            max_refs,
+                            &options,
                             sections,
+                            Some(provenance),
                             &cancel,
                             progress_tx,
-                            options.derive_compounds,
-                            options.compound_category,
-                            options.document_reach,
-                            options.overlaps,
-                            options.search_scope,
-                            Some(provenance),
-                            options.index_results,
                         )
                     })
                     .await;
@@ -1437,64 +913,23 @@ impl Entry {
     }
 }
 
-struct WatchProgress {
-    sender: watch::Sender<Option<ScanProgress>>,
-    interval: Duration,
-    last_publish: Option<Instant>,
-}
-
-impl WatchProgress {
-    fn new(sender: watch::Sender<Option<ScanProgress>>, interval: Duration) -> Self {
-        Self {
-            sender,
-            interval,
-            last_publish: None,
-        }
-    }
-}
-
-impl ProgressSink<SnapshotSink> for WatchProgress {
-    fn update(&mut self, progress: ExecutionProgress, sink: &SnapshotSink) {
-        let now = Instant::now();
-        if self
-            .last_publish
-            .is_some_and(|last| now.duration_since(last) < self.interval)
-        {
-            return;
-        }
-        self.last_publish = Some(now);
-        let rows = sink
-            .patterns()
-            .iter()
-            .map(|pattern| LivePatternTotal {
-                name: Arc::<str>::from(pattern.name.as_str()),
-                total: pattern.exact_total,
-            })
-            .collect::<Vec<_>>()
-            .into();
-        let preview = sink.preview();
-        self.sender.send_replace(Some(ScanProgress {
-            progress,
-            rows,
-            preview: preview.to_vec().into(),
-            publication_attributes: sink.publication_attributes(),
-            capture_catalog: if preview.is_empty() {
-                Arc::from([])
-            } else {
-                sink.capture_catalog().to_vec().into()
-            },
-        }));
-    }
-}
-
 #[cfg(test)]
 mod tests {
+    use super::scan::{
+        DEFAULT_BATCH_SIZE, WatchProgress, classify_execution_error, execution_failure,
+        integrity_failure, run_scan_blocking,
+    };
     use super::*;
+    use crate::patterns::compile_web_pattern;
     use crate::revision::AttemptPhase;
     use crate::revision_status::project_revision_status;
     use crate::section_tally::{SectionAvailability, SectionRefusal};
     use crate::snapshot::{MatchRef, PatternDescriptor, PatternKey, PatternOrigin};
-    use lingrep_core::execution::{MatchSink, SentenceBatchSource};
+    use crate::snapshot_sink::{SectionScanState, SnapshotSink};
+    use lingrep_core::execution::{
+        ExecutionError, ExecutionLimits, MatchSink, OversizedSentenceOmissions, PolicySelection,
+        ProgressSink, RunOutcome, SentenceAdmission, SentenceBatchSource,
+    };
     use lingrep_core::testing::execution::execute_fixture;
     use lingrep_core::token_match::TokenInfo;
 
@@ -1512,20 +947,19 @@ mod tests {
         let (plain, indexed, preview) = tokio::task::spawn_blocking(move || {
             let scan = |indexed| {
                 let (progress_tx, progress_rx) = watch::channel(None::<ScanProgress>);
+                let options = ScanOptions {
+                    retained: 2,
+                    index_results: indexed,
+                    ..ScanOptions::default()
+                };
                 let sink = run_scan_blocking_with_options(
                     &ready,
                     crate::patterns::compile_web_pattern("p := [].").unwrap(),
-                    2,
+                    &options,
                     no_sections(),
+                    None,
                     &CancellationFlag::new(),
                     progress_tx,
-                    false,
-                    CompoundCategory::Compound,
-                    false,
-                    Default::default(),
-                    Default::default(),
-                    None,
-                    indexed,
                 )
                 .unwrap()
                 .1;
@@ -1828,7 +1262,12 @@ mod tests {
         assert!(matches!(refused, Err(PatternTaskError::Busy)));
         let all = tokio::time::timeout(
             Duration::from_secs(10),
-            registry.inner.compiling.clone().acquire_many_owned(2),
+            registry
+                .inner
+                .budgets
+                .compiling
+                .clone()
+                .acquire_many_owned(2),
         )
         .await
         .expect("pattern slots were not released")
@@ -1909,7 +1348,7 @@ mod tests {
     #[test]
     fn execution_failure_is_a_generic_execution_error() {
         assert_eq!(
-            super::execution_failure(),
+            execution_failure(),
             AttemptFailure {
                 category: ErrorCategory::Execution,
                 message: "Try the search again. If it fails again, ask the server operator to check the logs.".into(),
@@ -1920,7 +1359,7 @@ mod tests {
     #[test]
     fn cache_unavailable_failure_is_a_cache_error() {
         assert_eq!(
-            super::cache_unavailable_failure(),
+            cache_unavailable_failure(),
             AttemptFailure {
                 category: ErrorCategory::Cache,
                 message: "The corpus cache is unavailable.".into(),
@@ -2082,20 +1521,20 @@ mod tests {
         let output =
             crate::patterns::compile_web_pattern("category: \"S1A\"\na := [upos=VERB].").unwrap();
         let (progress_tx, _) = watch::channel(None::<ScanProgress>);
+        let options = ScanOptions {
+            retained: 5,
+            derive_compounds: true,
+            compound_category: CompoundCategory::SourceCategories,
+            ..ScanOptions::default()
+        };
         let (outcome, sink, omissions) = run_scan_blocking_with_options(
             &ready,
             output,
-            5,
+            &options,
             no_sections(),
+            None,
             &CancellationFlag::new(),
             progress_tx,
-            true,
-            CompoundCategory::SourceCategories,
-            false,
-            Default::default(),
-            Default::default(),
-            None,
-            false,
         )
         .unwrap();
         assert!(omissions.is_none());
@@ -2126,20 +1565,19 @@ mod tests {
             TokenInfo::default().with_orth("乙").with_pos("NOUN"),
         ]]);
         let (progress_tx, _) = watch::channel(None::<ScanProgress>);
+        let options = ScanOptions {
+            retained: 5,
+            derive_compounds: true,
+            ..ScanOptions::default()
+        };
         let (outcome, sink, omissions) = run_scan_blocking_with_options(
             &ready,
             crate::patterns::compile_web_pattern("w := [].").unwrap(),
-            5,
+            &options,
             no_sections(),
+            None,
             &CancellationFlag::new(),
             progress_tx,
-            true,
-            CompoundCategory::Compound,
-            false,
-            Default::default(),
-            Default::default(),
-            None,
-            false,
         )
         .expect("a derived chain is published output, not an over-count");
         assert!(matches!(outcome, RunOutcome::Completed(_)));

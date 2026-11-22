@@ -1,5 +1,5 @@
 use std::collections::HashMap;
-use std::sync::{Arc, Mutex};
+use std::sync::Arc;
 
 use axum::{
     Router,
@@ -9,16 +9,12 @@ use axum::{
     routing::get,
 };
 use compact_str::CompactString;
-use lingrep_core::analysis::VibratoSession;
 use lingrep_core::corpus::SentenceId;
 use lingrep_core::execution::{
-    AnalysisBinding, CancellationFlag, ExecutionError, ExecutionLimits, OversizedSentenceOmissions,
-    PolicySelection, RunOutcome, SentenceAdmission, TokenizedAdmission, execute_analyzed,
+    CancellationFlag, ExecutionError, OversizedSentenceOmissions, RunOutcome,
 };
-use lingrep_core::fsm::CompiledCatalog;
-use lingrep_core::token_match::AttributeKey;
 
-use crate::coordinator::SnapshotLookupError;
+use crate::coordinator::{BoundScan, ScanSetupError, SnapshotLookupError};
 use crate::corpus_context::{corpus_display_name, identity_digest};
 use crate::export::sink::{ExportScanData, ExportSink};
 use crate::export::workbook::{AboutMeta, WorkbookLocale, build_workbook};
@@ -42,7 +38,6 @@ const MAX_EXPORT_ROWS_PER_PATTERN: usize = 20;
 // docs/PERFORMANCE_REQUIREMENTS.md — generous for any real whole-sentence KWIC
 // context while keeping the worst-case export memory bounded.
 const EXPORT_KWIC_CHAR_CAP: usize = 256;
-const DEFAULT_BATCH_SIZE: usize = 1_024;
 const PROVENANCE_CHUNK: usize = 1_024;
 
 /// Typed failure of the blocking export scan. `CacheCorruption` routes through
@@ -76,15 +71,6 @@ fn classify_outcome(
         }
         Err(other) => Err(ExportScanError::Sink(format!("{other}"))),
     }
-}
-
-fn export_run_attributes(fsm: &CompiledCatalog) -> Vec<AttributeKey> {
-    let mut attributes = fsm.execution_attributes();
-    let text = AttributeKey::new("text").expect("form is a canonical attribute key");
-    if !attributes.contains(&text) {
-        attributes.push(text);
-    }
-    attributes
 }
 
 /// Runs the export scan to completion, owning `cancel`. Recompiles the accepted
@@ -132,53 +118,24 @@ fn run_export_scan_with_compounds(
         .map(str::to_owned)
         .collect();
     let name_refs: Vec<&str> = names.iter().map(String::as_str).collect();
-    let export = ExportSink::new_with_compounds(
+    let mut sink = ExportSink::new_with_compounds(
         &name_refs,
         MAX_EXPORT_ROWS,
         MAX_EXPORT_ROWS_PER_PATTERN,
         EXPORT_KWIC_CHAR_CAP,
         derive_compounds,
     );
-    let mut sink = export;
-    let schema = artifact
-        .token_schema()
-        .map_err(|_| ExportScanError::CacheCorruption)?;
-    let mut attributes = export_run_attributes(&output.matcher);
-    attributes.extend(lingrep_core::token_match::display_surface_attributes(
-        &schema,
-    ));
-    let bound = output
-        .matcher
-        .bind_with_projection(&schema, attributes.iter().cloned())
-        .map_err(|error| ExportScanError::Bind(format!("{error}")))?;
-    let source = scope
-        .open_source(
-            artifact,
-            bound.projection(),
-            output.matcher.lookaround_division_kinds(),
-            Arc::clone(pool),
-        )
-        .map_err(|_| ExportScanError::CacheCorruption)?;
-    let omissions = Arc::new(Mutex::new(OversizedSentenceOmissions::default()));
-    let source = source
-        .with_tokenized_admission(TokenizedAdmission::Omit(Arc::clone(&omissions)))
-        .with_cancellation(cancel.clone());
+    let bound_scan =
+        BoundScan::prepare(&output.matcher, artifact, pool, scope, cancel).map_err(|error| {
+            match error {
+                ScanSetupError::Schema(_) | ScanSetupError::Source(_) => {
+                    ExportScanError::CacheCorruption
+                }
+                ScanSetupError::Bind(error) => ExportScanError::Bind(format!("{error}")),
+            }
+        })?;
     let mut progress = |_, _: &ExportSink| {};
-    let mut observer = |_: lingrep_core::execution::TokenizedBatchObservation| Ok(());
-    let outcome = execute_analyzed::<_, VibratoSession, _, _, _>(
-        source,
-        AnalysisBinding::Prepared(schema),
-        &bound,
-        pool,
-        &ExecutionLimits::default(),
-        DEFAULT_BATCH_SIZE,
-        cancel,
-        &mut sink,
-        &mut progress,
-        &mut observer,
-        PolicySelection::Apply,
-        &SentenceAdmission::All,
-    );
+    let (outcome, omissions) = bound_scan.execute(pool, cancel, &mut sink, &mut progress);
     let data = classify_outcome(outcome, sink)?;
     let omissions = omissions
         .lock()
@@ -480,11 +437,12 @@ mod tests {
     use super::*;
     use crate::export::sink::ExportSink;
     use lingrep_core::execution::{ExecutionError, RunOutcome};
+    use lingrep_core::execution::{ExecutionLimits, PolicySelection, SentenceAdmission};
     use lingrep_core::testing::execution::execute_fixture;
 
     #[test]
     fn export_attributes_add_orth_beside_kwic_demand() {
-        use lingrep_core::token_match::TokenAttributeIndex;
+        use lingrep_core::token_match::{AttributeKey, TokenAttributeIndex, TokenSchema};
 
         let matcher = crate::patterns::compile_web_pattern(
             "transform: [{op: \"truncate_before\", stop: \"[upos=SCONJ]\"}]\n\
@@ -493,10 +451,11 @@ mod tests {
         .unwrap()
         .matcher;
 
-        assert_eq!(
-            export_run_attributes(&matcher),
-            [TokenAttributeIndex::Pos, TokenAttributeIndex::Orth]
-        );
+        let schema = TokenSchema::unidic_morphology();
+        let projected = crate::coordinator::scan_projection_attributes(&matcher, &schema);
+        assert!(projected.contains(&AttributeKey::from(TokenAttributeIndex::Pos)));
+        assert!(projected.contains(&AttributeKey::from(TokenAttributeIndex::Orth)));
+        assert!(projected.contains(&AttributeKey::from(TokenAttributeIndex::Surface)));
     }
 
     fn scan_full_export_for_test(
@@ -534,7 +493,7 @@ mod tests {
             &output.matcher,
             &ready.pool,
             &ExecutionLimits::default(),
-            DEFAULT_BATCH_SIZE,
+            1_024,
             &CancellationFlag::new(),
             &mut sink,
             &mut progress,
