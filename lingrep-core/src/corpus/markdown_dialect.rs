@@ -750,30 +750,41 @@ impl PipeTable {
     }
 }
 
+#[derive(Clone, Copy, Debug)]
+struct OpenDiv {
+    opened_at: usize,
+    source_ordinal: u64,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum StreamPhase {
+    BeforeStart,
+    Active,
+    Drained,
+}
+
 struct DialectIterator<R: BufRead> {
     lines: std::iter::Peekable<std::io::Lines<R>>,
     replay: Option<std::iter::Peekable<std::io::Lines<BufReader<std::fs::File>>>>,
     table: Option<PipeTable>,
     block: Block,
     stacks: LabelStacks,
-    /// The line that opened each currently open div, outermost first, mirroring
-    /// `stacks`' div stack.
+    /// Currently open divs, outermost first, mirroring `stacks`' div stack.
     ///
     /// Kept here rather than in `LabelStacks` because that stack is a pure
     /// structure over the classes it is handed — the same decision that keeps
-    /// self-labels out of it. A source line is provenance, not a label: it would
-    /// be threaded through `open_div` and ignored by `refresh`/`active`, earning
-    /// the type nothing, while the line number it needs already lives here.
-    div_lines: Vec<usize>,
-    division_ids: Vec<u64>,
+    /// self-labels out of it. Opening line and division ordinal are stream
+    /// provenance, not labels: they would be threaded through `open_div` and
+    /// ignored by `refresh`/`active`, earning the type nothing, while the
+    /// provenance they need already lives here.
+    open_divs: Vec<OpenDiv>,
     next_division_id: u64,
     config: MarkdownReaderConfig,
     /// The per-stream sink the reader writes observed labels into. Never shared
     /// with `config`, so the reusable configuration carries no mutable state.
     diagnostics: MarkdownDiagnostics,
     line_number: usize,
-    started: bool,
-    drained: bool,
+    phase: StreamPhase,
     unmatched_close_at_end: bool,
     source_name: String,
     frontmatter: String,
@@ -806,14 +817,12 @@ fn dialect_iterator<R: BufRead>(
         table: None,
         block: Block::Body,
         stacks: LabelStacks::default(),
-        div_lines: Vec::new(),
-        division_ids: Vec::new(),
+        open_divs: Vec::new(),
         next_division_id: 0,
         config,
         diagnostics,
         line_number: 0,
-        started: false,
-        drained: false,
+        phase: StreamPhase::BeforeStart,
         unmatched_close_at_end: false,
         source_name,
         frontmatter: String::new(),
@@ -957,10 +966,10 @@ impl<R: BufRead> DialectIterator<R> {
     /// the count bounds the suspect region to [that line, end of input] — the
     /// innermost bounds nothing, since the rest opened earlier and unnamed.
     fn finish(&mut self) -> Option<io::Result<CorpusEvent>> {
-        if self.drained {
+        if self.phase == StreamPhase::Drained {
             return self.queued_event().map(Ok);
         }
-        self.drained = true;
+        self.phase = StreamPhase::Drained;
         if let Some((construct, opened_at)) = self.block.unterminated() {
             let hint = if !self.config.recover_conversion_artifacts
                 && matches!(self.block, Block::DisplayMath { .. })
@@ -979,12 +988,12 @@ impl<R: BufRead> DialectIterator<R> {
         }
         let open = self.stacks.open_div_count();
         debug_assert_eq!(
-            self.div_lines.len(),
+            self.open_divs.len(),
             open,
-            "a tracked opening line per open div"
+            "a tracked opening record per open div"
         );
         if !self.config.recover_conversion_artifacts
-            && let Some(&opened_at) = self.div_lines.first()
+            && let Some(&OpenDiv { opened_at, .. }) = self.open_divs.first()
         {
             return Some(Err(self.at(
                 opened_at,
@@ -1007,7 +1016,7 @@ impl<R: BufRead> DialectIterator<R> {
             self.paragraph_open = false;
             self.pending.push_back(CorpusEvent::ParagraphEnd);
         }
-        while let Some(source_ordinal) = self.division_ids.pop() {
+        while let Some(OpenDiv { source_ordinal, .. }) = self.open_divs.pop() {
             self.pending
                 .push_back(CorpusEvent::DivisionEnd { source_ordinal });
         }
@@ -1052,8 +1061,8 @@ impl<R: BufRead> DialectIterator<R> {
     fn consume(&mut self, line: &str) -> io::Result<Option<CorpusEvent>> {
         // Frontmatter exists only when the document opens with `---`. A `---`
         // anywhere else is a thematic break.
-        if !self.started {
-            self.started = true;
+        if self.phase == StreamPhase::BeforeStart {
+            self.phase = StreamPhase::Active;
             if line.trim_end() == "---" {
                 self.block = Block::Frontmatter {
                     opened_at: self.line_number,
@@ -1245,8 +1254,11 @@ impl<R: BufRead> DialectIterator<R> {
                     self.next_division_id = source_ordinal
                         .checked_add(1)
                         .ok_or_else(|| self.at_line("division ID overflow".into()))?;
-                    let parent_source_ordinal = self.division_ids.last().copied();
-                    self.division_ids.push(source_ordinal);
+                    let parent_source_ordinal = self.open_divs.last().map(|div| div.source_ordinal);
+                    self.open_divs.push(OpenDiv {
+                        opened_at: self.line_number,
+                        source_ordinal,
+                    });
                     self.pending.push_back(CorpusEvent::DivisionStart {
                         source_id: None,
                         source_ordinal,
@@ -1255,7 +1267,6 @@ impl<R: BufRead> DialectIterator<R> {
                         metadata,
                     });
                     self.stacks.open_div(classes);
-                    self.div_lines.push(self.line_number);
                 }
                 DivLine::Close => {
                     if !self.stacks.close_div() {
@@ -1267,8 +1278,7 @@ impl<R: BufRead> DialectIterator<R> {
                             ));
                         }
                     }
-                    self.div_lines.pop();
-                    if let Some(source_ordinal) = self.division_ids.pop() {
+                    if let Some(OpenDiv { source_ordinal, .. }) = self.open_divs.pop() {
                         self.pending
                             .push_back(CorpusEvent::DivisionEnd { source_ordinal });
                     }
