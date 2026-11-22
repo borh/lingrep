@@ -11,7 +11,7 @@ mod provenance;
 mod segmentation;
 mod sudachi;
 mod text;
-mod vibrato;
+pub(crate) mod vibrato;
 mod view;
 
 pub use analyzer::{AnalysisError, AnalyzerPlan, AnalyzerSession};
