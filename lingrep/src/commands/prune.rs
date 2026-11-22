@@ -5,6 +5,7 @@ use std::fs;
 use std::io::{self, Write};
 use std::path::{Path, PathBuf};
 
+use lingrep_cli_common::SafeText;
 use lingrep_corpus::{CountTable, finish_prune_leftover, remove_older_format, remove_realization};
 
 use super::CommandOutcome;
@@ -202,7 +203,7 @@ pub(crate) fn run_to<W: Write>(
     let mut publish = |event: PruneEvent| -> Result<(), CliError> {
         let envelope = PruneEnvelope::new(event);
         if output == OutputMode::Jsonl {
-            write_jsonl(writer, &envelope).map_err(CliError::corpus)
+            write_jsonl(writer, &envelope).map_err(CliError::from)
         } else {
             human
                 .write(writer, &envelope.event)
@@ -385,49 +386,67 @@ impl Human<'_> {
                     "would prune"
                 };
                 match &run.source {
-                    Some(source) => writeln!(writer, "{verb} {source} in {}", run.directory),
-                    None => writeln!(writer, "{verb} {}", run.directory),
+                    Some(source) => writeln!(
+                        writer,
+                        "{verb} {} in {}",
+                        SafeText::from_untrusted(source),
+                        SafeText::from_untrusted(&run.directory)
+                    ),
+                    None => writeln!(
+                        writer,
+                        "{verb} {}",
+                        SafeText::from_untrusted(&run.directory)
+                    ),
                 }
             }
             PruneEvent::Source(source) => match &source.current {
-                crate::protocol::disk::SourceCurrent::Present { path } => writeln!(
-                    writer,
-                    "  source {}: keeping current {}",
-                    source.name,
-                    self.short(path)
-                ),
+                crate::protocol::disk::SourceCurrent::Present { path } => {
+                    let short = self.short(path);
+                    writeln!(
+                        writer,
+                        "  source {}: keeping current {}",
+                        SafeText::from_untrusted(&source.name),
+                        SafeText::from_untrusted(&short)
+                    )
+                }
                 _ => Ok(()),
             },
-            PruneEvent::Kept(kept) => writeln!(
-                writer,
-                "  keeping {:<21} {:>10}  {}{}",
-                disk::wire(&kept.reason).replace('_', "-"),
-                disk::size(kept.apparent_bytes),
-                self.short(&kept.path),
-                match (&kept.message, kept.reason) {
-                    (Some(message), _) => format!(": {message}"),
-                    (None, reason) if reason.deleted_with_include_all_superseded() => {
-                        " (--include-all-superseded deletes it)".to_owned()
+            PruneEvent::Kept(kept) => {
+                let short = self.short(&kept.path);
+                writeln!(
+                    writer,
+                    "  keeping {:<21} {:>10}  {}{}",
+                    disk::wire(&kept.reason).replace('_', "-"),
+                    disk::size(kept.apparent_bytes),
+                    SafeText::from_untrusted(&short),
+                    match (&kept.message, kept.reason) {
+                        (Some(message), _) => format!(": {}", SafeText::from_untrusted(message)),
+                        (None, reason) if reason.deleted_with_include_all_superseded() => {
+                            " (--include-all-superseded deletes it)".to_owned()
+                        }
+                        (None, _) => String::new(),
                     }
-                    (None, _) => String::new(),
-                }
-            ),
+                )
+            }
             PruneEvent::Removal(removal) => {
                 let verb = match (&removal.failure, self.execute) {
                     (Some(_), _) => "failed to delete",
                     (None, true) => "deleted",
                     (None, false) => "would delete",
                 };
+                let short = self.short(&removal.path);
                 writeln!(
                     writer,
                     "  {verb} {:<16} {:>10}  {}{}",
                     disk::wire(&removal.reason).replace('_', "-"),
                     disk::human_bytes(removal.apparent_bytes),
-                    self.short(&removal.path),
+                    SafeText::from_untrusted(&short),
                     removal
                         .failure
                         .as_ref()
-                        .map_or_else(String::new, |failure| format!(": {failure}"))
+                        .map_or_else(String::new, |failure| {
+                            format!(": {}", SafeText::from_untrusted(failure))
+                        })
                 )
             }
             PruneEvent::Complete(complete) if complete.failed > 0 => writeln!(
@@ -458,5 +477,66 @@ impl Human<'_> {
             |_| path.to_owned(),
             |relative| relative.display().to_string(),
         )
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::protocol::disk::{DiskSource, SourceCurrent};
+
+    #[test]
+    fn human_output_sanitizes_untrusted_paths_and_messages() {
+        let hostile = "/tmp/evil\u{1b}[2J\u{202e}dir";
+        let human = Human {
+            directory: Path::new("/tmp"),
+            execute: false,
+        };
+        let events = [
+            PruneEvent::Run(PruneRun {
+                run_id: "r1".into(),
+                directory: hostile.into(),
+                source: Some("src\u{1b}[31m.txt".into()),
+                keep: Vec::new(),
+                include_all_superseded: false,
+                execute: false,
+            }),
+            PruneEvent::Source(DiskSource {
+                name: "src\u{202e}.txt".into(),
+                path: hostile.into(),
+                current: SourceCurrent::Present {
+                    path: format!("{hostile}/cur.lingcorpus"),
+                },
+            }),
+            PruneEvent::Kept(PruneKept {
+                path: format!("{hostile}/kept.lingcorpus"),
+                reason: PruneKeep::ForeignEntries,
+                differences: Vec::new(),
+                apparent_bytes: Some(10),
+                message: Some("holds entries: \u{0085}extra\u{1b}[2J".into()),
+            }),
+            PruneEvent::Removal(PruneRemoval {
+                path: format!("{hostile}/old.lingcorpus"),
+                reason: RemovalReason::Superseded,
+                differences: Vec::new(),
+                apparent_bytes: 20,
+                failure: Some("denied\u{202e}msg".into()),
+            }),
+        ];
+
+        let mut buffer = Vec::new();
+        for event in &events {
+            human.write(&mut buffer, event).unwrap();
+        }
+        let rendered = String::from_utf8(buffer).unwrap();
+        assert!(!rendered.contains('\u{1b}'), "{rendered:?}");
+        assert!(!rendered.contains('\u{202e}'), "{rendered:?}");
+        assert!(!rendered.contains('\u{0085}'), "{rendered:?}");
+        assert!(rendered.contains("\\u{001b}[2J\\u{202e}"), "{rendered:?}");
+        assert!(
+            rendered.contains("\\u{0085}extra\\u{001b}[2J"),
+            "{rendered:?}"
+        );
+        assert!(rendered.contains("denied\\u{202e}msg"), "{rendered:?}");
     }
 }

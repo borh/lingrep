@@ -11,6 +11,7 @@
 
 use std::io::{self, Write};
 
+use lingrep_cli_common::SafeText;
 use lingrep_corpus::{
     CorpusArtifact, SiblingRealization, SiblingScan, artifact_bytes, is_older_format,
     parse_artifact_name, remove_older_format,
@@ -228,16 +229,21 @@ fn publish<W: Write>(
     event: &VariantsEnvelope,
 ) -> Result<(), CliError> {
     if output == OutputMode::Jsonl {
-        return write_jsonl(writer, event).map_err(CliError::corpus);
+        return write_jsonl(writer, event).map_err(CliError::from);
     }
     match &event.event {
         VariantsEvent::Run(run) => match &run.reference {
             VariantsReference::Artifact { path, .. } => writeln!(
                 writer,
-                "variants of {path}\n  (differences are relative to it)"
+                "variants of {}\n  (differences are relative to it)",
+                SafeText::from_untrusted(path)
             ),
             VariantsReference::Source { root } => {
-                writeln!(writer, "realizations beside {root}")
+                writeln!(
+                    writer,
+                    "realizations beside {}",
+                    SafeText::from_untrusted(root)
+                )
             }
         },
         VariantsEvent::Variant(record) => {
@@ -261,7 +267,10 @@ fn publish<W: Write>(
             writeln!(
                 writer,
                 "  {}\n    scheme {}, {} document(s), {} sentence(s) — {summary}",
-                record.path, record.identity_scheme, record.document_count, record.sentence_count
+                SafeText::from_untrusted(&record.path),
+                SafeText::from_untrusted(&record.identity_scheme),
+                record.document_count,
+                record.sentence_count
             )
         }
         // Human output caps detail, never the count: a run that showed three
@@ -279,7 +288,11 @@ fn write_complete<W: Write>(writer: &mut W, complete: &VariantsComplete) -> io::
             |bytes| format!("{bytes} bytes"),
         );
         if diagnostic.pruned {
-            writeln!(writer, "  pruned {} ({size})", diagnostic.path)?;
+            writeln!(
+                writer,
+                "  pruned {} ({size})",
+                SafeText::from_untrusted(&diagnostic.path)
+            )?;
             continue;
         }
         let mark = if diagnostic.prunable {
@@ -292,7 +305,8 @@ fn write_complete<W: Write>(writer: &mut W, complete: &VariantsComplete) -> io::
         writeln!(
             writer,
             "  {}\n    {mark} ({size}) — {}",
-            diagnostic.path, diagnostic.message
+            SafeText::from_untrusted(&diagnostic.path),
+            SafeText::from_untrusted(&diagnostic.message)
         )?;
     }
     write!(
@@ -326,5 +340,121 @@ const fn human_difference(difference: &VariantDifference) -> &'static str {
         VariantDifference::Analyzer => "analyzer",
         VariantDifference::TokenSchema => "token schema",
         VariantDifference::Trust => "trust boundary",
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::protocol::diagnostic::DiagnosticStage;
+
+    struct BrokenPipeWriter;
+
+    impl Write for BrokenPipeWriter {
+        fn write(&mut self, _buf: &[u8]) -> io::Result<usize> {
+            Err(io::Error::new(io::ErrorKind::BrokenPipe, "pipe closed"))
+        }
+
+        fn flush(&mut self) -> io::Result<()> {
+            Ok(())
+        }
+    }
+
+    #[test]
+    fn jsonl_broken_pipe_maps_to_output_broken_pipe() {
+        let event = VariantsEnvelope::new(VariantsEvent::Run(VariantsRun {
+            run_id: "r1".into(),
+            directory: "/tmp".into(),
+            reference: VariantsReference::Source {
+                root: "/tmp/a.txt".into(),
+            },
+        }));
+        let error = publish(&mut BrokenPipeWriter, OutputMode::Jsonl, false, &event).unwrap_err();
+        assert!(error.is_stdout_broken_pipe(), "{error:?}");
+        assert_eq!(error.code(), "broken_pipe");
+        assert_eq!(error.diagnostic().stage, DiagnosticStage::Output);
+    }
+
+    #[test]
+    fn human_output_sanitizes_untrusted_paths_and_messages() {
+        let hostile = "/tmp/evil\u{1b}[2J\u{202e}name";
+        let events = [
+            VariantsEnvelope::new(VariantsEvent::Run(VariantsRun {
+                run_id: "r1".into(),
+                directory: hostile.into(),
+                reference: VariantsReference::Artifact {
+                    path: hostile.into(),
+                    source_identity: "00".into(),
+                    analysis_identity: "11".into(),
+                },
+            })),
+            VariantsEnvelope::new(VariantsEvent::Run(VariantsRun {
+                run_id: "r2".into(),
+                directory: hostile.into(),
+                reference: VariantsReference::Source {
+                    root: hostile.into(),
+                },
+            })),
+            VariantsEnvelope::new(VariantsEvent::Variant(Box::new(VariantRecord {
+                path: hostile.into(),
+                identity_scheme: "content\u{1b}[31m".into(),
+                format_generation: 1,
+                source_identity: "abcdef0123456789".into(),
+                analysis_identity: "11".into(),
+                reader_identity: "22".into(),
+                admission_identity: "33".into(),
+                token_schema_identity: "44".into(),
+                dictionary_identity: "55".into(),
+                trust: "local".into(),
+                analyzer: VariantAnalyzer {
+                    family: "vibrato".into(),
+                    profile: "morphology".into(),
+                    segmentation: "input".into(),
+                    normalization: "none".into(),
+                    language_policy: "default".into(),
+                    boundary_policy: "default".into(),
+                    semantic_identity: "s".into(),
+                },
+                document_count: 1,
+                sentence_count: 2,
+                token_count: 3,
+                same_source: true,
+                differences: Vec::new(),
+            }))),
+            VariantsEnvelope::new(VariantsEvent::Complete(VariantsComplete {
+                realizations: 1,
+                reported: 1,
+                unreadable: 2,
+                diagnostics: vec![
+                    VariantDiagnostic {
+                        path: hostile.into(),
+                        message: "bad\u{0085}manifest".into(),
+                        bytes: Some(10),
+                        prunable: false,
+                        pruned: false,
+                    },
+                    VariantDiagnostic {
+                        path: hostile.into(),
+                        message: "old".into(),
+                        bytes: Some(20),
+                        prunable: true,
+                        pruned: true,
+                    },
+                ],
+                pruned: 1,
+                freed_bytes: 20,
+            })),
+        ];
+
+        let mut buffer = Vec::new();
+        for event in &events {
+            publish(&mut buffer, OutputMode::Human, true, event).unwrap();
+        }
+        let rendered = String::from_utf8(buffer).unwrap();
+        assert!(!rendered.contains('\u{1b}'), "{rendered:?}");
+        assert!(!rendered.contains('\u{202e}'), "{rendered:?}");
+        assert!(!rendered.contains('\u{0085}'), "{rendered:?}");
+        assert!(rendered.contains("\\u{001b}[2J\\u{202e}"), "{rendered:?}");
+        assert!(rendered.contains("bad\\u{0085}manifest"), "{rendered:?}");
     }
 }

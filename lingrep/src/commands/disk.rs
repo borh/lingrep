@@ -7,6 +7,7 @@ use std::io::{self, Write};
 use std::path::{Path, PathBuf};
 use std::time::UNIX_EPOCH;
 
+use lingrep_cli_common::SafeText;
 use lingrep_corpus::{
     AnalysisIdentity, BuildOutcome, CorpusArtifact, CorpusError, CountTable, CountTableError,
     PruneLeftoverKind, Realization, RealizationRequest, SiblingRealization, SiblingScan,
@@ -957,7 +958,7 @@ pub(crate) fn run_to<W: Write>(
     for event in events {
         let envelope = DiskEnvelope::new(event);
         if output == OutputMode::Jsonl {
-            write_jsonl(writer, &envelope).map_err(CliError::corpus)?;
+            write_jsonl(writer, &envelope).map_err(CliError::from)?;
         } else {
             human
                 .write(writer, &envelope.event)
@@ -1138,8 +1139,17 @@ impl Human<'_> {
         match event {
             DiskEvent::Run(run) => {
                 match &run.source {
-                    Some(source) => writeln!(writer, "disk use of {source} in {}", run.directory)?,
-                    None => writeln!(writer, "disk use in {}", run.directory)?,
+                    Some(source) => writeln!(
+                        writer,
+                        "disk use of {} in {}",
+                        SafeText::from_untrusted(source),
+                        SafeText::from_untrusted(&run.directory)
+                    )?,
+                    None => writeln!(
+                        writer,
+                        "disk use in {}",
+                        SafeText::from_untrusted(&run.directory)
+                    )?,
                 }
                 if !run.current_classified {
                     writeln!(
@@ -1153,16 +1163,24 @@ impl Human<'_> {
             DiskEvent::Source(source) => {
                 let current = match &source.current {
                     SourceCurrent::NotClassified => return Ok(()),
-                    SourceCurrent::Present { path } => format!("current {}", self.short(path)),
+                    SourceCurrent::Present { path } => {
+                        let short = self.short(path);
+                        format!("current {}", SafeText::from_untrusted(&short))
+                    }
                     SourceCurrent::Absent { path } => {
+                        let short = self.short(path);
                         format!(
                             "no current realization; corpus build would write {}",
-                            self.short(path)
+                            SafeText::from_untrusted(&short)
                         )
                     }
                     SourceCurrent::SourceMissing => "source missing; nothing is current".to_owned(),
                 };
-                writeln!(writer, "  source {}: {current}", source.name)
+                writeln!(
+                    writer,
+                    "  source {}: {current}",
+                    SafeText::from_untrusted(&source.name)
+                )
             }
             DiskEvent::Realization(record) => {
                 let mut detail = String::new();
@@ -1185,33 +1203,40 @@ impl Human<'_> {
                         _ => "; prune keeps it",
                     });
                 }
+                let short = self.short(&record.path);
                 writeln!(
                     writer,
                     "  {:<18} {:>10}  {}{detail}",
                     wire(&record.status).replace('_', "-"),
                     size(record.apparent_bytes),
-                    self.short(&record.path)
+                    SafeText::from_untrusted(&short)
                 )
             }
-            DiskEvent::Table(record) => writeln!(
-                writer,
-                "  table {:<12} {:>10}  {}",
-                wire(&record.binding),
-                size(record.apparent_bytes),
-                self.short(&record.path)
-            ),
-            DiskEvent::Leftover(record) => writeln!(
-                writer,
-                "  leftover {:<9} {:>10}  {}",
-                wire(&record.status),
-                size(record.apparent_bytes),
-                record
+            DiskEvent::Table(record) => {
+                let short = self.short(&record.path);
+                writeln!(
+                    writer,
+                    "  table {:<12} {:>10}  {}",
+                    wire(&record.binding),
+                    size(record.apparent_bytes),
+                    SafeText::from_untrusted(&short)
+                )
+            }
+            DiskEvent::Leftover(record) => {
+                let short = record
                     .staging
                     .as_deref()
                     .or(record.lock.as_deref())
                     .or(record.pruning.as_deref())
-                    .map_or_else(String::new, |path| self.short(path))
-            ),
+                    .map_or_else(String::new, |path| self.short(path));
+                writeln!(
+                    writer,
+                    "  leftover {:<9} {:>10}  {}",
+                    wire(&record.status),
+                    size(record.apparent_bytes),
+                    SafeText::from_untrusted(&short)
+                )
+            }
             DiskEvent::Cache(record) => {
                 if record.kind == CacheKind::DictionaryCopy {
                     return Ok(());
@@ -1221,7 +1246,7 @@ impl Human<'_> {
                     "  cache {:<12} {:>10}  {} ({} file(s))",
                     wire(&record.kind).replace('_', "-"),
                     size(record.apparent_bytes),
-                    record.path,
+                    SafeText::from_untrusted(&record.path),
                     record.files
                 )
             }
@@ -1263,5 +1288,91 @@ impl Human<'_> {
                 Ok(())
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn human_output_sanitizes_untrusted_paths_and_names() {
+        let hostile = "/tmp/evil\u{1b}[2J\u{202e}dir";
+        let human = Human {
+            directory: Path::new("/tmp"),
+        };
+        let events = [
+            DiskEvent::Run(DiskRun {
+                run_id: "r1".into(),
+                directory: hostile.into(),
+                source: Some("src\u{1b}[31m.txt".into()),
+                current_classified: true,
+            }),
+            DiskEvent::Source(DiskSource {
+                name: "src\u{202e}.txt".into(),
+                path: hostile.into(),
+                current: SourceCurrent::Present {
+                    path: format!("{hostile}/cur.lingcorpus"),
+                },
+            }),
+            DiskEvent::Source(DiskSource {
+                name: "src2\u{0085}.txt".into(),
+                path: hostile.into(),
+                current: SourceCurrent::Absent {
+                    path: format!("{hostile}/abs.lingcorpus"),
+                },
+            }),
+            DiskEvent::Realization(DiskRealization {
+                path: format!("{hostile}/real.lingcorpus"),
+                source: None,
+                status: RealizationStatus::Current,
+                apparent_bytes: Some(12),
+                modified_unix_seconds: None,
+                analysis_identity: None,
+                format_generation: None,
+                analyzer_family: None,
+                dictionary_identity: None,
+                differences: Vec::new(),
+                kept_by_prune: None,
+                message: None,
+            }),
+            DiskEvent::Table(DiskTable {
+                path: format!("{hostile}/table"),
+                apparent_bytes: Some(34),
+                modified_unix_seconds: None,
+                analysis_identity: None,
+                binding: TableBinding::Current,
+                artifacts: Vec::new(),
+                kept_by_prune: None,
+                message: None,
+            }),
+            DiskEvent::Leftover(DiskLeftover {
+                published_name: "x".into(),
+                staging: Some(format!("{hostile}/.staging")),
+                lock: None,
+                pruning: None,
+                kept_by_prune: None,
+                status: LeftoverStatus::Abandoned,
+                apparent_bytes: Some(56),
+                modified_unix_seconds: None,
+            }),
+            DiskEvent::Cache(DiskCache {
+                kind: CacheKind::Analyzer,
+                path: hostile.into(),
+                apparent_bytes: Some(78),
+                files: 1,
+                modified_unix_seconds: None,
+            }),
+        ];
+
+        let mut buffer = Vec::new();
+        for event in &events {
+            human.write(&mut buffer, event).unwrap();
+        }
+        let rendered = String::from_utf8(buffer).unwrap();
+        assert!(!rendered.contains('\u{1b}'), "{rendered:?}");
+        assert!(!rendered.contains('\u{202e}'), "{rendered:?}");
+        assert!(!rendered.contains('\u{0085}'), "{rendered:?}");
+        assert!(rendered.contains("\\u{001b}[2J\\u{202e}"), "{rendered:?}");
     }
 }

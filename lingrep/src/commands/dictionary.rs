@@ -2,6 +2,8 @@
 
 use std::io::{self, Write};
 
+use lingrep_cli_common::SafeText;
+
 use crate::cli::DictionaryInstallArgs;
 use crate::error::CliError;
 use crate::packaged_dictionaries::{DEFAULT, MISSING_DICTIONARY_HINT, install, install_directory};
@@ -53,14 +55,47 @@ fn write_human<W: Write>(writer: &mut W, data: &InstalledData) -> io::Result<()>
     } else {
         "installed"
     };
-    writeln!(writer, "{state} {} ({} bytes)", data.path, data.bytes)?;
-    writeln!(writer, "license: {}", data.license)?;
+    let path = SafeText::from_untrusted(&data.path);
+    writeln!(writer, "{state} {path} ({} bytes)", data.bytes)?;
+    writeln!(
+        writer,
+        "license: {}",
+        SafeText::from_untrusted(&data.license)
+    )?;
     if data.default {
         writeln!(
             writer,
             "ling uses this dictionary when neither --dict-path nor LINGREP_DICTIONARY_PATH names one"
         )
     } else {
-        writeln!(writer, "use it with --dict-path {}", data.path)
+        writeln!(writer, "use it with --dict-path {path}")
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn write_human_sanitizes_untrusted_path_and_license() {
+        for is_default in [true, false] {
+            let data = InstalledData {
+                name: "cwj".into(),
+                path: "/tmp/evil\u{1b}[2J\u{202e}/unidic.dic".into(),
+                bytes: 42,
+                blake3: "deadbeef".into(),
+                license: "GPL\u{0085}v3".into(),
+                already_present: false,
+                default: is_default,
+            };
+            let mut buffer = Vec::new();
+            write_human(&mut buffer, &data).unwrap();
+            let rendered = String::from_utf8(buffer).unwrap();
+            assert!(!rendered.contains('\u{1b}'), "{rendered:?}");
+            assert!(!rendered.contains('\u{202e}'), "{rendered:?}");
+            assert!(!rendered.contains('\u{0085}'), "{rendered:?}");
+            assert!(rendered.contains("\\u{001b}[2J\\u{202e}"), "{rendered:?}");
+            assert!(rendered.contains("GPL\\u{0085}v3"), "{rendered:?}");
+        }
     }
 }

@@ -680,3 +680,117 @@ fn sentence_limit_descriptions_match_human_and_json_output_with_recovery_guidanc
         }
     }
 }
+
+#[test]
+fn corpus_management_output_closure_preserves_human_and_json_pipe_contracts() {
+    let directory = TempDir::new().unwrap();
+    let source = directory.path().join("one.conllu");
+    fs::write(&source, "1\tdone\tdo\tVERB\tVBN\t_\t0\troot\t_\t_\n\n").unwrap();
+
+    let cases: [(&str, Vec<std::ffi::OsString>); 3] = [
+        (
+            "variants",
+            vec![
+                "corpus".into(),
+                "variants".into(),
+                source.as_os_str().into(),
+            ],
+        ),
+        (
+            "disk",
+            vec![
+                "corpus".into(),
+                "disk".into(),
+                directory.path().as_os_str().into(),
+            ],
+        ),
+        (
+            "prune",
+            vec![
+                "corpus".into(),
+                "prune".into(),
+                directory.path().as_os_str().into(),
+            ],
+        ),
+    ];
+
+    for (label, args) in cases {
+        for json in [false, true] {
+            let mut command = lingrep_std();
+            if json {
+                command.arg("--json");
+            }
+            command.args(&args);
+            let (reader, writer) = std::io::pipe().unwrap();
+            drop(reader);
+            let output = command
+                .stdout(writer)
+                .stderr(Stdio::piped())
+                .output()
+                .unwrap();
+            if json {
+                assert_eq!(output.status.code(), Some(1), "{label} json");
+                let diagnostic = &parse_jsonl(&output.stderr)[0]["data"];
+                assert_eq!(
+                    diagnostic["code"], "broken_pipe",
+                    "{label} json: {diagnostic}"
+                );
+                assert_eq!(diagnostic["stage"], "output", "{label} json: {diagnostic}");
+            } else {
+                assert!(
+                    output.status.success(),
+                    "{label} human: {}",
+                    String::from_utf8_lossy(&output.stderr)
+                );
+                assert!(
+                    output.stderr.is_empty(),
+                    "{label} human: {}",
+                    String::from_utf8_lossy(&output.stderr)
+                );
+            }
+        }
+    }
+}
+
+#[cfg(unix)]
+#[test]
+fn corpus_management_human_output_sanitizes_hostile_paths() {
+    let directory = TempDir::new().unwrap();
+    let hostile_dir = directory.path().join("evil\u{1b}[2J\u{202e}dir");
+    fs::create_dir(&hostile_dir).unwrap();
+    let source = hostile_dir.join("one\u{1b}[31m.conllu");
+    fs::write(&source, "1\tdone\tdo\tVERB\tVBN\t_\t0\troot\t_\t_\n\n").unwrap();
+
+    let cases: [Vec<std::ffi::OsString>; 3] = [
+        vec![
+            "corpus".into(),
+            "variants".into(),
+            source.as_os_str().into(),
+        ],
+        vec![
+            "corpus".into(),
+            "disk".into(),
+            hostile_dir.as_os_str().into(),
+        ],
+        vec![
+            "corpus".into(),
+            "prune".into(),
+            hostile_dir.as_os_str().into(),
+        ],
+    ];
+    for args in cases {
+        let output = lingrep_std().args(&args).output().unwrap();
+        assert!(
+            output.status.success(),
+            "{args:?}: {}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        let stdout = String::from_utf8(output.stdout).unwrap();
+        assert!(!stdout.contains('\u{1b}'), "{args:?}: {stdout:?}");
+        assert!(!stdout.contains('\u{202e}'), "{args:?}: {stdout:?}");
+        assert!(
+            stdout.contains("\\u{001b}[2J\\u{202e}"),
+            "{args:?}: {stdout:?}"
+        );
+    }
+}

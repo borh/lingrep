@@ -2256,6 +2256,7 @@ fn prepared_input_conflict(matches: &clap::ArgMatches) -> Option<&'static str> {
         "md_include_sections",
         "md_exclude_sections",
         "md_self_labels",
+        "md_recover_conversion_artifacts",
         "normalization",
     ];
     if matches!(command, "matches" | "summarize" | "tokenize" | "coverage") {
@@ -2873,5 +2874,62 @@ mod analyzer_selection_tests {
             arguments.as_ref(),
             ["--model", "path with spaces;rm -rf nope"]
         );
+    }
+
+    #[test]
+    fn prepared_corpus_rejects_every_markdown_reader_flag() {
+        use clap::Args as _;
+
+        let markdown_command = MarkdownReaderArgs::augment_args(clap::Command::new("markdown"));
+        let markdown_args: Vec<_> = markdown_command
+            .get_arguments()
+            .filter_map(|arg| {
+                let long = arg.get_long()?.to_owned();
+                let takes_value = arg.get_action().takes_values();
+                Some((long, takes_value))
+            })
+            .collect();
+        assert!(
+            markdown_args
+                .iter()
+                .any(|(long, _)| long == "md-recover-conversion-artifacts"),
+            "expected MarkdownReaderArgs to expose --md-recover-conversion-artifacts: {markdown_args:?}"
+        );
+
+        let subcommands: &[(&str, &[&str])] = &[
+            ("matches", &["--pattern", "[]."]),
+            ("summarize", &["--pattern", "[]."]),
+            ("tokenize", &[]),
+            ("coverage", &[]),
+            ("explore", &["--pattern", "[]."]),
+        ];
+
+        for &(subcommand, required) in subcommands {
+            let mut base = vec!["ling", subcommand];
+            base.extend_from_slice(required);
+            base.extend(["--corpus", "corpus.lingcorpus"]);
+            Cli::try_parse_from(&base)
+                .unwrap_or_else(|error| panic!("{subcommand} with --corpus should parse: {error}"));
+
+            for (long, takes_value) in &markdown_args {
+                let flag = format!("--{long}");
+                let mut args = base.clone();
+                args.push(&flag);
+                if *takes_value {
+                    args.push("methods");
+                }
+                let error = Cli::try_parse_from(&args)
+                    .expect_err(&format!("{subcommand} --corpus should reject {flag}"));
+                assert_eq!(
+                    error.kind(),
+                    clap::error::ErrorKind::ArgumentConflict,
+                    "{subcommand} {flag}: {error}"
+                );
+                assert!(
+                    error.to_string().contains(&flag),
+                    "{subcommand} {flag}: {error}"
+                );
+            }
+        }
     }
 }
