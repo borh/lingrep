@@ -1,6 +1,7 @@
 import { textOf, validVectorDigest } from './model.js';
 import type { SavedQuestion, Token } from './model.js';
-export interface ConcordanceLocation { readonly kind: 'concordance'; readonly scopeDocument?: number|null; readonly returnAfter?:number; readonly pattern: string; readonly document: number | null; readonly after: number; readonly filter: string; }
+export type ResultLayout = 'works' | 'kwic';
+export interface ConcordanceLocation { readonly kind: 'concordance'; readonly layout?: ResultLayout; readonly scopeDocument?: number|null; readonly returnAfter?:number; readonly pattern: string; readonly document: number | null; readonly after: number; readonly filter: string; }
 interface HitCoordinates { readonly pattern:string; readonly document:number; readonly sequence:number|null; }
 export interface ExampleLocation extends HitCoordinates { readonly kind:'example'; readonly returnTo:ConcordanceLocation; }
 export interface ReaderLocation extends HitCoordinates { readonly kind:'reader'; readonly returnTo:ConcordanceLocation|ExampleLocation; }
@@ -10,7 +11,7 @@ export const defaultView = (): ConcordanceLocation => ({kind:'concordance',scope
 const record = (value: unknown): value is Record<string,unknown> => typeof value==='object'&&value!==null&&!Array.isArray(value);
 const ordinal = (value: unknown): value is number => typeof value==='number'&&Number.isSafeInteger(value)&&value>=0;
 function concordance(value: unknown): value is ConcordanceLocation {
-  return record(value)&&value.kind==='concordance'&&typeof value.pattern==='string'&&(value.document===null||ordinal(value.document))&&typeof value.after==='number'&&Number.isSafeInteger(value.after)&&value.after>=-1&&typeof value.filter==='string'&&(value.scopeDocument==null||ordinal(value.scopeDocument))&&(value.returnAfter==null||typeof value.returnAfter==='number'&&Number.isSafeInteger(value.returnAfter)&&value.returnAfter>=-1);
+  return record(value)&&value.kind==='concordance'&&(value.layout===undefined||value.layout==='works'||value.layout==='kwic')&&typeof value.pattern==='string'&&(value.document===null||ordinal(value.document))&&typeof value.after==='number'&&Number.isSafeInteger(value.after)&&value.after>=-1&&typeof value.filter==='string'&&(value.scopeDocument==null||ordinal(value.scopeDocument))&&(value.returnAfter==null||typeof value.returnAfter==='number'&&Number.isSafeInteger(value.returnAfter)&&value.returnAfter>=-1);
 }
 export function parseView(text: string | null): ViewLocation {
   if(!text)return defaultView();

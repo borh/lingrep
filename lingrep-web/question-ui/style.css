@@ -121,3 +121,40 @@ button.kwic-row{font:inherit;font-size:inherit;color:var(--ink);cursor:pointer}
 .catalog-notice{background:var(--wash);border-radius:3px;padding:10px 12px;margin:0 0 12px;font-size:14px;max-width:75ch}.catalog-notice p{margin:0}.catalog-notice .catalog-notice-actions{display:flex;flex-wrap:wrap;gap:8px;margin-top:8px}.catalog-notice button{background:var(--ground)}.catalog-notice button:hover:not(:disabled){background:var(--match-wash)}#catalog-search{color:var(--green);font-weight:600;border-color:var(--green)}@media(max-width:480px){.catalog-notice button{min-height:44px}}@media print{.catalog-notice-actions{display:none}}
 .search-status{min-height:36px}.search-status>p{flex:1 1 0;min-width:0}.search-status:has(.status-dot.running)>p{white-space:nowrap;overflow:hidden;text-overflow:ellipsis}.search-status>.live-counts{flex:0 1 auto;min-width:0;min-height:30px;align-items:center;overflow:hidden;white-space:nowrap}.search-status>#error{flex-basis:100%}.question-sentence .run-action[hidden]{display:inline-block!important;visibility:hidden}.result-panel.is-running .kwic-list{min-height:100vh}
 @media(max-width:480px){.search-status{min-height:66px;align-content:flex-start}.search-status>p{flex-basis:calc(100% - 14px)}.search-status>.live-counts{flex:1 1 0}.result-reading{min-height:4lh}}
+
+.pattern-picker,.limit-choices{font-size:14px}
+.pattern-picker summary,.limit-choices summary{width:fit-content;max-width:100%;padding-block:5px;color:var(--green);cursor:pointer;overflow-wrap:anywhere}
+.pattern-picker .pattern-list,.limit-choices .pattern-list{max-block-size:min(18rem,50dvh);overflow:auto;padding:4px 4px 8px}
+.pattern-picker .pattern-button{max-width:100%;text-align:start;overflow-wrap:anywhere}
+.pattern-picker .pattern-button>span{min-width:0}
+.limit-choices{display:block}
+.result-modes{display:flex;flex-wrap:wrap;align-items:center;gap:2px 18px;margin-block:4px}
+.result-layout,.work-zoom,.kwic-sort{display:flex;flex-wrap:wrap;align-items:center;gap:4px 8px;min-width:0}
+.result-layout{gap:3px}
+.result-layout button{border-color:transparent}
+.result-layout button[aria-pressed=true]{background:var(--wash);color:var(--green);font-weight:600}
+.work-zoom input{width:clamp(5rem,23%,8rem);min-height:30px}
+.work-zoom output{min-inline-size:8ch;color:var(--soft)}
+.kwic-sort select{max-width:100%}
+.work-sample-list{padding-block:0}
+.work-sample-list .document-heading{flex-wrap:wrap;gap:2px 10px;padding-block-start:10px;margin-block-start:8px}
+.work-sample-list .document-heading:first-child{margin-block-start:0}
+.work-sample-list .kwic-row{display:block;width:100%;max-width:72ch;font-size:16px;line-height:1.7;padding:4px 0;overflow-wrap:anywhere}
+.work-sample-list .kwic-row .line-number{display:none}
+.work-sample-list .kwic-row .context-left,.work-sample-list .kwic-row .context-right{direction:inherit;white-space:normal;overflow:visible;text-align:inherit}
+.work-sample-list .kwic-row .context-left>span{unicode-bidi:normal}
+.work-sample-list .work-more,.more-works{border:0;border-radius:0;color:var(--green);padding-inline:0;text-decoration:underline;text-underline-offset:3px}
+.more-works{margin-block-start:6px}
+.work-sample-list #focused-sentence{display:block;font-size:16px;line-height:1.75;overflow-wrap:anywhere}
+.work-sample-list .has-sentence+.token-lab #focused-sentence{display:none}
+.work-sample-list #inspector>header{flex-wrap:wrap}
+.work-sample-list #inspector>header>div{flex:1 1 16rem}
+@media (pointer:coarse){.result-layout button,.work-zoom input,.work-sample-list .work-more,.more-works{min-height:44px}}
+@media print{.result-modes,.work-sample-list .work-more,.more-works,.pattern-picker,.limit-choices{display:none!important}}
+.work-results .result-reading{min-height:0;margin-block:5px;line-height:1.6}
+.work-results .result-reading .line-note{white-space:normal}
+.work-results .result-header a{min-height:0;line-height:inherit}
+.work-results .result-header:not([hidden]):has(+.line-note:not([hidden]))::after{content:" · "}
+body:has(.work-results) .search-status:has(.status-dot.complete){min-height:0}
+body:has(.work-results) .search-status:has(.status-dot.complete)>.live-counts{display:none}
+.work-sample-list .work-more+.work-more{margin-inline-start:14px}

@@ -2930,9 +2930,10 @@ async fn the_page_filter_names_the_lines_it_filters_and_links_an_empty_result_to
         )
         .await?;
         driver.execute("document.querySelector('[data-clear-limit=entry]').click()", Vec::new()).await?;
+        select_question_kwic(&driver).await?;
         wait_for(
             &driver,
-            "const input = document.querySelector('.line-controls input'); return !!input && input.placeholder !== '' && !document.querySelector('.listing-entry')",
+            "const input = document.querySelector('.line-controls input'); return !!input && !input.parentElement.hidden && input.placeholder !== '' && !document.querySelector('.listing-entry')",
             "the search's lines",
         )
         .await?;
@@ -3192,6 +3193,78 @@ fn limited_question(base: &str, source: &str, run: bool) -> String {
     format!("{root}#{query}")
 }
 
+async fn select_question_kwic(driver: &WebDriver) -> WebDriverResult<()> {
+    wait_for(
+        driver,
+        "return !!document.querySelector('.result-modes:not([hidden]) [data-layout=kwic]')",
+        "the result view controls",
+    )
+    .await?;
+    driver
+        .find(By::Css("[data-layout=kwic]"))
+        .await?
+        .click()
+        .await
+}
+
+#[tokio::test]
+async fn work_zoom_keeps_the_open_match_when_the_view_changes() -> WebDriverResult<()> {
+    let Some(driver) = driver().await? else {
+        return Ok(());
+    };
+    let served = serve_entries().await;
+    let result: WebDriverResult<()> = async {
+        driver.goto(limited_question(&served.base, ENTRY_CATALOG, true)).await?;
+        let rows = ".work-sample-list > .kwic-row";
+        wait_for(
+            &driver,
+            &format!("return document.querySelectorAll('{rows}').length === 5"),
+            "one preview for each of the first five works",
+        ).await?;
+        driver.find(By::Css(".more-works")).await?.click().await?;
+        wait_for(
+            &driver,
+            &format!("return document.querySelectorAll('{rows}').length === 8"),
+            "the next page of works",
+        ).await?;
+        let zoom = driver.find(By::Css("[data-work-zoom]")).await?;
+        zoom.send_keys(thirtyfour::Key::Right).await?;
+        wait_for(
+            &driver,
+            &format!("return document.querySelectorAll('{rows}').length > 8"),
+            "more matches in the same works",
+        ).await?;
+        zoom.send_keys(thirtyfour::Key::Right).await?;
+        wait_for(&driver, "return !!document.querySelector('.work-sample-list .has-sentence')", "full sentences").await?;
+        let sequence = driver.find(By::Css(rows)).await?.attr("data-sequence").await?;
+        driver.find(By::Css(rows)).await?.click().await?;
+        wait_for(&driver, "return !document.querySelector('#token-lab').hidden", "the open match").await?;
+        crate::resize(&driver, 360, 550).await?;
+        zoom.send_keys(thirtyfour::Key::Home).await?;
+        assert_eq!(zoom.attr("aria-valuetext").await?.as_deref(), Some("Works"));
+        driver.find(By::Css("[data-layout=kwic]")).await?.click().await?;
+        wait_for(
+            &driver,
+            "return !document.querySelector('#token-lab').hidden && document.querySelector('[data-layout=kwic]').getAttribute('aria-pressed') === 'true' && !!document.querySelector('.kwic-list:not(.work-sample-list) > [aria-expanded=true]')",
+            "the same match in KWIC",
+        ).await?;
+        assert_eq!(
+            driver.find(By::Css(".kwic-list > [aria-expanded=true]")).await?.attr("data-sequence").await?,
+            sequence
+        );
+        driver.back().await?;
+        wait_for(
+            &driver,
+            "return !!document.querySelector('.work-sample-list > [aria-expanded=true]')",
+            "the selected match after returning to By work",
+        ).await?;
+        assert_no_page_errors(&driver).await
+    }.await;
+    driver.quit().await?;
+    served.server.abort();
+    result
+}
+
 #[tokio::test]
 async fn a_definition_limit_survives_an_edit_that_breaks_the_source() -> WebDriverResult<()> {
     let Some(driver) = driver().await? else {
@@ -3202,6 +3275,7 @@ async fn a_definition_limit_survives_an_edit_that_breaks_the_source() -> WebDriv
         driver
             .goto(limited_question(&served.base, ENTRY_CATALOG, true))
             .await?;
+        wait_for(&driver, "return !!document.querySelector('[data-clear-limit=pattern]')", "the restored definition limit").await?;
         let chip = "return [document.querySelector('[data-clear-limit=pattern]')?.textContent ?? null, document.querySelector('#source-label').textContent]";
         observed(&driver, chip, json!(["Definition: noun ×", "noun"]), "the limit").await?;
         assert_eq!(
@@ -3775,6 +3849,7 @@ async fn a_short_result_leaves_the_example_count_for_the_next_search() -> WebDri
         ])
         .unwrap();
         driver.goto(format!("{root}#{query}")).await?;
+        select_question_kwic(&driver).await?;
         let shown = "return [document.querySelectorAll('.kwic-row').length, document.querySelector('#line-limit').value, \
                      new URLSearchParams(location.hash.slice(1)).get('lines') ?? '20', document.querySelector('#reading-clamp').textContent]";
         wait_for(&driver, "return document.querySelector('#status').textContent.length > 0 && document.querySelectorAll('.kwic-row').length === 1", "the one-line search").await?;
@@ -3913,7 +3988,7 @@ async fn a_repeated_search_does_not_shift_the_page() -> WebDriverResult<()> {
             driver.set_window_rect(0, 0, width, height).await?;
             driver.goto("about:blank").await?;
             driver.goto(limited_question(&served.base, ENTRY_CATALOG, true)).await?;
-            let settled = "return /Complete/.test(document.querySelector('#status').textContent) && document.querySelector('.kwic-list')?.getAttribute('aria-busy') === 'false' && document.querySelectorAll('.kwic-row').length === 20";
+            let settled = "return /Complete/.test(document.querySelector('#status').textContent) && document.querySelector('.kwic-list')?.getAttribute('aria-busy') === 'false' && document.querySelectorAll('.work-sample-list .kwic-row').length === 5";
             wait_for(&driver, settled, "the first search").await?;
             two_frames(&driver).await?;
             driver
@@ -3950,6 +4025,7 @@ async fn the_result_list_is_one_tab_stop_crossed_with_arrow_keys() -> WebDriverR
     let served = serve_entries().await;
     let result: WebDriverResult<()> = async {
         driver.goto(limited_question(&served.base, ENTRY_CATALOG, true)).await?;
+        select_question_kwic(&driver).await?;
         wait_for(&driver, "return document.querySelector('.kwic-list').getAttribute('aria-busy') === 'false' && document.querySelectorAll('.kwic-row').length === 20", "twenty lines").await?;
         let focused = "const a = document.activeElement, items = [...document.querySelectorAll('.kwic-list > .kwic-row, .kwic-list > .document-heading > a')]; \
             return {at: items.indexOf(a), row: a.classList.contains('kwic-row'), last: items.length - 1, \
