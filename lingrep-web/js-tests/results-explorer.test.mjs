@@ -494,3 +494,15 @@ test("catalog grouping preserves rows and totals, ranks totals, and breaks ties 
   ]);
   assert.deepEqual(groupCatalog([], "category"), []);
 });
+
+test("a claim insert is applied at its byte offset, and only to the source it was computed for", async () => {
+  const { applyClaimInsert } = await import("../assets/results-explorer.js");
+  const source = 'examples: ["猫"]\npattern p := [text=猫].';
+  const offset = new TextEncoder().encode('examples: ["猫"').length;
+  assert.equal(
+    applyClaimInsert(source, { offset, text: ', "犬"', expects: "]\npattern p" }),
+    'examples: ["猫", "犬"]\npattern p := [text=猫].',
+  );
+  assert.equal(applyClaimInsert(`# edited\n${source}`, { offset, text: ', "犬"', expects: "]\npattern p" }), null);
+  assert.equal(applyClaimInsert(source, { offset: 13, text: "x", expects: "" }), null, "inside a character");
+});

@@ -78,7 +78,7 @@ pub fn run(
         .collect();
     let examples = args
         .verify_examples
-        .then(|| verify_examples(args, config, &catalog.output.matcher, terminal))
+        .then(|| verify_examples(args, config, &catalog.output, terminal))
         .transpose()?;
     let examples_failed = examples
         .as_ref()
@@ -265,6 +265,12 @@ fn publish_check<W: Write>(
                         SafeText::from_untrusted(&failure.example)
                     )
                     .map_err(crate::protocol::OutputError::from)?;
+                    if let Some(explanation) = &failure.explanation {
+                        for line in explanation_lines(explanation) {
+                            writeln!(writer, "  {}", SafeText::from_untrusted(&line))
+                                .map_err(crate::protocol::OutputError::from)?;
+                        }
+                    }
                 }
             }
             if let Some(binding) = &data.binding {
@@ -471,12 +477,95 @@ fn compare_catalogs(
     Ok((drift, comparison))
 }
 
+/// The human rendering of one explanation, one line per fact.
+fn explanation_lines(explanation: &crate::protocol::check::NoMatchExplanation) -> Vec<String> {
+    let spans = || {
+        explanation
+            .spans
+            .iter()
+            .map(|[start, end]| format!("{start}..{end}"))
+            .collect::<Vec<_>>()
+            .join(", ")
+    };
+    let mut lines = match (explanation.outcome.as_str(), &explanation.attempt) {
+        ("stopped", Some(attempt)) => {
+            let element = attempt
+                .element
+                .as_ref()
+                .map_or_else(String::new, |element| {
+                    format!(" at {}:{}:{}", element.source, element.line, element.column)
+                });
+            let token = attempt
+                .token
+                .as_ref()
+                .map_or_else(String::new, |token| format!(" \u{300c}{token}\u{300d}"));
+            let stop = match attempt.stop.as_str() {
+                "token" => format!(
+                    "token {}{token} fails the element{element}",
+                    attempt.position
+                ),
+                "sentence_ended" => format!("the sentence ended before the element{element}"),
+                "not_sentence_start" => {
+                    format!("token {} is not at the sentence start", attempt.position)
+                }
+                "not_sentence_end" => {
+                    format!("token {}{token} is not the sentence end", attempt.position)
+                }
+                kind => format!(
+                    "{kind}{element} does not hold before token {}{token}",
+                    attempt.position
+                ),
+            };
+            let mut lines = vec![format!(
+                "furthest attempt: started at token {}, matched {} token(s); {stop}",
+                attempt.start,
+                attempt.position - attempt.start
+            )];
+            lines.extend(attempt.tests.iter().map(|test| {
+                format!(
+                    "  {} {}{}: token has {}",
+                    if test.held { "holds" } else { "fails" },
+                    test.attribute,
+                    test.test,
+                    test.actual.as_deref().unwrap_or("no value")
+                )
+            }));
+            lines
+        }
+        ("not_published", _) => vec![format!(
+            "the definition matched token span(s) {} and result policy published none",
+            spans()
+        )],
+        ("where_rejected", _) => vec![format!(
+            "the body matched token span(s) {} and the where clause rejected each",
+            spans()
+        )],
+        _ => vec![format!(
+            "no explanation: {}",
+            explanation.detail.as_deref().unwrap_or("unknown")
+        )],
+    };
+    if explanation.outcome == "stopped" || explanation.outcome == "where_rejected" {
+        lines.push(format!(
+            "from a separate explanation pass over the compiled catalog: {} start position(s) tried{}",
+            explanation.starts_tried,
+            if explanation.truncated {
+                ", stopped at its step limit"
+            } else {
+                ""
+            }
+        ));
+    }
+    lines
+}
+
 fn verify_examples(
     args: &CheckArgs,
     config: &crate::cli::ExecutionCliConfig,
-    matcher: &lingrep_core::fsm::CompiledCatalog,
+    output: &lingrep_core::fsm::CompileOutput,
     terminal: &TerminalArbiter,
 ) -> Result<crate::protocol::check::ExampleVerification, CliError> {
+    let matcher = &output.matcher;
     use lingrep_core::analysis::{AnalyzerSession, InputUnitId, SegmentationMode, TextUnit};
     use lingrep_core::token_match::TokenInfo;
     use std::cell::RefCell;
@@ -551,35 +640,64 @@ fn verify_examples(
             }
         }
     };
+    let publication_error = |error| match error {
+        lingrep_core::fsm::MatchPublicationError::Resource(error) => {
+            CliError::Execution(lingrep_core::execution::ExecutionError::Matching(
+                lingrep_core::fsm::BoundExecutionError::Resource(error),
+            ))
+        }
+        lingrep_core::fsm::MatchPublicationError::Policy(error) => {
+            CliError::Execution(lingrep_core::execution::ExecutionError::PolicyAnchor(error))
+        }
+    };
     let report =
-        lingrep_core::fsm::try_verify_examples(matcher, &tokenize).map_err(
-            |error| match error {
-                lingrep_core::fsm::MatchPublicationError::Resource(error) => {
-                    CliError::Execution(lingrep_core::execution::ExecutionError::Matching(
-                        lingrep_core::fsm::BoundExecutionError::Resource(error),
-                    ))
-                }
-                lingrep_core::fsm::MatchPublicationError::Policy(error) => CliError::Execution(
-                    lingrep_core::execution::ExecutionError::PolicyAnchor(error),
-                ),
-            },
-        )?;
+        lingrep_core::fsm::try_verify_examples(matcher, &tokenize).map_err(publication_error)?;
+    let convert = |f: lingrep_core::fsm::ExampleFailure| {
+        let explanation = if f.kind == lingrep_core::fsm::ExampleFailureKind::ExpectedMatch {
+            let tokens = tokenize(&f.example);
+            let explanation = output
+                .explain_definition(&f.definition, tokens.as_slice())
+                .map_err(publication_error)?;
+            Some(crate::protocol::check::NoMatchExplanation::new(
+                explanation,
+                |index| {
+                    tokens
+                        .get(index)
+                        .and_then(|token| token.surface())
+                        .map(str::to_owned)
+                },
+            ))
+        } else {
+            None
+        };
+        Ok::<_, CliError>(crate::protocol::check::ExampleFailure {
+            definition: f.definition,
+            example: f.example,
+            kind: match f.kind {
+                lingrep_core::fsm::ExampleFailureKind::ExpectedMatch => "expected_match",
+                lingrep_core::fsm::ExampleFailureKind::UnexpectedMatch => "unexpected_match",
+                lingrep_core::fsm::ExampleFailureKind::Malformed => "malformed",
+            }
+            .into(),
+            explanation,
+        })
+    };
+    let failures = report
+        .failures
+        .into_iter()
+        .map(convert)
+        .collect::<Result<Vec<_>, _>>()?;
+    let post_policy_failures = report
+        .post_policy_failures
+        .into_iter()
+        .map(convert)
+        .collect::<Result<Vec<_>, _>>()?;
     if let Some(error) = failure.into_inner() {
         return Err(CliError::Corpus(format!(
             "example analysis failed: {error}"
         )));
     }
     session.borrow_mut().finish().map_err(CliError::corpus)?;
-    let convert = |f: lingrep_core::fsm::ExampleFailure| crate::protocol::check::ExampleFailure {
-        definition: f.definition,
-        example: f.example,
-        kind: match f.kind {
-            lingrep_core::fsm::ExampleFailureKind::ExpectedMatch => "expected_match",
-            lingrep_core::fsm::ExampleFailureKind::UnexpectedMatch => "unexpected_match",
-            lingrep_core::fsm::ExampleFailureKind::Malformed => "malformed",
-        }
-        .into(),
-    };
     Ok(crate::protocol::check::ExampleVerification {
         analyzer: crate::protocol::query::AnalyzerRun::new(
             &lingrep_corpus::AnalyzerRecord::from_descriptor(plan.descriptor()),
@@ -588,13 +706,9 @@ fn verify_examples(
         ),
         resource_identity: crate::direct_source::encode_digest(resolved.resource_identity),
         checked: report.checked as u64,
-        failures: report.failures.into_iter().map(convert).collect(),
+        failures,
         post_policy_checked: report.post_policy_checked as u64,
-        post_policy_failures: report
-            .post_policy_failures
-            .into_iter()
-            .map(convert)
-            .collect(),
+        post_policy_failures,
     })
 }
 

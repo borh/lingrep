@@ -292,6 +292,7 @@ fn run_of(source: &str) -> lingrep_web::sample::SampleRun {
         lingrep_web::patterns::compile_web_pattern(source).expect("the test catalog compiles");
     lingrep_web::sample::sample_run(
         &output,
+        source,
         &lingrep_core::token_match::TokenSchema::unidic_morphology(),
         "test".into(),
         &characters,
@@ -300,25 +301,63 @@ fn run_of(source: &str) -> lingrep_web::sample::SampleRun {
 
 #[test]
 fn claims_are_checked_against_the_definition_and_against_what_policy_publishes() {
-    use lingrep_web::sample::{ClaimFailure, ClaimFailureKind, ClaimsReport, SampleClaims};
+    use lingrep_core::fsm::AttributeTestOutcome;
+    use lingrep_web::sample::{
+        ClaimFailure, ClaimFailureKind, ClaimsReport, SampleClaims, WhyNot, WhyNotElement,
+        WhyNotOutcome, WhyNotStop, WhyNotStopKind,
+    };
     let run = run_of(
         "examples: [\"甲乙\", \"丙\"] counterexamples: [\"甲\", \"丁\"] pattern a := 甲. \
          examples: [\"甲乙\"] pattern b := 甲 乙. \
          policy resolve patterns rank: [longest, start, end, pattern]. end",
     );
-    let failure = |definition: &str, example: &str, kind| ClaimFailure {
-        definition: definition.into(),
+    let failure = |example: &str, kind, outcome: Option<(WhyNotOutcome, usize)>| ClaimFailure {
+        definition: "a".into(),
         example: example.into(),
         kind,
+        why_not: outcome.map(|(outcome, starts_tried)| WhyNot {
+            definition: "a".into(),
+            outcome,
+            starts_tried,
+            truncated: false,
+            add_counterexample: None,
+        }),
     };
+    let stopped = WhyNotOutcome::Stopped(WhyNotStop {
+        start: 0,
+        consumed: 0,
+        position: 0,
+        token: Some("丙".into()),
+        kind: WhyNotStopKind::Token,
+        element: Some(WhyNotElement {
+            line: 1,
+            column: 64,
+            text: "甲".into(),
+        }),
+        tests: vec![AttributeTestOutcome {
+            attribute: "text".into(),
+            test: "=甲".into(),
+            actual: Some("丙".into()),
+            held: false,
+        }],
+    });
     assert_eq!(
         run.claims,
         SampleClaims::Checked(ClaimsReport {
             checked: 5,
             failures: vec![
-                failure("a", "丙", ClaimFailureKind::ExpectedMatch),
-                failure("a", "甲", ClaimFailureKind::UnexpectedMatch),
-                failure("a", "甲乙", ClaimFailureKind::ExpectedPublication),
+                failure("丙", ClaimFailureKind::ExpectedMatch, Some((stopped, 1))),
+                failure("甲", ClaimFailureKind::UnexpectedMatch, None),
+                failure(
+                    "甲乙",
+                    ClaimFailureKind::ExpectedPublication,
+                    Some((
+                        WhyNotOutcome::NotPublished {
+                            spans: "0..1".into()
+                        },
+                        0
+                    ))
+                ),
             ],
         })
     );
@@ -351,4 +390,107 @@ fn a_dependency_clause_the_tokenizer_cannot_satisfy_is_a_refused_binding() {
         "{:?}",
         run.binding
     );
+}
+
+#[test]
+fn a_sample_line_without_a_match_is_explained_for_each_definition() {
+    use lingrep_web::sample::{WhyNotOutcome, WhyNotStopKind};
+    let dictionary = lingrep_core::testing::MiniDictionary::new();
+    let tokenizer =
+        lingrep_core::dictionary::create_tokenizer_from_path(&dictionary.path().to_string_lossy())
+            .expect("the dictionary loads");
+    let plan = lingrep_core::analysis::VibratoPlan::new(tokenizer, dictionary.path())
+        .expect("the plan builds");
+    let report = lingrep_web::sample::analyze_sample(
+        "pattern a := 猫 犬. pattern b := 猫.",
+        "猫鳥\n猫犬\n鳥",
+        &plan,
+        "test".into(),
+    );
+    let unmatched = report.run.expect("the pattern compiles").unmatched;
+
+    let summary = unmatched
+        .iter()
+        .map(|line| {
+            let definitions = line
+                .definitions
+                .iter()
+                .map(|why| {
+                    let WhyNotOutcome::Stopped(stop) = &why.outcome else {
+                        panic!("expected a stopped attempt: {why:?}");
+                    };
+                    assert_eq!(stop.kind, WhyNotStopKind::Token);
+                    (
+                        why.definition.as_str(),
+                        stop.consumed,
+                        stop.token.as_deref(),
+                    )
+                })
+                .collect::<Vec<_>>();
+            (line.text.as_str(), definitions)
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(
+        summary,
+        vec![("鳥", vec![("a", 0, Some("鳥")), ("b", 0, Some("鳥"))])],
+        "猫鳥 is matched by b and 猫犬 by both, so only 鳥 is unmatched"
+    );
+}
+
+#[test]
+fn a_sample_sentence_can_be_inserted_into_a_definitions_claims_once() {
+    use lingrep_web::sample::{ClaimInsert, SampleAnalysis};
+    let dictionary = lingrep_core::testing::MiniDictionary::new();
+    let tokenizer =
+        lingrep_core::dictionary::create_tokenizer_from_path(&dictionary.path().to_string_lossy())
+            .expect("the dictionary loads");
+    let plan = lingrep_core::analysis::VibratoPlan::new(tokenizer, dictionary.path())
+        .expect("the plan builds");
+    let edits = |source: &str| {
+        let report = lingrep_web::sample::analyze_sample(source, "猫\n鳥", &plan, "test".into());
+        let SampleAnalysis::Matched { matches, .. } = report.analysis else {
+            panic!("猫 matches");
+        };
+        let unmatched = report.run.expect("the pattern compiles").unmatched;
+        (
+            matches[0].add_example.clone(),
+            unmatched[0].definitions[0].add_counterexample.clone(),
+        )
+    };
+    let apply = |source: &str, edit: &ClaimInsert| {
+        let (before, after) = source
+            .split_at_checked(edit.offset)
+            .expect("the offset is a character boundary");
+        assert!(after.starts_with(&edit.expects));
+        format!("{before}{}{after}", edit.text)
+    };
+
+    let bare = "pattern p := 猫.";
+    let (example, counterexample) = edits(bare);
+    let with_example = apply(bare, &example.expect("猫 is not yet an example"));
+    assert_eq!(with_example, "examples: [\"猫\"]\npattern p := 猫.");
+    assert_eq!(
+        apply(
+            bare,
+            &counterexample.expect("鳥 is not yet a counterexample")
+        ),
+        "counterexamples: [\"鳥\"]\npattern p := 猫."
+    );
+
+    let listed = "examples: [\"犬]\", \"猫\"] counterexamples: [] pattern p := 猫.";
+    let (example, counterexample) = edits(listed);
+    assert_eq!(example, None, "猫 is already an example");
+    assert_eq!(
+        apply(listed, &counterexample.expect("the list is empty")),
+        "examples: [\"犬]\", \"猫\"] counterexamples: [\"鳥\"] pattern p := 猫."
+    );
+
+    let appended = "examples: [\"犬]\"] pattern p := 猫.";
+    assert_eq!(
+        apply(appended, &edits(appended).0.expect("猫 is not listed")),
+        "examples: [\"犬]\", \"猫\"] pattern p := 猫."
+    );
+
+    let inherited = "defaults\n  examples: [\"犬\"]\nend\npattern p := 猫.";
+    assert_eq!(edits(inherited).0, None, "a default's list is not edited");
 }

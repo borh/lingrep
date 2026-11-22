@@ -146,6 +146,78 @@ fn explicit_example_verification_reports_claims_identity_and_policy_failures() {
 }
 
 #[test]
+fn a_failed_example_states_where_the_furthest_attempt_stopped() {
+    use lingrep_core::testing::MiniDictionary;
+    let directory = tempfile::tempdir().unwrap();
+    let path = directory.path().join("claims.lx");
+    let dictionary = MiniDictionary::new();
+    let check = |catalog: &str, format: &[&str]| {
+        std::fs::write(&path, catalog).unwrap();
+        let output = lingrep_without_dictionary()
+            .args(format)
+            .args(["check", "--verify-examples", "--dict-path"])
+            .arg(dictionary.path())
+            .arg("--patterns")
+            .arg(&path)
+            .output()
+            .unwrap();
+        assert_eq!(output.status.code(), Some(1));
+        output.stdout
+    };
+
+    let stopped = "examples: [\"猫鳥\"]\np := [text=猫] [text=犬].";
+    let failure = &parse_jsonl(&check(stopped, &["--json"]))[0]["data"]["examples"]["failures"][0];
+    let element = stopped.find("[text=犬]").unwrap();
+    assert_eq!(
+        failure["explanation"],
+        serde_json::json!({
+            "outcome": "stopped",
+            "attempt": {
+                "start": 0,
+                "position": 1,
+                "token": "鳥",
+                "stop": "token",
+                "element": {
+                    "source": path.to_str().unwrap(),
+                    "line": 2,
+                    "column": 17,
+                    "byte_start": element,
+                    "byte_end": element + "[text=犬]".len(),
+                },
+                "tests": [{"attribute": "text", "test": "=犬", "actual": "鳥", "held": false}],
+            },
+            "starts_tried": 2,
+            "truncated": false,
+        })
+    );
+    let human = String::from_utf8(check(stopped, &[])).unwrap();
+    assert!(
+        human.contains(&format!(
+            "p: expected_match: 猫鳥\n  \
+             furthest attempt: started at token 0, matched 1 token(s); \
+             token 1 「鳥」 fails the element at {}:2:17\n    \
+             fails text=犬: token has 鳥\n  \
+             from a separate explanation pass over the compiled catalog: \
+             2 start position(s) tried\n",
+            path.display()
+        )),
+        "{human}"
+    );
+
+    let suppressed = "examples: [\"猫鳥\"]\np := [text=猫].\npolicy\n admit @p terminal: {exact: true, anchor: sentence_end}.\nend";
+    let report = &parse_jsonl(&check(suppressed, &["--json"]))[0]["data"]["examples"];
+    assert_eq!(
+        report["post_policy_failures"][0]["explanation"],
+        serde_json::json!({
+            "outcome": "not_published",
+            "spans": [[0, 1]],
+            "starts_tried": 0,
+            "truncated": false,
+        })
+    );
+}
+
+#[test]
 fn unavailable_analysis_or_analysis_failure_cannot_pass_a_counterexample() {
     use lingrep_core::testing::MiniDictionary;
     let directory = tempfile::tempdir().unwrap();

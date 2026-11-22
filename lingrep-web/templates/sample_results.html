@@ -26,7 +26,7 @@
     <p class="sample-claims-summary" data-i18n="sample.claims_violated" data-i18n-args='{"failed": {{ report.failures.len() }}, "checked": {{ report.checked }}}'>{{ report.failures.len() }} of the catalog's {{ report.checked }} example and counterexample claims fail.</p>
     <ul class="sample-claim-failures">
     {% for failure in report.failures %}
-      <li><code>{{ failure.definition }}</code> <span class="sample-claim-kind">{% match failure.kind %}{% when ClaimFailureKind::ExpectedMatch %}<span data-i18n="sample.claim_expected_match">does not match its example</span>{% when ClaimFailureKind::UnexpectedMatch %}<span data-i18n="sample.claim_unexpected_match">matches its counterexample</span>{% when ClaimFailureKind::Malformed %}<span data-i18n="sample.claim_malformed">has a claim that is not a list of strings</span>{% when ClaimFailureKind::ExpectedPublication %}<span data-i18n="sample.claim_expected_publication">matches its example, but result policy publishes no record for it</span>{% when ClaimFailureKind::UnexpectedPublication %}<span data-i18n="sample.claim_unexpected_publication">is published for its counterexample by result policy</span>{% endmatch %}</span> <button type="button" class="sample-claim-text" lang="ja" data-sample-claim-text title="Use as sample text" data-i18n-title="sample.claim_use">{{ failure.example }}</button></li>
+      <li><code>{{ failure.definition }}</code> <span class="sample-claim-kind">{% match failure.kind %}{% when ClaimFailureKind::ExpectedMatch %}<span data-i18n="sample.claim_expected_match">does not match its example</span>{% when ClaimFailureKind::UnexpectedMatch %}<span data-i18n="sample.claim_unexpected_match">matches its counterexample</span>{% when ClaimFailureKind::Malformed %}<span data-i18n="sample.claim_malformed">has a claim that is not a list of strings</span>{% when ClaimFailureKind::ExpectedPublication %}<span data-i18n="sample.claim_expected_publication">matches its example, but result policy publishes no record for it</span>{% when ClaimFailureKind::UnexpectedPublication %}<span data-i18n="sample.claim_unexpected_publication">is published for its counterexample by result policy</span>{% endmatch %}</span> <button type="button" class="sample-claim-text" lang="ja" data-sample-claim-text title="Use as sample text" data-i18n-title="sample.claim_use">{{ failure.example }}</button>{% match failure.why_not %}{% when Some with (why) %}{% call macros::why_not(why) %}{% endcall %}{% when None %}{% endmatch %}</li>
     {% endfor %}
     </ul>
     {% else %}
@@ -99,6 +99,7 @@
     <li class="sample-match">
       <span class="sample-match-key" lang="ja">{{ m.matched_text }}</span>
       <span class="sample-match-span">[{{ m.start }}..{{ m.end }}] {{ m.pattern_name }}</span>
+      {% match m.add_example %}{% when Some with (edit) %}<button type="button" class="btn btn-secondary btn-compact" data-claim-insert="examples" data-claim-offset="{{ edit.offset }}" data-claim-text="{{ edit.text }}" data-claim-expects="{{ edit.expects }}"><span data-i18n="sample.add_example">Add this sentence to the definition's examples</span></button>{% when None %}{% endmatch %}
       <div class="kwic-token-ribbon">
       {% for t in m.tokens %}<button type="button" class="kwic-token kwic-token-match" lang="ja" data-sample-token="{{ t.index }}" aria-pressed="false"{% if !t.pos.is_empty() || !t.lemma.is_empty() %} title="{{ t.pos }}{% if !t.pos.is_empty() && !t.lemma.is_empty() %} · {% endif %}{{ t.lemma }}{% if !t.cform.is_empty() %} · {{ t.cform }}{% endif %}"{% endif %}>{{ t.orth }}</button>{% endfor %}
       </div>
@@ -126,4 +127,20 @@
 {% when SampleAnalysis::Failed with (error) %}
   <div class="error" role="status"><span data-i18n="sample.error">The sample could not be analyzed:</span> <span lang="en">{{ error.message }}</span></div>
 {% endmatch %}
+{% match run %}{% when Some with (run) %}{% if run.unmatched.len() > 0 %}
+  <section class="sample-unmatched" data-sample-unmatched>
+    <h3 class="sample-unmatched-title" data-i18n="sample.unmatched_title">Sentences without a match</h3>
+    {% for line in run.unmatched %}
+    <div class="sample-unmatched-line">
+      <p class="sample-unmatched-text" lang="ja">{{ line.text }}</p>
+      {% for why in line.definitions %}
+      <details class="sample-unmatched-definition"{% if line.definitions.len() == 1 %} open{% endif %}>
+        <summary><span data-i18n="sample.why_summary">Why not</span> <code>{{ why.definition }}</code>?</summary>
+        {% call macros::why_not(why) %}{% endcall %}
+      </details>
+      {% endfor %}
+    </div>
+    {% endfor %}
+  </section>
+{% endif %}{% when None %}{% endmatch %}
 </section>

@@ -223,6 +223,160 @@ pub struct ExampleFailure {
     pub definition: String,
     pub example: String,
     pub kind: String,
+    /// For an `expected_match` failure, why the definition did not publish a
+    /// match. Additive under the `lingrep.check/v1` rule.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub explanation: Option<NoMatchExplanation>,
+}
+
+/// Why one definition did not publish a match for one sentence.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
+pub struct NoMatchExplanation {
+    /// `stopped`, `not_published`, `where_rejected` or `unexplained`.
+    pub outcome: String,
+    /// `[start, end)` token spans the definition (`not_published`) or its body
+    /// (`where_rejected`) matched.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub spans: Vec<[u64; 2]>,
+    /// For `stopped`: the attempt that consumed the most tokens.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub attempt: Option<StoppedAttempt>,
+    /// For `unexplained`: why no explanation is available.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub detail: Option<String>,
+    /// Start positions the explanation pass attempted. The pass evaluates the
+    /// definition body separately from the matcher.
+    pub starts_tried: u64,
+    /// The explanation pass reached its step limit before trying every start.
+    pub truncated: bool,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
+pub struct StoppedAttempt {
+    /// Token index the attempt started at.
+    pub start: u64,
+    /// Token index the failing element was tested at; the sentence length when
+    /// the sentence had ended.
+    pub position: u64,
+    /// The surface text of the token at `position`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub token: Option<String>,
+    /// `token`, `sentence_ended`, `not_sentence_start`, `not_sentence_end`,
+    /// `followed_by`, `not_followed_by`, `preceded_by` or `not_preceded_by`.
+    pub stop: String,
+    /// The failing element in the catalog source; absent for an anchor.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub element: Option<ElementLocation>,
+    /// For `token`: each attribute test of the element against the token.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub tests: Vec<AttributeTest>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
+pub struct ElementLocation {
+    pub source: String,
+    pub line: u64,
+    /// One-based, in bytes.
+    pub column: u64,
+    pub byte_start: u64,
+    pub byte_end: u64,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
+pub struct AttributeTest {
+    pub attribute: String,
+    /// The operator and operand, such as `=猫`.
+    pub test: String,
+    /// The token's value; absent when the token does not carry the attribute.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub actual: Option<String>,
+    pub held: bool,
+}
+
+impl NoMatchExplanation {
+    /// `surface` gives the surface text of the token at an index.
+    pub fn new(
+        explanation: lingrep_core::fsm::DefinitionExplanation,
+        surface: impl Fn(usize) -> Option<String>,
+    ) -> Self {
+        use lingrep_core::fsm::{DefinitionOutcome, StopReason};
+        let spans = |spans: Vec<(usize, usize)>| {
+            spans
+                .into_iter()
+                .map(|(start, end)| [start as u64, end as u64])
+                .collect()
+        };
+        let mut wire = Self {
+            outcome: String::new(),
+            spans: Vec::new(),
+            attempt: None,
+            detail: None,
+            starts_tried: explanation.starts_tried as u64,
+            truncated: explanation.truncated,
+        };
+        match explanation.outcome {
+            DefinitionOutcome::Published { spans: found } => {
+                wire.outcome = "published".into();
+                wire.spans = spans(found);
+            }
+            DefinitionOutcome::NotPublished { spans: found } => {
+                wire.outcome = "not_published".into();
+                wire.spans = spans(found);
+            }
+            DefinitionOutcome::WhereRejected { spans: found } => {
+                wire.outcome = "where_rejected".into();
+                wire.spans = spans(found);
+            }
+            DefinitionOutcome::Unexplained { reason } => {
+                wire.outcome = "unexplained".into();
+                wire.detail = Some(reason);
+            }
+            DefinitionOutcome::Stopped(attempt) => {
+                wire.outcome = "stopped".into();
+                let (stop, tests) = match attempt.reason {
+                    StopReason::Token { tests } => ("token", tests),
+                    StopReason::SentenceEnded => ("sentence_ended", Vec::new()),
+                    StopReason::NotSentenceStart => ("not_sentence_start", Vec::new()),
+                    StopReason::NotSentenceEnd => ("not_sentence_end", Vec::new()),
+                    StopReason::Lookaround {
+                        preceded_by,
+                        negative,
+                    } => (
+                        match (preceded_by, negative) {
+                            (false, false) => "followed_by",
+                            (false, true) => "not_followed_by",
+                            (true, false) => "preceded_by",
+                            (true, true) => "not_preceded_by",
+                        },
+                        Vec::new(),
+                    ),
+                };
+                wire.attempt = Some(StoppedAttempt {
+                    start: attempt.start as u64,
+                    position: attempt.position as u64,
+                    token: surface(attempt.position),
+                    stop: stop.into(),
+                    element: attempt.element.map(|element| ElementLocation {
+                        source: element.source.to_string(),
+                        line: element.line as u64,
+                        column: element.column as u64,
+                        byte_start: element.byte_range.start as u64,
+                        byte_end: element.byte_range.end as u64,
+                    }),
+                    tests: tests
+                        .into_iter()
+                        .map(|test| AttributeTest {
+                            attribute: test.attribute,
+                            test: test.test,
+                            actual: test.actual,
+                            held: test.held,
+                        })
+                        .collect(),
+                });
+            }
+        }
+        wire
+    }
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
