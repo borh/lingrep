@@ -1107,8 +1107,11 @@ async fn documents(
 }
 
 async fn export(State(store): State<RequestStore>, Path(id): Path<String>) -> Result<Response> {
-    let permit = store.coordinators.acquire_reading_permit().await;
-    let (snapshot, ready, index) = completed(&store, &id).await?;
+    let (snapshot, ready, index) = {
+        let _permit = store.coordinators.acquire_reading_permit().await;
+        completed(&store, &id).await?
+    };
+    let coordinators = store.coordinators.clone();
     let patterns = snapshot
         .patterns
         .iter()
@@ -1119,23 +1122,93 @@ async fn export(State(store): State<RequestStore>, Path(id): Path<String>) -> Re
         data["vectors_blake3"] = json!(vectors.digest.to_hex().as_str());
     }
     let prefix = vec![json!({"schema":"lingrep.question-results/v1","type":"run","data":data})];
-    let stream=futures::stream::try_unfold((snapshot,ready,index,patterns,-1_i64,Some(prefix),permit),|(snapshot,ready,index,patterns,cursor,prefix,permit)|async move{
-        if cursor==i64::MAX{return Ok(None);}
-        let (rows,next,finished)=if let Some(prefix)=prefix{(prefix,cursor,false)}else{
-            let page=index.export_page(cursor,16).await.map_err(std::io::Error::other)?;
-            if page.is_empty(){(vec![json!({"schema":"lingrep.question-results/v1","type":"complete","data":{"analysis_identity":lingrep_corpus::format_identity(ready.artifact.analysis_identity().as_bytes()),"counters":{"matches_found":snapshot.patterns.iter().map(|p|p.exact_total).sum::<u64>()}}})],cursor,true)}else{
-                let next=page.last().expect("nonempty page").sequence as i64;
-                let values=project_occurrences(&ready,&page,&snapshot.capture_catalog,&patterns,index.publication_attributes(),usize::MAX,None).await.map_err(|e|std::io::Error::other(e.1))?;
-                (values.into_iter().map(|row|json!({"schema":"lingrep.question-results/v1","type":"match","data":row})).collect(),next,false)
+    let stream = futures::stream::try_unfold(
+        (
+            snapshot,
+            ready,
+            index,
+            patterns,
+            -1_i64,
+            Some(prefix),
+            coordinators,
+        ),
+        |(snapshot, ready, index, patterns, cursor, prefix, coordinators)| async move {
+            if cursor == i64::MAX {
+                return Ok(None);
             }
-        };
-        let mut bytes=Vec::new();for row in rows{serde_json::to_writer(&mut bytes,&row).map_err(std::io::Error::other)?;bytes.push(b'\n');}
-        Ok::<_,std::io::Error>(Some((bytes,(snapshot,ready,index,patterns,if finished{i64::MAX}else{next},None,permit))))
-    }).inspect(move |item| {
+            let (rows, next, finished) = if let Some(prefix) = prefix {
+                (prefix, cursor, false)
+            } else {
+                // Acquire a reading permit per page so slow HTTP clients cannot
+                // hold server-wide reading capacity across network backpressure.
+                let _permit = coordinators.acquire_reading_permit().await;
+                let page = index
+                    .export_page(cursor, 16)
+                    .await
+                    .map_err(std::io::Error::other)?;
+                if page.is_empty() {
+                    (
+                        vec![json!({
+                            "schema": "lingrep.question-results/v1",
+                            "type": "complete",
+                            "data": {
+                                "analysis_identity": lingrep_corpus::format_identity(ready.artifact.analysis_identity().as_bytes()),
+                                "counters": {
+                                    "matches_found": snapshot.patterns.iter().map(|p| p.exact_total).sum::<u64>()
+                                }
+                            }
+                        })],
+                        cursor,
+                        true,
+                    )
+                } else {
+                    let next = page.last().expect("nonempty page").sequence as i64;
+                    let values = project_occurrences(
+                        &ready,
+                        &page,
+                        &snapshot.capture_catalog,
+                        &patterns,
+                        index.publication_attributes(),
+                        usize::MAX,
+                        None,
+                    )
+                    .await
+                    .map_err(|e| std::io::Error::other(e.1))?;
+                    (
+                        values
+                            .into_iter()
+                            .map(|row| json!({"schema":"lingrep.question-results/v1","type":"match","data":row}))
+                            .collect(),
+                        next,
+                        false,
+                    )
+                }
+            };
+            let mut bytes = Vec::new();
+            for row in rows {
+                serde_json::to_writer(&mut bytes, &row).map_err(std::io::Error::other)?;
+                bytes.push(b'\n');
+            }
+            Ok::<_, std::io::Error>(Some((
+                bytes,
+                (
+                    snapshot,
+                    ready,
+                    index,
+                    patterns,
+                    if finished { i64::MAX } else { next },
+                    None,
+                    coordinators,
+                ),
+            )))
+        },
+    )
+    .inspect(move |item| {
         if let Err(error) = item {
             tracing::error!(run = %id, %error, "question result export stream failed");
         }
-    }).take_while(|item|futures::future::ready(!matches!(item,Ok(bytes) if bytes.is_empty())));
+    })
+    .take_while(|item| futures::future::ready(!matches!(item, Ok(bytes) if bytes.is_empty())));
 
     Ok((
         [

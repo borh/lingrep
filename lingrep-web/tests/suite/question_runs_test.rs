@@ -1084,3 +1084,59 @@ async fn a_run_that_names_a_count_only_definition_searches_it() {
     assert_eq!(snapshot["definitions"], json!(["every"]));
     assert_eq!(snapshot["counts"], json!({"every": 126}));
 }
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn paused_export_streams_do_not_starve_concurrent_read_endpoints() {
+    let (_fixture, store, identity) = fixture(8);
+    let app = lingrep_web::app_router(store.clone());
+    let id = submit(&app, SOURCE, "", Some(&identity)).await;
+    let frames = updates(&app, &id).await;
+    assert_eq!(frames.last().unwrap()["patch"]["phase"], "complete");
+
+    // Open two export streams (equal to READING_CONCURRENCY) and pause them mid-stream
+    // after reading the first chunk to simulate slow HTTP clients.
+    let mut paused_exports = Vec::new();
+    for _ in 0..2 {
+        let response = request(
+            &app,
+            Method::GET,
+            &format!("/api/questions/runs/{id}/export"),
+            None,
+        )
+        .await;
+        assert_eq!(response.status(), StatusCode::OK);
+        let mut body = response.into_body();
+        let first = body.frame().await.unwrap().unwrap().into_data().unwrap();
+        assert!(!first.is_empty());
+        paused_exports.push((first, body));
+    }
+
+    // While both export streams are paused between chunks, read endpoints must
+    // still acquire reading permits without starving.
+    let snapshot_response = tokio::time::timeout(
+        Duration::from_secs(2),
+        request(
+            &app,
+            Method::GET,
+            &format!("/api/questions/runs/{id}"),
+            None,
+        ),
+    )
+    .await
+    .expect("paused export streams must not starve concurrent read endpoints");
+    let snapshot = json_response(snapshot_response, StatusCode::OK).await;
+    assert_eq!(snapshot["counts"], json!({"phrase": 42, "copula": 42}));
+
+    // Draining the paused exports afterward still yields the complete NDJSON stream.
+    for (first, body) in paused_exports {
+        let mut bytes = first.to_vec();
+        let rest = tokio::time::timeout(Duration::from_secs(5), body.collect())
+            .await
+            .unwrap()
+            .unwrap()
+            .to_bytes();
+        bytes.extend_from_slice(&rest);
+        let lines: Vec<&str> = std::str::from_utf8(&bytes).unwrap().lines().collect();
+        assert_eq!(lines.len(), 86);
+    }
+}
