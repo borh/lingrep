@@ -2,7 +2,6 @@ use crate::token_match::{AttributeKey, TokenAttributeIndex};
 use compact_str::CompactString;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
-use std::cmp::Ordering;
 use std::collections::{BTreeMap, HashMap};
 use std::fmt::{self, Display};
 use std::hash::Hash;
@@ -16,47 +15,12 @@ pub(crate) struct FinalState {
     pub pattern_name: CompactString,
 }
 
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub(crate) struct StateInfo {
     pub state: usize,          // Current state in the state machine
     pub start_token: usize,    // Index of the first token in the sequence that led to this state
     pub position: usize,       // Current position in token stream (tokens consumed total)
     pub entry_position: usize, // Position when we entered this state (for counting transition tokens)
-}
-
-impl Hash for StateInfo {
-    fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
-        self.state.hash(state);
-        self.start_token.hash(state);
-        self.position.hash(state);
-        self.entry_position.hash(state);
-    }
-}
-
-impl PartialEq for StateInfo {
-    fn eq(&self, other: &Self) -> bool {
-        self.state == other.state
-            && self.start_token == other.start_token
-            && self.position == other.position
-            && self.entry_position == other.entry_position
-    }
-}
-
-impl Eq for StateInfo {}
-
-impl PartialOrd for StateInfo {
-    fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
-        Some(self.cmp(other))
-    }
-}
-
-impl Ord for StateInfo {
-    fn cmp(&self, other: &Self) -> Ordering {
-        self.state
-            .cmp(&other.state)
-            .then_with(|| self.start_token.cmp(&other.start_token))
-            .then_with(|| self.position.cmp(&other.position))
-    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -785,4 +749,29 @@ pub struct Trace {
     pub entries: Vec<TraceEntry>,
     pub events: Vec<TraceEvent>,
     pub matches: Vec<Match>,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::cmp::Ordering;
+
+    #[test]
+    fn state_info_ord_agrees_with_eq_on_entry_position() {
+        let earlier = StateInfo {
+            state: 3,
+            start_token: 1,
+            position: 4,
+            entry_position: 2,
+        };
+        let later = StateInfo {
+            entry_position: 4,
+            ..earlier
+        };
+
+        assert_ne!(earlier, later);
+        assert_eq!(earlier.cmp(&later), Ordering::Less);
+        assert_eq!(later.cmp(&earlier), Ordering::Greater);
+        assert_eq!(earlier.partial_cmp(&later), Some(Ordering::Less));
+    }
 }
