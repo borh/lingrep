@@ -60,10 +60,6 @@ pub struct ExecutionMetrics {
     pub dense_predicate_memo_hits: u64,
     pub dense_predicate_evaluations: u64,
     pub dense_main_transition_predicate_calls: u64,
-    pub dense_match_closure_predicate_calls: u64,
-    pub dense_advance_validation_predicate_calls: u64,
-    pub dense_retry_advance_validation_predicate_calls: u64,
-    pub dense_retry_extend_validation_predicate_calls: u64,
     pub spawn_predicate_calls: u64,
     pub nfa_previous_token_predicate_calls: u64,
     pub assertion_consume_predicate_calls: u64,
@@ -89,13 +85,6 @@ impl ExecutionMetrics {
         self.dense_predicate_memo_hits = metrics.dense_predicate_memo_hits;
         self.dense_predicate_evaluations = metrics.dense_predicate_evaluations;
         self.dense_main_transition_predicate_calls = metrics.dense_main_transition_predicate_calls;
-        self.dense_match_closure_predicate_calls = metrics.dense_match_closure_predicate_calls;
-        self.dense_advance_validation_predicate_calls =
-            metrics.dense_advance_validation_predicate_calls;
-        self.dense_retry_advance_validation_predicate_calls =
-            metrics.dense_retry_advance_validation_predicate_calls;
-        self.dense_retry_extend_validation_predicate_calls =
-            metrics.dense_retry_extend_validation_predicate_calls;
         self.spawn_predicate_calls = metrics.spawn_predicate_calls;
         self.nfa_previous_token_predicate_calls = metrics.nfa_previous_token_predicate_calls;
         self.assertion_consume_predicate_calls = metrics.assertion_consume_predicate_calls;
@@ -114,10 +103,6 @@ impl ExecutionMetrics {
     fn call_site_total(&self) -> u64 {
         [
             self.dense_main_transition_predicate_calls,
-            self.dense_match_closure_predicate_calls,
-            self.dense_advance_validation_predicate_calls,
-            self.dense_retry_advance_validation_predicate_calls,
-            self.dense_retry_extend_validation_predicate_calls,
             self.spawn_predicate_calls,
             self.nfa_previous_token_predicate_calls,
             self.assertion_consume_predicate_calls,
@@ -2319,10 +2304,6 @@ mod tests {
         let metrics = metrics_for("pattern plain := [text=a].", vec![token("a", "X")]);
 
         assert_eq!(metrics.dense_main_transition_predicate_calls, 1);
-        assert_eq!(metrics.dense_match_closure_predicate_calls, 0);
-        assert_eq!(metrics.dense_advance_validation_predicate_calls, 0);
-        assert_eq!(metrics.dense_retry_advance_validation_predicate_calls, 0);
-        assert_eq!(metrics.dense_retry_extend_validation_predicate_calls, 0);
         assert_eq!(metrics.dense_predicate_calls, 1);
         assert_eq!(metrics.spawn_predicate_calls, 1);
     }

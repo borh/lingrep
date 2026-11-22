@@ -241,22 +241,16 @@ struct PredicateCounters {
 }
 
 pub(super) const PREDICATE_SITE_DENSE_MAIN: usize = 0;
-pub(super) const PREDICATE_SITE_DENSE_MATCH_CLOSURE: usize = 1;
-pub(super) const PREDICATE_SITE_DENSE_ADVANCE: usize = 2;
-#[cfg(feature = "bench-instrumentation")]
-pub(super) const PREDICATE_SITE_DENSE_RETRY_ADVANCE: usize = 3;
-#[cfg(feature = "bench-instrumentation")]
-pub(super) const PREDICATE_SITE_DENSE_RETRY_EXTEND: usize = 4;
-const PREDICATE_SITE_SPAWN: usize = 5;
-const PREDICATE_SITE_NFA_PREVIOUS_TOKEN: usize = 6;
-const PREDICATE_SITE_ASSERTION_CONSUME: usize = 7;
-const PREDICATE_SITE_ASSERTION_PREVIOUS_TOKEN: usize = 8;
-pub(super) const PREDICATE_SITE_CAPTURE_TOKEN: usize = 9;
-pub(super) const PREDICATE_SITE_CAPTURE_PREVIOUS_TOKEN: usize = 10;
-pub(super) const PREDICATE_SITE_EVALUATED_TOKEN: usize = 11;
-pub(super) const PREDICATE_SITE_EVALUATED_PREVIOUS_TOKEN: usize = 12;
-const PREDICATE_SITE_UNCLASSIFIED: usize = 13;
-const PREDICATE_SITE_COUNT: usize = 14;
+const PREDICATE_SITE_SPAWN: usize = 1;
+const PREDICATE_SITE_NFA_PREVIOUS_TOKEN: usize = 2;
+const PREDICATE_SITE_ASSERTION_CONSUME: usize = 3;
+const PREDICATE_SITE_ASSERTION_PREVIOUS_TOKEN: usize = 4;
+pub(super) const PREDICATE_SITE_CAPTURE_TOKEN: usize = 5;
+pub(super) const PREDICATE_SITE_CAPTURE_PREVIOUS_TOKEN: usize = 6;
+pub(super) const PREDICATE_SITE_EVALUATED_TOKEN: usize = 7;
+pub(super) const PREDICATE_SITE_EVALUATED_PREVIOUS_TOKEN: usize = 8;
+const PREDICATE_SITE_UNCLASSIFIED: usize = 9;
+const PREDICATE_SITE_COUNT: usize = 10;
 const _: [(); PREDICATE_SITE_COUNT] = [(); PREDICATE_SITE_UNCLASSIFIED + 1];
 
 #[cfg(feature = "bench-instrumentation")]
@@ -273,10 +267,6 @@ pub(crate) struct PredicateMetrics {
     pub(crate) dense_predicate_memo_hits: u64,
     pub(crate) dense_predicate_evaluations: u64,
     pub(crate) dense_main_transition_predicate_calls: u64,
-    pub(crate) dense_match_closure_predicate_calls: u64,
-    pub(crate) dense_advance_validation_predicate_calls: u64,
-    pub(crate) dense_retry_advance_validation_predicate_calls: u64,
-    pub(crate) dense_retry_extend_validation_predicate_calls: u64,
     pub(crate) spawn_predicate_calls: u64,
     pub(crate) nfa_previous_token_predicate_calls: u64,
     pub(crate) assertion_consume_predicate_calls: u64,
@@ -458,50 +448,6 @@ impl<'catalog> PredicateSession<'catalog> {
         position: usize,
     ) -> bool {
         self.matches_at_site::<PREDICATE_SITE_DENSE_MAIN, S>(predicate, tokens, position)
-    }
-
-    #[inline]
-    #[cfg(all(test, feature = "bench-instrumentation"))]
-    pub(crate) fn matches_at_dense_match_closure<S: TokenSequence + ?Sized>(
-        &self,
-        predicate: PredicateId,
-        tokens: &S,
-        position: usize,
-    ) -> bool {
-        self.matches_at_site::<PREDICATE_SITE_DENSE_MATCH_CLOSURE, S>(predicate, tokens, position)
-    }
-
-    #[inline]
-    #[cfg(all(test, feature = "bench-instrumentation"))]
-    pub(crate) fn matches_at_dense_advance<S: TokenSequence + ?Sized>(
-        &self,
-        predicate: PredicateId,
-        tokens: &S,
-        position: usize,
-    ) -> bool {
-        self.matches_at_site::<PREDICATE_SITE_DENSE_ADVANCE, S>(predicate, tokens, position)
-    }
-
-    #[inline]
-    #[cfg(all(test, feature = "bench-instrumentation"))]
-    pub(crate) fn matches_at_dense_retry_advance<S: TokenSequence + ?Sized>(
-        &self,
-        predicate: PredicateId,
-        tokens: &S,
-        position: usize,
-    ) -> bool {
-        self.matches_at_site::<PREDICATE_SITE_DENSE_RETRY_ADVANCE, S>(predicate, tokens, position)
-    }
-
-    #[inline]
-    #[cfg(all(test, feature = "bench-instrumentation"))]
-    pub(crate) fn matches_at_dense_retry_extend<S: TokenSequence + ?Sized>(
-        &self,
-        predicate: PredicateId,
-        tokens: &S,
-        position: usize,
-    ) -> bool {
-        self.matches_at_site::<PREDICATE_SITE_DENSE_RETRY_EXTEND, S>(predicate, tokens, position)
     }
 
     #[inline]
@@ -971,20 +917,10 @@ impl<'catalog> PredicateSession<'catalog> {
                 .checked_add(counters.evaluations.get())
                 .expect("predicate evaluation total fits in u64");
         }
-        let mut dense_calls = 0u64;
-        let mut dense_memo_hits = 0u64;
-        let mut dense_evaluations = 0u64;
-        for counters in &self.scratch.predicate_counters[..=PREDICATE_SITE_DENSE_RETRY_EXTEND] {
-            dense_calls = dense_calls
-                .checked_add(counters.calls.get())
-                .expect("dense predicate call total fits in u64");
-            dense_memo_hits = dense_memo_hits
-                .checked_add(counters.memo_hits.get())
-                .expect("dense predicate memo-hit total fits in u64");
-            dense_evaluations = dense_evaluations
-                .checked_add(counters.evaluations.get())
-                .expect("dense predicate evaluation total fits in u64");
-        }
+        let dense_counters = &self.scratch.predicate_counters[PREDICATE_SITE_DENSE_MAIN];
+        let dense_calls = dense_counters.calls.get();
+        let dense_memo_hits = dense_counters.memo_hits.get();
+        let dense_evaluations = dense_counters.evaluations.get();
         let site_calls = |site: usize| self.scratch.predicate_counters[site].calls.get();
         let distinct = self.scratch.distinct_pairs.get();
         PredicateMetrics {
@@ -1001,14 +937,6 @@ impl<'catalog> PredicateSession<'catalog> {
             dense_predicate_memo_hits: dense_memo_hits,
             dense_predicate_evaluations: dense_evaluations,
             dense_main_transition_predicate_calls: site_calls(PREDICATE_SITE_DENSE_MAIN),
-            dense_match_closure_predicate_calls: site_calls(PREDICATE_SITE_DENSE_MATCH_CLOSURE),
-            dense_advance_validation_predicate_calls: site_calls(PREDICATE_SITE_DENSE_ADVANCE),
-            dense_retry_advance_validation_predicate_calls: site_calls(
-                PREDICATE_SITE_DENSE_RETRY_ADVANCE,
-            ),
-            dense_retry_extend_validation_predicate_calls: site_calls(
-                PREDICATE_SITE_DENSE_RETRY_EXTEND,
-            ),
             spawn_predicate_calls: site_calls(PREDICATE_SITE_SPAWN),
             nfa_previous_token_predicate_calls: site_calls(PREDICATE_SITE_NFA_PREVIOUS_TOKEN),
             assertion_consume_predicate_calls: site_calls(PREDICATE_SITE_ASSERTION_CONSUME),
@@ -2026,81 +1954,65 @@ mod tests {
             assert!(session.matches_at_dense_main(predicate, &tokens, 0));
         }
         for _ in 0..2 {
-            assert!(session.matches_at_dense_match_closure(predicate, &tokens, 0));
-        }
-        for _ in 0..3 {
-            assert!(session.matches_at_dense_advance(predicate, &tokens, 0));
-        }
-        for _ in 0..4 {
-            assert!(session.matches_at_dense_retry_advance(predicate, &tokens, 0));
-        }
-        for _ in 0..5 {
-            assert!(session.matches_at_dense_retry_extend(predicate, &tokens, 0));
-        }
-        for _ in 0..6 {
             assert!(session.matches_at_spawn(predicate, &tokens, 0));
         }
-        for _ in 0..7 {
+        for _ in 0..3 {
             assert!(session.matches_at_nfa_previous_token(predicate, &tokens, 0));
         }
-        for _ in 0..8 {
+        for _ in 0..4 {
             assert!(session.matches_at_assertion_consume(predicate, &tokens, 0));
         }
-        for _ in 0..9 {
+        for _ in 0..5 {
             assert!(session.matches_at_assertion_previous_token(predicate, &tokens, 0));
         }
-        for _ in 0..10 {
+        for _ in 0..6 {
             assert!(
                 session.matches_at_site::<PREDICATE_SITE_CAPTURE_TOKEN, _>(predicate, &tokens, 0,)
             );
         }
-        for _ in 0..11 {
+        for _ in 0..7 {
             assert!(
                 session.matches_at_site::<PREDICATE_SITE_CAPTURE_PREVIOUS_TOKEN, _>(
                     predicate, &tokens, 0,
                 )
             );
         }
-        for _ in 0..12 {
+        for _ in 0..8 {
             assert!(
                 session
                     .matches_at_site::<PREDICATE_SITE_EVALUATED_TOKEN, _>(predicate, &tokens, 0,)
             );
         }
-        for _ in 0..13 {
+        for _ in 0..9 {
             assert!(
                 session.matches_at_site::<PREDICATE_SITE_EVALUATED_PREVIOUS_TOKEN, _>(
                     predicate, &tokens, 0,
                 )
             );
         }
-        for _ in 0..14 {
+        for _ in 0..10 {
             assert!(session.matches_at(predicate, &tokens, 0));
         }
 
         let metrics = session.metrics();
-        assert_eq!(metrics.predicate_calls, 105);
-        assert_eq!(metrics.predicate_memo_hits, 104);
+        assert_eq!(metrics.predicate_calls, 55);
+        assert_eq!(metrics.predicate_memo_hits, 54);
         assert_eq!(metrics.predicate_evaluations, 1);
         assert_eq!(metrics.predicate_distinct_pairs, 1);
         assert_eq!(metrics.predicate_recomputations, 0);
-        assert_eq!(metrics.dense_predicate_calls, 15);
-        assert_eq!(metrics.dense_predicate_memo_hits, 14);
+        assert_eq!(metrics.dense_predicate_calls, 1);
+        assert_eq!(metrics.dense_predicate_memo_hits, 0);
         assert_eq!(metrics.dense_predicate_evaluations, 1);
         assert_eq!(metrics.dense_main_transition_predicate_calls, 1);
-        assert_eq!(metrics.dense_match_closure_predicate_calls, 2);
-        assert_eq!(metrics.dense_advance_validation_predicate_calls, 3);
-        assert_eq!(metrics.dense_retry_advance_validation_predicate_calls, 4);
-        assert_eq!(metrics.dense_retry_extend_validation_predicate_calls, 5);
-        assert_eq!(metrics.spawn_predicate_calls, 6);
-        assert_eq!(metrics.nfa_previous_token_predicate_calls, 7);
-        assert_eq!(metrics.assertion_consume_predicate_calls, 8);
-        assert_eq!(metrics.assertion_previous_token_predicate_calls, 9);
-        assert_eq!(metrics.capture_token_predicate_calls, 10);
-        assert_eq!(metrics.capture_previous_token_predicate_calls, 11);
-        assert_eq!(metrics.evaluated_token_predicate_calls, 12);
-        assert_eq!(metrics.evaluated_previous_token_predicate_calls, 13);
-        assert_eq!(metrics.unclassified_predicate_calls, 14);
+        assert_eq!(metrics.spawn_predicate_calls, 2);
+        assert_eq!(metrics.nfa_previous_token_predicate_calls, 3);
+        assert_eq!(metrics.assertion_consume_predicate_calls, 4);
+        assert_eq!(metrics.assertion_previous_token_predicate_calls, 5);
+        assert_eq!(metrics.capture_token_predicate_calls, 6);
+        assert_eq!(metrics.capture_previous_token_predicate_calls, 7);
+        assert_eq!(metrics.evaluated_token_predicate_calls, 8);
+        assert_eq!(metrics.evaluated_previous_token_predicate_calls, 9);
+        assert_eq!(metrics.unclassified_predicate_calls, 10);
     }
 
     #[cfg(feature = "bench-instrumentation")]

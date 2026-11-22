@@ -403,8 +403,8 @@ fn inject_group<S: TokenSequence + ?Sized>(
             {
                 // Pushed without a membership test. Every spawn entry carries
                 // `start_token == index`, while a carried frontier entry always
-                // carries `start_token <= index - 1` --- `handle_state_transition`
-                // sets `start_token = token_index` only out of state 0 --- so a
+                // carries `start_token <= index - 1` --- the advancement loop
+                // sets `start_token = index` only out of state 0 --- so a
                 // spawn can never duplicate a carried state. Two entries sharing
                 // one `state` can duplicate each other, which is bounded by the
                 // table's entry count and invisible in output: successors land in
@@ -442,7 +442,6 @@ pub(crate) fn inject_spawns<S: TokenSequence + ?Sized>(
         state: 0,
         start_token: index,
         position: index,
-        entry_position: index,
     };
     if dense.spawn_table.fallback {
         // Full epsilon closure for machines the bounded table construction

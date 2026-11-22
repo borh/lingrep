@@ -17,18 +17,9 @@ pub(crate) struct FinalState {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub(crate) struct StateInfo {
-    pub state: usize,          // Current state in the state machine
-    pub start_token: usize,    // Index of the first token in the sequence that led to this state
-    pub position: usize,       // Current position in token stream (tokens consumed total)
-    pub entry_position: usize, // Position when we entered this state (for counting transition tokens)
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) enum Action {
-    Reject,
-    Match,
-    Advance,
-    MatchExtend,
+    pub state: usize,       // Current state in the state machine
+    pub start_token: usize, // Index of the first token in the sequence that led to this state
+    pub position: usize,    // Current position in token stream (tokens consumed total)
 }
 
 /// A pattern match found in a token sequence
@@ -347,79 +338,6 @@ impl fmt::Display for AttrValueType {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
-pub(crate) enum Operator {
-    Exact(usize),        // Represents {n}
-    Range(usize, usize), // Represents {n,m}
-    AtLeast(usize),      // Represents {n,}
-    AtMost(usize),       // Represents {,m}
-    ZeroOrOne,           // Represents '?'
-    ZeroOrMore,          // Represents '*'
-    OneOrMore,           // Represents '+'
-    Not,                 // Represents '!'
-}
-
-// Deterministic ordering for Operator to enable consistent sorting
-impl PartialOrd for Operator {
-    fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
-        Some(self.cmp(other))
-    }
-}
-
-impl Ord for Operator {
-    fn cmp(&self, other: &Self) -> std::cmp::Ordering {
-        // First compare by discriminant (variant type)
-        match (self, other) {
-            (Operator::Exact(lhs), Operator::Exact(rhs)) => lhs.cmp(rhs),
-            (Operator::Exact(_), _) => std::cmp::Ordering::Less,
-            (_, Operator::Exact(_)) => std::cmp::Ordering::Greater,
-
-            (Operator::Range(lmin, lmax), Operator::Range(rmin, rmax)) => {
-                lmin.cmp(rmin).then_with(|| lmax.cmp(rmax))
-            }
-            (Operator::Range(_, _), _) => std::cmp::Ordering::Less,
-            (_, Operator::Range(_, _)) => std::cmp::Ordering::Greater,
-
-            (Operator::AtLeast(lhs), Operator::AtLeast(rhs)) => lhs.cmp(rhs),
-            (Operator::AtLeast(_), _) => std::cmp::Ordering::Less,
-            (_, Operator::AtLeast(_)) => std::cmp::Ordering::Greater,
-
-            (Operator::AtMost(lhs), Operator::AtMost(rhs)) => lhs.cmp(rhs),
-            (Operator::AtMost(_), _) => std::cmp::Ordering::Less,
-            (_, Operator::AtMost(_)) => std::cmp::Ordering::Greater,
-
-            (Operator::ZeroOrOne, Operator::ZeroOrOne) => std::cmp::Ordering::Equal,
-            (Operator::ZeroOrOne, _) => std::cmp::Ordering::Less,
-            (_, Operator::ZeroOrOne) => std::cmp::Ordering::Greater,
-
-            (Operator::ZeroOrMore, Operator::ZeroOrMore) => std::cmp::Ordering::Equal,
-            (Operator::ZeroOrMore, _) => std::cmp::Ordering::Less,
-            (_, Operator::ZeroOrMore) => std::cmp::Ordering::Greater,
-
-            (Operator::OneOrMore, Operator::OneOrMore) => std::cmp::Ordering::Equal,
-            (Operator::OneOrMore, _) => std::cmp::Ordering::Less,
-            (_, Operator::OneOrMore) => std::cmp::Ordering::Greater,
-
-            (Operator::Not, Operator::Not) => std::cmp::Ordering::Equal,
-        }
-    }
-}
-
-impl fmt::Display for Operator {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            Operator::Exact(n) => write!(f, "Exact({n})"),
-            Operator::Range(min, max) => write!(f, "Range({min}, {max})"),
-            Operator::AtLeast(n) => write!(f, "AtLeast({n})"),
-            Operator::AtMost(n) => write!(f, "AtMost({n})"),
-            Operator::ZeroOrOne => write!(f, "ZeroOrOne"),
-            Operator::ZeroOrMore => write!(f, "ZeroOrMore"),
-            Operator::OneOrMore => write!(f, "OneOrMore"),
-            Operator::Not => write!(f, "Not"),
-        }
-    }
-}
-
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub(crate) struct AttrValue<A = TokenAttributeIndex> {
     pub attr: A,
@@ -520,35 +438,15 @@ impl<A: Ord> Ord for AttrValue<A> {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub(crate) struct TokenSpec {
-    pub op: Operator,
     pub attrs: Vec<SymbolicAttrValue>,
-}
-
-// Deterministic ordering for TokenSpec to enable consistent sorting
-impl PartialOrd for TokenSpec {
-    fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
-        Some(self.cmp(other))
-    }
-}
-
-impl Ord for TokenSpec {
-    fn cmp(&self, other: &Self) -> std::cmp::Ordering {
-        // Compare by operator first, then by attributes lexicographically
-        self.op
-            .cmp(&other.op)
-            .then_with(|| self.attrs.cmp(&other.attrs))
-    }
 }
 
 impl TokenSpec {
     /// Creates an epsilon transition (empty transition that doesn't consume input)
     pub fn epsilon() -> Self {
-        TokenSpec {
-            op: Operator::Exact(0),
-            attrs: Vec::new(),
-        }
+        TokenSpec { attrs: Vec::new() }
     }
 }
 
@@ -629,10 +527,7 @@ impl TransitionLabel {
         };
         Self {
             kind: TransitionKind::Assert(assertion),
-            spec: TokenSpec {
-                op: Operator::Exact(0),
-                attrs,
-            },
+            spec: TokenSpec { attrs },
         }
     }
 
@@ -661,7 +556,7 @@ impl fmt::Display for TransitionLabel {
 
 impl fmt::Display for TokenSpec {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "{}({:?})", self.op, self.attrs)
+        write!(f, "Token({:?})", self.attrs)
     }
 }
 
@@ -757,15 +652,14 @@ mod tests {
     use std::cmp::Ordering;
 
     #[test]
-    fn state_info_ord_agrees_with_eq_on_entry_position() {
+    fn state_info_ord_agrees_with_eq_across_all_fields() {
         let earlier = StateInfo {
             state: 3,
             start_token: 1,
-            position: 4,
-            entry_position: 2,
+            position: 2,
         };
         let later = StateInfo {
-            entry_position: 4,
+            position: 4,
             ..earlier
         };
 

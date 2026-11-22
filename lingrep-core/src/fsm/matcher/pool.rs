@@ -72,7 +72,6 @@ mod tests {
         assert!(
             predicate_scratch_capacity() > 0
                 || warmed.visited > 0
-                || warmed.dfs_stack > 0
                 || warmed.closure_seeds > 0
                 || warmed.token_marks > 0
                 || warmed.frontier > 0
@@ -86,7 +85,6 @@ mod tests {
             exec_scratch_capacities(),
             ExecScratchCapacities {
                 visited: 0,
-                dfs_stack: 0,
                 closure_seeds: 0,
                 token_marks: 0,
                 frontier: 0,

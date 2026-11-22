@@ -256,125 +256,14 @@ impl StateMachineBuilder {
         current_state: usize,
         _pattern_name: &CompactString,
     ) -> Result<Vec<usize>, String> {
-        let final_state = match &token_spec.op {
-            Operator::ZeroOrOne => self.create_optional_transition(token_spec, current_state),
-            Operator::Not => self.create_simple_transition(token_spec, current_state),
-            Operator::Exact(n) => self.create_exact_chain(token_spec, current_state, *n),
-            Operator::Range(min, max) => {
-                self.create_range_chain(token_spec, current_state, *min, *max)
-            }
-            Operator::AtLeast(min) => self.create_at_least_chain(token_spec, current_state, *min),
-            Operator::AtMost(max) => self.create_at_most_chain(token_spec, current_state, *max),
-            Operator::ZeroOrMore => self.create_kleene_chain(token_spec, current_state, false),
-            Operator::OneOrMore => self.create_kleene_chain(token_spec, current_state, true),
-        };
+        let next = self.allocate_state();
+        self.add_transition(current_state, token_spec.clone(), next);
 
         // Do NOT add pattern name here - it will be added by the parent context
         // (process_and_sequence or add_pattern)
         // This prevents intermediate states from getting pattern names
 
-        Ok(vec![final_state])
-    }
-
-    fn create_simple_transition(&mut self, spec: &TokenSpec, start: usize) -> usize {
-        let next = self.allocate_state();
-        self.add_transition(start, spec.clone(), next);
-        next
-    }
-
-    fn create_optional_transition(&mut self, spec: &TokenSpec, start: usize) -> usize {
-        let next = self.allocate_state();
-        self.add_transition(start, Self::single_token_spec(spec), next);
-        self.add_epsilon(start, next);
-        next
-    }
-
-    fn create_exact_chain(&mut self, spec: &TokenSpec, start: usize, n: usize) -> usize {
-        let spec = Self::single_token_spec(spec);
-        let mut current = start;
-        for _ in 0..n {
-            let next = self.allocate_state();
-            self.add_transition(current, spec.clone(), next);
-            current = next;
-        }
-        current
-    }
-
-    fn create_range_chain(
-        &mut self,
-        spec: &TokenSpec,
-        start: usize,
-        min: usize,
-        max: usize,
-    ) -> usize {
-        let spec = Self::single_token_spec(spec);
-        let mut current = start;
-        for _ in 0..min {
-            let next = self.allocate_state();
-            self.add_transition(current, spec.clone(), next);
-            current = next;
-        }
-        let remaining = max - min;
-        for _ in 0..remaining {
-            let optional_state = self.allocate_state();
-            self.add_transition(current, spec.clone(), optional_state);
-            self.add_epsilon(current, optional_state);
-            current = optional_state;
-        }
-        current
-    }
-
-    fn create_at_least_chain(&mut self, spec: &TokenSpec, start: usize, min: usize) -> usize {
-        let spec = Self::single_token_spec(spec);
-        let mut current = start;
-        for _ in 0..min {
-            let next = self.allocate_state();
-            self.add_transition(current, spec.clone(), next);
-            current = next;
-        }
-        self.add_transition(current, spec.clone(), current);
-        current
-    }
-
-    fn create_at_most_chain(&mut self, spec: &TokenSpec, start: usize, max: usize) -> usize {
-        let spec = Self::single_token_spec(spec);
-        let mut states = vec![start];
-        for _ in 0..max {
-            let mut next_states = Vec::new();
-            let new_state = self.allocate_state();
-            for &state in &states {
-                self.add_transition(state, spec.clone(), new_state);
-                self.add_epsilon(state, new_state);
-                next_states.push(new_state);
-            }
-            states = next_states;
-        }
-        states.into_iter().next().unwrap_or(start)
-    }
-
-    fn create_kleene_chain(&mut self, spec: &TokenSpec, start: usize, one_or_more: bool) -> usize {
-        let spec = Self::single_token_spec(spec);
-        let loop_state = self.allocate_state();
-        self.add_transition(start, spec.clone(), loop_state);
-        self.add_transition(loop_state, spec.clone(), loop_state);
-        if one_or_more {
-            let exit_state = self.allocate_state();
-            self.add_epsilon(loop_state, exit_state);
-            exit_state
-        } else {
-            self.add_epsilon(start, loop_state);
-            loop_state
-        }
-    }
-
-    /// Quantifier topology is represented by the generated states and edges.
-    /// Each consuming edge therefore consumes exactly one token; retaining the
-    /// original quantifier on every edge would apply repetition twice.
-    fn single_token_spec(spec: &TokenSpec) -> TokenSpec {
-        TokenSpec {
-            op: Operator::Exact(1),
-            attrs: spec.attrs.clone(),
-        }
+        Ok(vec![next])
     }
 }
 
@@ -413,7 +302,6 @@ mod state_machine_data_tests {
     fn test_builder_add_transition() {
         let mut builder = StateMachineBuilder::new();
         let spec = TokenSpec {
-            op: Operator::Exact(1),
             attrs: vec![AttrValue {
                 attr: crate::token_match::TokenAttributeIndex::Pos.into(),
                 value: AttrValueType::Single(CompactString::from("NOUN")),
@@ -446,7 +334,6 @@ mod state_machine_data_tests {
 
         let element = PatternElement::And(vec![
             PatternElement::TokenSpec(TokenSpec {
-                op: Operator::Exact(1),
                 attrs: vec![AttrValue {
                     attr: crate::token_match::TokenAttributeIndex::Pos.into(),
                     value: AttrValueType::Single(CompactString::from("NOUN")),
@@ -454,7 +341,6 @@ mod state_machine_data_tests {
                 }],
             }),
             PatternElement::TokenSpec(TokenSpec {
-                op: Operator::Exact(1),
                 attrs: vec![AttrValue {
                     attr: crate::token_match::TokenAttributeIndex::Pos.into(),
                     value: AttrValueType::Single(CompactString::from("VERB")),
@@ -474,7 +360,6 @@ mod state_machine_data_tests {
     fn test_process_token_spec_simple() {
         let mut builder = StateMachineBuilder::new();
         let spec = TokenSpec {
-            op: Operator::Exact(1),
             attrs: vec![AttrValue {
                 attr: crate::token_match::TokenAttributeIndex::Pos.into(),
                 value: AttrValueType::Single(CompactString::from("NOUN")),
@@ -487,22 +372,5 @@ mod state_machine_data_tests {
             .unwrap();
         assert_eq!(result.len(), 1);
         assert_eq!(result[0], 1);
-    }
-
-    #[test]
-    fn test_create_exact_chain() {
-        let mut builder = StateMachineBuilder::new();
-        let spec = TokenSpec {
-            op: Operator::Exact(3),
-            attrs: vec![AttrValue {
-                attr: crate::token_match::TokenAttributeIndex::Pos.into(),
-                value: AttrValueType::Single(CompactString::from("NOUN")),
-                complement: false,
-            }],
-        };
-
-        let final_state = builder.create_exact_chain(&spec, 0, 3);
-        assert_eq!(final_state, 3);
-        assert_eq!(builder.next_state_id, 4);
     }
 }

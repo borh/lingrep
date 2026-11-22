@@ -2,9 +2,7 @@
 
 use crate::fsm::matcher::CompiledCatalog;
 use crate::fsm::state_machine::StateMachineBuilder;
-use crate::fsm::{
-    AttrValueType, Operator, Pattern, PatternElement, Patterns, SymbolicAttrValue, TokenSpec,
-};
+use crate::fsm::{AttrValueType, Pattern, PatternElement, Patterns, SymbolicAttrValue, TokenSpec};
 use compact_str::CompactString;
 use indexmap::IndexMap;
 use serde_json::Value;
@@ -201,15 +199,13 @@ impl<'a> CompatibilityLowerer<'a> {
                     self.charge_expansion_visit(source_label)?;
                     match expr {
                         BoundExpr::Token(predicate) => {
-                            let operator = Operator::Exact(1);
                             let predicate_owned_bytes =
                                 predicate_owned_bytes(predicate, source_label)?;
-                            let cost = token_cost(operator, predicate_owned_bytes, source_label)?;
+                            let cost = token_cost(predicate_owned_bytes);
                             self.ensure_cost(cost, source_label)?;
                             self.charge_generated_owned_bytes(predicate_owned_bytes, source_label)?;
                             values.push(LoweredExpr {
                                 element: PatternElement::TokenSpec(TokenSpec {
-                                    op: operator,
                                     attrs: predicate.to_vec(),
                                 }),
                                 cost,
@@ -521,48 +517,14 @@ pub(super) fn lower_to_nfa(
     CompatibilityLowerer::new(program, limits, assertion_occurrences).lower(execution)
 }
 
-fn token_cost(
-    operator: Operator,
-    predicate_owned_bytes: usize,
-    source_label: &Arc<str>,
-) -> Result<NfaCost, CompileError> {
-    let (states, transitions, consuming_transitions) = match operator {
-        Operator::Exact(count) => (count, count, count),
-        Operator::Range(min, max) => {
-            let optional = max.checked_sub(min).ok_or_else(|| {
-                diagnostic_error(
-                    source_label,
-                    DiagnosticCode::InvalidQuantifier,
-                    "quantifier minimum exceeds its maximum",
-                )
-            })?;
-            (
-                max,
-                checked_add(min, checked_mul(optional, 2, source_label)?, source_label)?,
-                max,
-            )
-        }
-        Operator::AtLeast(min) => {
-            let consuming_transitions = checked_add(min, 1, source_label)?;
-            (min, consuming_transitions, consuming_transitions)
-        }
-        Operator::AtMost(max) => (max, checked_mul(max, 2, source_label)?, max),
-        Operator::ZeroOrOne => (1, 2, 1),
-        Operator::ZeroOrMore => (1, 3, 2),
-        Operator::OneOrMore => (2, 3, 2),
-        Operator::Not => (1, 1, 1),
-    };
-    Ok(NfaCost {
-        states,
-        transitions,
+fn token_cost(predicate_owned_bytes: usize) -> NfaCost {
+    NfaCost {
+        states: 1,
+        transitions: 1,
         finals: 1,
         element_owned_bytes: predicate_owned_bytes,
-        transition_owned_bytes: checked_owned_mul(
-            predicate_owned_bytes,
-            consuming_transitions,
-            source_label,
-        )?,
-    })
+        transition_owned_bytes: predicate_owned_bytes,
+    }
 }
 
 fn repeat_cost(

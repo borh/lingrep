@@ -1,18 +1,14 @@
 //! Advancement kernel: the per-token NFA simulation loop.
 //!
-//! Provides the `Matcher` struct with NFA simulation, state transition logic,
-//! and backtracking for pattern matching. Emission (`MatchSink`) lives in
-//! `emit.rs`; the compile-time spawn table lives in `spawn.rs`; the dense
-//! machine view lives in `dense.rs`. This module owns advancing the
-//! frontier: `find_matches_internal`, `handle_state_transition`,
-//! `get_action`, and `epsilon_closure_with`.
+//! Provides the `Matcher` struct with NFA simulation and epsilon closure for
+//! pattern matching. Emission (`MatchSink`) lives in `emit.rs`; the
+//! compile-time spawn table lives in `spawn.rs`; the dense machine view lives
+//! in `dense.rs`. This module owns advancing the frontier:
+//! `find_matches_internal` and `epsilon_closure_into`.
 
 use super::dense::DenseMachine;
 use super::pool::{FastBuild, HASHSET_POOL, StateSet};
-use super::predicate::{
-    CompiledPositionAssertion, PREDICATE_SITE_DENSE_ADVANCE, PREDICATE_SITE_DENSE_MAIN,
-    PREDICATE_SITE_DENSE_MATCH_CLOSURE, PredicateSession,
-};
+use super::predicate::{CompiledPositionAssertion, PREDICATE_SITE_DENSE_MAIN, PredicateSession};
 use super::resource::{MatchResourceError, OutputBudget};
 use super::spawn;
 use crate::fsm::types::*;
@@ -31,10 +27,9 @@ fn form_key() -> &'static AttributeKey {
 
 #[derive(Default)]
 pub(crate) struct ExecScratch {
-    /// Generation-stamped DFS visited marks (state id -> generation).
+    /// Generation-stamped visited marks (state id -> generation).
     visited: Vec<u32>,
     visit_generation: u32,
-    dfs_stack: Vec<usize>,
     /// Closure seeds, reordered in place so equal-provenance seeds are
     /// contiguous. Held in scratch so grouping allocates nothing per call.
     closure_seeds: Vec<StateInfo>,
@@ -75,7 +70,6 @@ thread_local! {
 #[derive(Debug, PartialEq, Eq)]
 pub(crate) struct ExecScratchCapacities {
     pub visited: usize,
-    pub dfs_stack: usize,
     pub closure_seeds: usize,
     pub token_marks: usize,
     pub frontier: usize,
@@ -89,7 +83,6 @@ pub(crate) fn exec_scratch_capacities() -> ExecScratchCapacities {
         let scratch = cell.borrow();
         ExecScratchCapacities {
             visited: scratch.visited.capacity(),
-            dfs_stack: scratch.dfs_stack.capacity(),
             closure_seeds: scratch.closure_seeds.capacity(),
             token_marks: scratch.token_marks.capacity(),
             frontier: scratch.frontier.capacity(),
@@ -105,8 +98,6 @@ pub(crate) fn clear_exec_scratch() {
         let mut scratch = cell.borrow_mut();
         scratch.visited.clear();
         scratch.visited.shrink_to_fit();
-        scratch.dfs_stack.clear();
-        scratch.dfs_stack.shrink_to_fit();
         scratch.closure_seeds.clear();
         scratch.closure_seeds.shrink_to_fit();
         scratch.token_marks.clear();
@@ -146,14 +137,6 @@ impl ExecScratch {
             self.visited.fill(0);
             self.visit_generation = 1;
         }
-    }
-
-    /// Begin a DFS: bump the generation so previous visited marks expire.
-    #[inline(always)]
-    fn begin_dfs(&mut self, start_state: usize) {
-        self.begin_generation();
-        self.dfs_stack.clear();
-        self.dfs_stack.push(start_state);
     }
 
     /// Open a `start_token` counting generation over `token_count` tokens.
@@ -514,27 +497,16 @@ impl Matcher {
                         );
 
                         trace!(
-                            "    Transition: {}→{} {:?} matched={} attrs={:?}",
-                            current_state.state,
-                            next_state_id,
-                            token_spec.op,
-                            matched,
-                            token_spec.attrs
+                            "    Transition: {}→{} matched={} attrs={:?}",
+                            current_state.state, next_state_id, matched, token_spec.attrs
                         );
 
-                        // An empty predicate is the epsilon-shaped exception.
-                        if !matched && !token_spec.attrs.is_empty() {
-                            trace!("      SKIP: token doesn't match non-epsilon transition");
+                        if !matched {
+                            trace!("      SKIP: token doesn't match transition");
                             continue;
                         }
 
-                        debug!(
-                            "Transition: {}→{} {:?} {}",
-                            current_state.state,
-                            next_state_id,
-                            token_spec.op,
-                            if matched { "✓" } else { "✗" }
-                        );
+                        debug!("Transition: {}→{} ✓", current_state.state, next_state_id);
 
                         if let Some(collector) = trace_collector.as_mut() {
                             collector(
@@ -546,19 +518,16 @@ impl Matcher {
                             );
                         }
 
-                        Self::handle_state_transition(
-                            matched,
-                            token_spec,
-                            *next_state_id,
-                            current_state,
-                            index,
-                            &mut next_states,
-                            &mut sink,
-                            dense,
-                            predicates,
-                            tokens,
-                            &mut scratch,
-                        )?;
+                        let start_token = if current_state.state == 0 {
+                            index
+                        } else {
+                            current_state.start_token
+                        };
+                        next_states.insert(StateInfo {
+                            state: *next_state_id,
+                            start_token,
+                            position: index + 1,
+                        });
                     }
                 }
             }
@@ -670,215 +639,13 @@ impl Matcher {
         predicates.matches_at_site::<SITE, S>(predicate_id, tokens, position)
     }
 
-    fn handle_state_transition<S: TokenSequence + ?Sized>(
-        matched: bool,
-        token_spec: &TokenSpec,
-        next_state: usize,
-        current_state: &StateInfo,
-        token_index: usize,
-        next_states: &mut StateSet,
-        sink: &mut super::emit::MatchSink,
-        dense: &DenseMachine,
-        predicates: &PredicateSession<'_>,
-        tokens: &S,
-        scratch: &mut ExecScratch,
-    ) -> Result<(), MatchResourceError> {
-        #[cfg(test)]
-        trace!(
-            "    handle_state_transition: matched={}, op={:?}, count={}, is_final={}",
-            matched,
-            token_spec.op,
-            current_state.position - current_state.start_token,
-            dense.final_pattern(current_state.state).is_some()
-        );
-
-        debug!(
-            "get_action: matched={}, op={:?}, count={}, is_final={}",
-            matched,
-            token_spec.op,
-            current_state.position - current_state.start_token,
-            dense.final_pattern(current_state.state).is_some()
-        );
-
-        // If the token doesn't match and this isn't an epsilon transition, reject immediately
-        if !matched && !token_spec.attrs.is_empty() {
-            #[cfg(test)]
-            trace!("    Rejecting transition - token doesn't match pattern");
-            return Ok(());
-        }
-
-        let action = Self::get_action(matched, token_spec, current_state, dense);
-
-        #[cfg(test)]
-        trace!("    Action: {action:?}");
-
-        match action {
-            Action::Match | Action::MatchExtend => {
-                if let Some(fs_name) = dense.final_pattern(next_state) {
-                    // Epsilon transitions reach the final state without consuming the
-                    // current token. Preserve the active state's exclusive consumed
-                    // position so a nonmatching repetition terminator is not included.
-                    let end_pos = if Self::is_epsilon_transition(token_spec) {
-                        current_state.position
-                    } else {
-                        token_index + 1
-                    };
-                    sink.emit(fs_name, current_state.start_token, end_pos)?;
-                }
-
-                let start_token = if current_state.state == 0 {
-                    token_index
-                } else {
-                    current_state.start_token
-                };
-
-                #[cfg(test)]
-                trace!(
-                    "      Setting start_token to {} (was {})",
-                    start_token, current_state.start_token
-                );
-
-                // An epsilon advance survives only if its closure can consume this token.
-                if token_spec.attrs.is_empty() && token_index < tokens.len() {
-                    let mut can_match = false;
-                    scratch.begin_dfs(next_state);
-
-                    while let Some(check_state) = scratch.dfs_stack.pop() {
-                        if !scratch.mark_visited(check_state) {
-                            continue;
-                        }
-
-                        for (i, (spec, next)) in dense.transitions(check_state).iter().enumerate() {
-                            if spec.attrs.is_empty() {
-                                scratch.dfs_stack.push(*next);
-                            } else if Self::spec_matches_at::<PREDICATE_SITE_DENSE_MATCH_CLOSURE, _>(
-                                dense,
-                                predicates,
-                                check_state,
-                                i,
-                                spec,
-                                tokens,
-                                token_index,
-                            ) {
-                                can_match = true;
-                                break;
-                            }
-                        }
-
-                        if can_match {
-                            break;
-                        }
-                    }
-
-                    if !can_match && next_state != 0 {
-                        #[cfg(test)]
-                        trace!(
-                            "      Skipping next state {next_state} - cannot match current token"
-                        );
-                        return Ok(());
-                    }
-                }
-
-                // Epsilon transitions do not advance either consumed position.
-                let (new_position, new_entry_position) = if Self::is_epsilon_transition(token_spec)
-                {
-                    (current_state.position, current_state.position)
-                } else {
-                    (token_index + 1, token_index + 1)
-                };
-                let new_state = StateInfo {
-                    state: next_state,
-                    start_token,
-                    position: new_position,
-                    entry_position: new_entry_position,
-                };
-
-                #[cfg(test)]
-                trace!("      Adding next state: {new_state:?}");
-
-                next_states.insert(new_state);
-
-                if action == Action::MatchExtend {
-                    let extend_state = StateInfo {
-                        state: current_state.state,
-                        start_token: current_state.start_token,
-                        position: token_index + 1,
-                        entry_position: current_state.entry_position,
-                    };
-
-                    #[cfg(test)]
-                    trace!("      Also keeping current state: {extend_state:?}");
-
-                    next_states.insert(extend_state);
-                }
-            }
-            Action::Advance => {
-                let start_token = if current_state.state == 0 {
-                    if matched || token_spec.attrs.is_empty() {
-                        token_index
-                    } else {
-                        current_state.start_token
-                    }
-                } else {
-                    current_state.start_token
-                };
-
-                // An initial epsilon transition is viable only if its target can consume here.
-                if current_state.state == 0
-                    && token_spec.attrs.is_empty()
-                    && token_index < tokens.len()
-                {
-                    let can_match =
-                        dense
-                            .transitions(next_state)
-                            .iter()
-                            .enumerate()
-                            .any(|(i, (spec, _))| {
-                                if spec.attrs.is_empty() {
-                                    return false;
-                                }
-
-                                Self::spec_matches_at::<PREDICATE_SITE_DENSE_ADVANCE, _>(
-                                    dense,
-                                    predicates,
-                                    next_state,
-                                    i,
-                                    spec,
-                                    tokens,
-                                    token_index,
-                                )
-                            });
-
-                    if !can_match {
-                        #[cfg(test)]
-                        trace!(
-                            "      Skipping next state {next_state} - cannot match current token"
-                        );
-                        return Ok(());
-                    }
-                }
-
-                let new_state = StateInfo {
-                    state: next_state,
-                    start_token,
-                    position: token_index + 1,
-                    entry_position: token_index + 1,
-                };
-                next_states.insert(new_state);
-            }
-            Action::Reject => {}
-        }
-        Ok(())
-    }
-
     /// Epsilon closure of `states`, appended to `closure`.
     ///
-    /// [`Self::create_epsilon_state`] copies `start_token` and sets both
-    /// `position` and `entry_position` to the source's `position`, so a state
-    /// derived from a seed carries that seed's provenance and reaches a fixed
-    /// point after one hop. Reachability is provenance-independent too: an
-    /// `Assert` edge is evaluated at this call's single token position, not at
-    /// anything the seed carries.
+    /// [`Self::create_epsilon_state`] copies `start_token` and `position`, so a
+    /// state derived from a seed carries that seed's provenance and reaches a
+    /// fixed point after one hop. Reachability is provenance-independent too:
+    /// an `Assert` edge is evaluated at this call's single token position, not
+    /// at anything the seed carries.
     ///
     /// Together those make the traversal deduplicable by **state id alone**,
     /// once per provenance group, against the generation-stamped `visited`
@@ -887,11 +654,8 @@ impl Matcher {
     /// 99,976,726 successes over `patterns/sfe.lx` --- so it was being paid
     /// for as a deduplicator and used as a container.
     ///
-    /// The emitted multiset is unchanged. Within a group a seed already at
-    /// `entry_position == position` is the same tuple an epsilon hop would
-    /// derive, so it claims its id up front; a seed at `entry_position !=
-    /// position` does not, because the derived tuple is distinct and both are
-    /// retained. Order does change: seeds are grouped rather than
+    /// The emitted multiset is unchanged. Within a group each seed claims its
+    /// id up front. Order does change: seeds are grouped rather than
     /// visited in hash order. Frontier order is not observable --- successors
     /// land in a deduplicating `next_states`, and matches land in a
     /// `MatchSink` keyed on `(pattern, start, end)`.
@@ -962,9 +726,7 @@ impl Matcher {
             let mut cursor = closure.len();
             for seed in &seeds[group_start..group_end] {
                 closure.push(*seed);
-                if seed.entry_position == seed.position {
-                    scratch.mark_visited(seed.state);
-                }
+                scratch.mark_visited(seed.state);
             }
 
             while cursor < closure.len() {
@@ -1008,111 +770,11 @@ impl Matcher {
         scratch.closure_seeds = seeds;
     }
 
-    fn get_action(
-        matched: bool,
-        token_spec: &TokenSpec,
-        current_state: &StateInfo,
-        dense: &DenseMachine,
-    ) -> Action {
-        let is_final = dense.final_pattern(current_state.state).is_some();
-        // Count tokens consumed since entering this transition, not since match start.
-        let count = current_state.position - current_state.entry_position;
-
-        match token_spec.op {
-            Operator::Exact(n) => {
-                // `count` is local to this transition. At `n`, a matching
-                // token completes it; a nonmatch cannot extend it.
-                if count > n {
-                    Action::Reject
-                } else if count == n && matched {
-                    Action::Match
-                } else if count == n {
-                    Action::Reject
-                } else if matched {
-                    Action::Advance
-                } else {
-                    Action::Reject
-                }
-            }
-            Operator::Range(min, max) => {
-                if count >= max {
-                    Action::Match
-                } else if count >= min && matched {
-                    Action::MatchExtend
-                } else if matched {
-                    Action::Advance
-                } else {
-                    Action::Reject
-                }
-            }
-            Operator::AtLeast(n) => {
-                if count >= n && matched {
-                    Action::MatchExtend
-                } else if count >= n {
-                    Action::Match
-                } else if matched {
-                    Action::Advance
-                } else {
-                    Action::Reject
-                }
-            }
-            Operator::AtMost(n) => {
-                if count >= n {
-                    Action::Match
-                } else if matched {
-                    Action::MatchExtend
-                } else {
-                    Action::Advance
-                }
-            }
-            Operator::ZeroOrMore => {
-                if matched {
-                    Action::MatchExtend
-                } else if is_final {
-                    Action::Match
-                } else {
-                    Action::Advance
-                }
-            }
-            Operator::OneOrMore => {
-                if matched && count >= 1 {
-                    Action::MatchExtend
-                } else if matched {
-                    Action::Advance
-                } else if count >= 1 {
-                    Action::Match
-                } else {
-                    Action::Reject
-                }
-            }
-            Operator::ZeroOrOne => {
-                if matched || is_final {
-                    Action::Match
-                } else {
-                    Action::Advance
-                }
-            }
-            _ => {
-                if matched {
-                    Action::Advance
-                } else {
-                    Action::Reject
-                }
-            }
-        }
-    }
-
-    fn is_epsilon_transition(token_spec: &TokenSpec) -> bool {
-        token_spec.attrs.is_empty() && token_spec.op == Operator::Exact(0)
-    }
-
     fn create_epsilon_state(current: &StateInfo, next_state: usize) -> StateInfo {
-        // For epsilon transitions, entry_position = position (no token consumed)
         StateInfo {
             state: next_state,
             start_token: current.start_token,
             position: current.position,
-            entry_position: current.position, // entry_position = position for epsilon
         }
     }
 }
@@ -1124,14 +786,11 @@ mod filter_tests {
 
     #[test]
     fn duplicate_final_state_ids_resolve_to_the_lexicographically_first_pattern() {
-        use crate::fsm::types::{
-            AttrValue, AttrValueType, FinalState, Operator, TokenSpec, TransitionLabel,
-        };
+        use crate::fsm::types::{AttrValue, AttrValueType, FinalState, TokenSpec, TransitionLabel};
         use crate::token_match::{TokenAttributeIndex, TokenInfo};
         use std::collections::{HashMap, HashSet};
 
         let spec = TokenSpec {
-            op: Operator::Exact(1),
             attrs: vec![AttrValue {
                 attr: TokenAttributeIndex::Orth.into(),
                 value: AttrValueType::Single("a".into()),
