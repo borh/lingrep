@@ -19,9 +19,9 @@ PATTERN = "particle := [text=の].\n"
 SCOPE = '@document.ndc contains "914"'
 
 
-def run(binary, *args):
+def run(binary, *args, timeout=600):
     result = subprocess.run(
-        [binary, *map(str, args)], capture_output=True, timeout=600, check=False
+        [binary, *map(str, args)], capture_output=True, timeout=timeout, check=False
     )
     if result.returncode:
         raise RuntimeError(f"ling {' '.join(map(str, args))}: {result.stderr.decode()}")
@@ -150,7 +150,7 @@ def main():
     parser = argparse.ArgumentParser(
         description=__doc__,
         usage="%(prog)s binary (--corpus CORPUS | --archive ARCHIVE"
-        " [-- ANALYZER_OPTION ...])",
+        " [--build-timeout SECONDS] [-- ANALYZER_OPTION ...])",
         epilog="With --archive, the options after -- select the analyzer. They are"
         " passed unchanged to the direct `ling matches` run and to `ling corpus"
         " build`, for example: -- --analyzer sudachi --sudachi-dict system_core.dic",
@@ -165,6 +165,12 @@ def main():
         type=Path,
         help="Real Soranoha plaintext ZIP to prepare and validate",
     )
+    parser.add_argument(
+        "--build-timeout",
+        type=int,
+        metavar="SECONDS",
+        help="Deadline for ling corpus build when validating an archive (default: 600)",
+    )
     argv = sys.argv[1:]
     analyzer_options = []
     if "--" in argv:
@@ -175,6 +181,8 @@ def main():
         parser.error(
             "analyzer options require --archive: a prepared corpus records its analyzer"
         )
+    if args.build_timeout is not None and (not args.archive or args.build_timeout < 1):
+        parser.error("--build-timeout requires --archive and a positive number of seconds")
     with tempfile.TemporaryDirectory(prefix="ling-soranoha-") as directory:
         scratch = Path(directory)
         corpus = args.corpus.resolve() if args.corpus else scratch / "sample.lingcorpus"
@@ -193,6 +201,7 @@ def main():
                 "--output",
                 corpus,
                 archive,
+                timeout=args.build_timeout or 600,
             )
             assert direct == matches(args.binary, "--corpus", corpus), (
                 "Direct/prepared analyzer or match records differ"

@@ -129,7 +129,10 @@ using that Soranoha corpus.
 
 The check uses Vibrato unless analyzer options follow `--`. The script passes
 them unchanged to the direct `ling matches` run and to `ling corpus build`, so
-both paths use the same analyzer. For Sudachi:
+both paths use the same analyzer. To allow more than 600 seconds for the
+build, pass `--build-timeout SECONDS` before `--`.
+
+For Sudachi:
 
 ```bash
 python3 scripts/check-soranoha.py target/debug/ling \
