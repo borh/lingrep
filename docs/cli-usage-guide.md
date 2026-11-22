@@ -2572,6 +2572,11 @@ identify the dictionary it came from. `--analyzer-dir DIR` adds the size of a
 
 ### Pruning superseded artifacts
 
+When a canonical build finds readable realizations of the same source under
+different analysis settings, stderr reports how many apparent bytes each
+retains. Preview cleanup with `ling corpus prune --source` using the build's
+analyzer and reader options. Review the plan before adding `--execute`.
+
 ```bash
 ling corpus prune --source corpora/works.md -d unidic-cwj.dic            # lists only
 ling corpus prune --source corpora/works.md -d unidic-cwj.dic --execute  # deletes

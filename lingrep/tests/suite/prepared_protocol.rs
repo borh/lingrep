@@ -1999,6 +1999,63 @@ fn corpus_build_without_output_reuses_an_existing_matching_artifact() {
     );
 }
 
+#[test]
+fn corpus_build_reports_each_retained_siblings_size_and_the_prune_plan_command() {
+    let dictionary = MiniDictionary::new();
+    let directory = tempfile::tempdir().unwrap();
+    let source = directory.path().join("work's corpus.md");
+    fs::write(&source, "猫。\n").unwrap();
+    let build = |profile: &str| {
+        let output = lingrep()
+            .args(["corpus", "build", "--dict-path"])
+            .arg(dictionary.path())
+            .args(["--profile", profile])
+            .arg(&source)
+            .output()
+            .unwrap();
+        assert!(
+            output.status.success(),
+            "{}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        output
+    };
+    build("text");
+    let before = artifact_directories(directory.path());
+    assert_eq!(before.len(), 1);
+    let retained = &before[0];
+    let bytes = lingrep_corpus::artifact_bytes(retained).unwrap();
+
+    let rebuilt = build("morphology");
+    let diagnostics = String::from_utf8(rebuilt.stderr).unwrap();
+    assert!(
+        diagnostics.contains(&format!("{bytes} apparent bytes retained")),
+        "{diagnostics}"
+    );
+    assert!(
+        diagnostics.contains(&format!(
+            "ling corpus prune --source='{}'",
+            source.to_str().unwrap().replace('\'', "'\\''")
+        )),
+        "{diagnostics}"
+    );
+    assert!(
+        diagnostics.contains("same analyzer and reader options"),
+        "{diagnostics}"
+    );
+    assert!(diagnostics.contains("--execute"), "{diagnostics}");
+    assert_eq!(artifact_directories(directory.path()).len(), 2);
+    assert_eq!(lingrep_corpus::artifact_bytes(retained).unwrap(), bytes);
+
+    let reused = build("morphology");
+    assert!(
+        !String::from_utf8(reused.stderr)
+            .unwrap()
+            .contains("ling corpus prune")
+    );
+    assert_eq!(artifact_directories(directory.path()).len(), 2);
+}
+
 /// A changed source has a different analysis identity and therefore a
 /// different canonical name, so it publishes beside the old artifact rather
 /// than contesting it.

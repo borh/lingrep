@@ -18,7 +18,7 @@ use lingrep_corpus::{
     AnalysisInputs, BuildConfig, BuildOutcome, CorpusArtifact, CorpusBuilder,
     DictionaryFingerprint, ObservedSources, ReaderIdentity, ReadingSidecarWriter, Realization,
     RealizationRequest, SiblingScan, SourceObservation, TokenSchemaIdentity, TrustClass,
-    canonical_artifact_path, derive_analysis_identity,
+    artifact_bytes, canonical_artifact_path, derive_analysis_identity,
 };
 
 use super::query_support::{
@@ -621,18 +621,38 @@ fn resolve_destination(
         }
         BuildOutcome::SiblingOf(siblings) => {
             for sibling in &siblings {
+                let retained_size = artifact_bytes(&sibling.path).map_or_else(
+                    |_| "retained size unavailable".to_owned(),
+                    |bytes| format!("{bytes} apparent bytes retained"),
+                );
                 config
                     .stderr
                     .diagnostic(|writer| {
                         writeln!(
                             writer,
-                            "note: {} realizes the same source under a different analysis ({})",
+                            "note: {} realizes the same source under a different analysis ({}), {retained_size}",
                             sibling.path.display(),
                             describe_difference(sibling, analysis, analyzer)
                         )
                     })
                     .map_err(CliError::Io)?;
             }
+            let source_arg = root
+                .to_str()
+                .filter(|source| !source.chars().any(char::is_control))
+                .map_or_else(
+                    || "--source SOURCE".to_owned(),
+                    |source| format!("--source={}", crate::examples::quote_posix(source)),
+                );
+            config
+                .stderr
+                .diagnostic(|writer| {
+                    writeln!(
+                        writer,
+                        "note: preview cleanup with `ling corpus prune {source_arg}` using the same analyzer and reader options. Add `--execute` to apply the reviewed plan."
+                    )
+                })
+                .map_err(CliError::Io)?;
             Ok(Some(Destination::Fresh(destination)))
         }
         BuildOutcome::Fresh => Ok(Some(Destination::Fresh(destination))),
