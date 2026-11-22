@@ -1,8 +1,12 @@
 //! Pure display projection over provenance composed by `lingrep-corpus`.
 
 use std::collections::BTreeSet;
+use std::ops::ControlFlow;
 
-use lingrep_corpus::{ActiveRegion, SentenceProvenance};
+use lingrep_core::corpus::{MetadataScalar, MetadataValue};
+use lingrep_corpus::{
+    ActiveRegion, CorpusError, DocumentMetadataRow, ProvenanceView, SentenceProvenance,
+};
 
 /// One metadata key and its ordered display values.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -108,6 +112,126 @@ fn metadata_display_value(value: serde_json::Value) -> String {
     match value {
         serde_json::Value::String(value) => value,
         value => serde_json::to_string(&value).expect("JSON value serialization is infallible"),
+    }
+}
+
+/// Failure while stepping through document metadata pages.
+#[derive(Debug, thiserror::Error)]
+pub(crate) enum MetadataPageError {
+    #[error(transparent)]
+    Corpus(#[from] CorpusError),
+    #[error("document metadata cursor did not advance")]
+    NonMonotonicCursor,
+}
+
+/// Steps monotonically through every [`DocumentMetadataRow`] page in
+/// `provenance`, stopping early when `visit` returns [`ControlFlow::Break`].
+pub(crate) async fn for_each_document_metadata_page<T, E, F>(
+    provenance: &ProvenanceView,
+    mut on_page_error: impl FnMut(MetadataPageError) -> E,
+    mut visit: F,
+) -> Result<Option<T>, E>
+where
+    F: FnMut(Vec<DocumentMetadataRow>) -> Result<ControlFlow<T>, E>,
+{
+    let mut cursor = 0u64;
+    loop {
+        let before = cursor;
+        let page = provenance
+            .document_metadata_page(cursor)
+            .await
+            .map_err(|error| on_page_error(MetadataPageError::Corpus(error)))?;
+        let Some(last) = page.last() else {
+            return Ok(None);
+        };
+        cursor = last.first_sentence.saturating_add(last.sentence_count);
+        if let ControlFlow::Break(found) = visit(page)? {
+            return Ok(Some(found));
+        }
+        if cursor <= before {
+            return Err(on_page_error(MetadataPageError::NonMonotonicCursor));
+        }
+    }
+}
+
+/// Pure per-key document metadata accumulator shared between frequency
+/// dimension derivation and the question metadata summary endpoint.
+#[derive(Debug, Clone, PartialEq)]
+pub(crate) struct MetadataFieldSummary {
+    pub(crate) present: u64,
+    pub(crate) scalars: bool,
+    pub(crate) lists: bool,
+    pub(crate) numeric: bool,
+    pub(crate) other: bool,
+    pub(crate) min: Option<f64>,
+    pub(crate) max: Option<f64>,
+}
+
+impl MetadataFieldSummary {
+    #[must_use]
+    pub(crate) const fn new() -> Self {
+        Self {
+            present: 0,
+            scalars: false,
+            lists: false,
+            numeric: true,
+            other: false,
+            min: None,
+            max: None,
+        }
+    }
+
+    pub(crate) fn observe_typed(&mut self, value: &MetadataValue) {
+        self.present += 1;
+        match value {
+            MetadataValue::Scalar(scalar) => {
+                self.scalars = true;
+                match scalar {
+                    MetadataScalar::Number(text) => match text.parse::<f64>() {
+                        Ok(number) if number.is_finite() => self.record_number(number),
+                        _ => self.numeric = false,
+                    },
+                    MetadataScalar::String(_) | MetadataScalar::Bool(_) => self.numeric = false,
+                }
+            }
+            MetadataValue::Scalars(_) => {
+                self.lists = true;
+                self.numeric = false;
+            }
+            MetadataValue::Opaque(_) => {
+                self.other = true;
+                self.numeric = false;
+            }
+        }
+    }
+
+    pub(crate) fn observe_json(&mut self, value: &serde_json::Value) {
+        self.present += 1;
+        match value {
+            serde_json::Value::Array(_) => {
+                self.lists = true;
+                self.numeric = false;
+            }
+            serde_json::Value::Number(number) => {
+                self.scalars = true;
+                if let Some(number) = number.as_f64() {
+                    self.record_number(number);
+                }
+            }
+            serde_json::Value::Object(_) => {
+                self.other = true;
+                self.numeric = false;
+            }
+            serde_json::Value::Null | serde_json::Value::Bool(_) | serde_json::Value::String(_) => {
+                self.scalars = true;
+                self.numeric = false;
+            }
+        }
+    }
+
+    fn record_number(&mut self, number: f64) {
+        self.min = Some(self.min.map_or(number, |old| old.min(number)));
+        self.max = Some(self.max.map_or(number, |old| old.max(number)));
     }
 }
 
@@ -248,5 +372,38 @@ mod tests {
             provenance.location.source_name = Arc::from(source);
             assert_eq!(HitProvenance::from_sentence(&provenance).source, expected);
         }
+    }
+
+    #[test]
+    fn metadata_field_summary_agrees_across_typed_and_json_observations() {
+        use super::MetadataFieldSummary;
+        use lingrep_core::corpus::{MetadataScalar, MetadataValue};
+
+        let mut typed = MetadataFieldSummary::new();
+        typed.observe_typed(&MetadataValue::Scalar(MetadataScalar::Number(
+            "1995".into(),
+        )));
+        typed.observe_typed(&MetadataValue::Scalar(MetadataScalar::Number(
+            "2020".into(),
+        )));
+        let mut json = MetadataFieldSummary::new();
+        json.observe_json(&serde_json::json!(1995));
+        json.observe_json(&serde_json::json!(2020));
+        assert_eq!(typed, json);
+        assert!(typed.numeric);
+        assert!(typed.scalars);
+        assert!(!typed.lists);
+        assert_eq!(typed.min, Some(1995.0));
+        assert_eq!(typed.max, Some(2020.0));
+        assert_eq!(typed.present, 2);
+
+        typed.observe_typed(&MetadataValue::Scalars(Box::new([MetadataScalar::String(
+            "a".into(),
+        )])));
+        json.observe_json(&serde_json::json!(["a"]));
+        assert_eq!(typed, json);
+        assert!(!typed.numeric);
+        assert!(typed.lists);
+        assert_eq!(typed.present, 3);
     }
 }

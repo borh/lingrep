@@ -339,7 +339,7 @@ struct MetadataResult {
 }
 #[derive(Default)]
 struct MetadataSummary {
-    fields: BTreeMap<String, Field>,
+    fields: BTreeMap<String, crate::provenance_view::MetadataFieldSummary>,
     documents: u64,
 }
 
@@ -382,21 +382,11 @@ impl MetadataSummary {
             if !self.fields.contains_key(key) && self.fields.len() >= MAX_FIELDS {
                 return Err("This corpus has too many metadata fields to display.");
             }
-            let field = self.fields.entry(key.clone()).or_insert_with(|| Field {
-                key: key.clone(),
-                list: false,
-                numeric: true,
-                min: None,
-                max: None,
-                present: 0,
-            });
-            field.present += 1;
-            field.list |= value.is_array();
-            field.numeric &= value.is_number();
-            if let Some(number) = value.as_f64() {
-                field.min = Some(field.min.map_or(number, |old| old.min(number)));
-                field.max = Some(field.max.map_or(number, |old| old.max(number)));
-            }
+            let field = self
+                .fields
+                .entry(key.clone())
+                .or_insert_with(crate::provenance_view::MetadataFieldSummary::new);
+            field.observe_json(value);
             if query.field.as_deref() != Some(key) {
                 continue;
             }
@@ -420,7 +410,18 @@ impl MetadataSummary {
         Ok(())
     }
     fn finish(self) -> MetadataResult {
-        let mut fields = self.fields.into_values().collect::<Vec<_>>();
+        let mut fields = self
+            .fields
+            .into_iter()
+            .map(|(key, summary)| Field {
+                key,
+                list: summary.lists,
+                numeric: summary.numeric,
+                min: summary.min,
+                max: summary.max,
+                present: summary.present,
+            })
+            .collect::<Vec<_>>();
         fields.sort_by(|a, b| b.present.cmp(&a.present).then_with(|| a.key.cmp(&b.key)));
         MetadataResult {
             fields,
@@ -539,30 +540,33 @@ async fn metadata(
         Ok(view) => view,
         Err(_) => return corrupt(&runtime, &ready).await,
     };
+    enum MetadataScanFailure {
+        Corrupt,
+        Invalid(&'static str),
+    }
     let mut summary = MetadataSummary::default();
-    let mut cursor = 0;
-    loop {
-        let before = cursor;
-        let page = match provenance.document_metadata_page(cursor).await {
-            Ok(page) => page,
-            Err(_) => return corrupt(&runtime, &ready).await,
-        };
-        if page.is_empty() {
-            break;
-        }
-        for row in page {
-            cursor = row.first_sentence + row.sentence_count;
-            let value = match serde_json::from_str(row.metadata_json.as_deref().unwrap_or("{}")) {
-                Ok(value) => value,
-                Err(_) => return corrupt(&runtime, &ready).await,
-            };
-            if let Err(message) = summary.observe(value, &query) {
-                return error(StatusCode::UNPROCESSABLE_ENTITY, message);
+    if let Err(failure) = crate::provenance_view::for_each_document_metadata_page(
+        &provenance,
+        |_| MetadataScanFailure::Corrupt,
+        |page| {
+            for row in page {
+                let value = serde_json::from_str(row.metadata_json.as_deref().unwrap_or("{}"))
+                    .map_err(|_| MetadataScanFailure::Corrupt)?;
+                summary
+                    .observe(value, &query)
+                    .map_err(MetadataScanFailure::Invalid)?;
             }
-        }
-        if cursor <= before {
-            return corrupt(&runtime, &ready).await;
-        }
+            Ok(std::ops::ControlFlow::<()>::Continue(()))
+        },
+    )
+    .await
+    {
+        return match failure {
+            MetadataScanFailure::Corrupt => corrupt(&runtime, &ready).await,
+            MetadataScanFailure::Invalid(message) => {
+                error(StatusCode::UNPROCESSABLE_ENTITY, message)
+            }
+        };
     }
     let mut result = summary.finish();
     if let Some(field) = query.field.as_deref() {

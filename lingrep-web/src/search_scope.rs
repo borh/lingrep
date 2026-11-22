@@ -210,29 +210,28 @@ fn resolve_document(
     provenance: &ProvenanceView,
     runtime: &tokio::runtime::Handle,
 ) -> Result<ResolvedScope, ResolveError> {
-    let mut next = 0;
-    loop {
-        let rows = runtime
-            .block_on(provenance.document_metadata_page(next))
-            .map_err(|error| ResolveError::Corpus(error.to_string()))?;
-        if let Some(row) = rows.iter().find(|row| row.document_id.get() == document) {
-            return Ok(ResolvedScope {
-                clause: None,
-                admission: SentenceAdmission::Documents(std::iter::once(document).collect()),
-                excluded_sentences: provenance.sentence_count() - row.sentence_count,
-            });
-        }
-        match rows.last() {
-            Some(last) if last.first_sentence + last.sentence_count > next => {
-                next = last.first_sentence + last.sentence_count;
+    let found = runtime.block_on(crate::provenance_view::for_each_document_metadata_page(
+        provenance,
+        |error| match error {
+            crate::provenance_view::MetadataPageError::Corpus(error) => {
+                ResolveError::Corpus(error.to_string())
             }
-            _ => {
-                return Err(ResolveError::Unanswerable(
-                    "This corpus has no such document.".into(),
-                ));
+            crate::provenance_view::MetadataPageError::NonMonotonicCursor => {
+                ResolveError::Unanswerable("This corpus has no such document.".into())
             }
-        }
-    }
+        },
+        |rows| {
+            if let Some(row) = rows.iter().find(|row| row.document_id.get() == document) {
+                return Ok(std::ops::ControlFlow::Break(ResolvedScope {
+                    clause: None,
+                    admission: SentenceAdmission::Documents(std::iter::once(document).collect()),
+                    excluded_sentences: provenance.sentence_count() - row.sentence_count,
+                }));
+            }
+            Ok(std::ops::ControlFlow::Continue(()))
+        },
+    ))?;
+    found.ok_or_else(|| ResolveError::Unanswerable("This corpus has no such document.".into()))
 }
 
 #[derive(Default)]

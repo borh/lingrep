@@ -672,33 +672,32 @@ async fn load_documents(runtime: &CorpusRuntime) -> Result<CorpusDocuments, Stri
     let budget = Arc::new(TempBudget::new(MAX_TEMP_BYTES));
     let mut writer =
         documents::Writer::new(Arc::clone(&budget)).map_err(|error| error.to_string())?;
-    let mut next = 0;
-    loop {
-        let page = view
-            .document_metadata_page(next)
-            .await
-            .map_err(|error| error.to_string())?;
-        let Some(last) = page.last() else { break };
-        next = last.first_sentence + last.sentence_count;
-        for row in page {
-            let metadata = match row.metadata_json.as_deref() {
-                None => Metadata::default(),
-                Some(raw) => serde_json::from_str::<serde_json::Value>(raw)
-                    .map_err(|error| error.to_string())
-                    .and_then(|value| {
-                        metadata_from_json(value, "prepared document metadata")
-                            .map_err(|error| error.to_string())
-                    })?,
-            };
-            writer
-                .push(
-                    row.document_id.get(),
-                    row.first_sentence..row.first_sentence + row.sentence_count,
-                    &metadata,
-                )
-                .map_err(|error| error.to_string())?;
-        }
-    }
+    crate::provenance_view::for_each_document_metadata_page(
+        &view,
+        |error| error.to_string(),
+        |page| {
+            for row in page {
+                let metadata = match row.metadata_json.as_deref() {
+                    None => Metadata::default(),
+                    Some(raw) => serde_json::from_str::<serde_json::Value>(raw)
+                        .map_err(|error| error.to_string())
+                        .and_then(|value| {
+                            metadata_from_json(value, "prepared document metadata")
+                                .map_err(|error| error.to_string())
+                        })?,
+                };
+                writer
+                    .push(
+                        row.document_id.get(),
+                        row.first_sentence..row.first_sentence + row.sentence_count,
+                        &metadata,
+                    )
+                    .map_err(|error| error.to_string())?;
+            }
+            Ok(std::ops::ControlFlow::<()>::Continue(()))
+        },
+    )
+    .await?;
     let store = Arc::new(writer.finish().map_err(|error| error.to_string())?);
     tokio::task::yield_now().await;
     let mut reader = store.reader().map_err(|error| error.to_string())?;
@@ -755,15 +754,8 @@ fn derive_dimensions(
     documents: impl Iterator<Item = std::io::Result<Metadata>>,
     budget: Arc<TempBudget>,
 ) -> std::io::Result<Vec<Dimension>> {
-    #[derive(Default)]
     struct Seen {
-        documents: u64,
-        numbers: bool,
-        scalars: bool,
-        lists: bool,
-        other: bool,
-        min: f64,
-        max: f64,
+        summary: crate::provenance_view::MetadataFieldSummary,
         values: usize,
     }
     let mut keys: BTreeMap<String, Seen> = BTreeMap::new();
@@ -771,35 +763,20 @@ fn derive_dimensions(
     for metadata in documents {
         for (key, value) in &metadata? {
             let seen = keys.entry(key.clone()).or_insert_with(|| Seen {
-                numbers: true,
-                min: f64::INFINITY,
-                max: f64::NEG_INFINITY,
-                ..Seen::default()
+                summary: crate::provenance_view::MetadataFieldSummary::new(),
+                values: 0,
             });
-            seen.documents += 1;
+            seen.summary.observe_typed(value);
             match value {
                 MetadataValue::Scalar(scalar) => {
-                    seen.scalars = true;
-                    match scalar {
-                        MetadataScalar::Number(text) => match text.parse::<f64>() {
-                            Ok(number) if number.is_finite() => {
-                                seen.min = seen.min.min(number);
-                                seen.max = seen.max.max(number);
-                            }
-                            _ => seen.numbers = false,
-                        },
-                        _ => seen.numbers = false,
-                    }
                     distinct.add((key.clone(), scalar_text(scalar)), 1)?;
                 }
                 MetadataValue::Scalars(scalars) => {
-                    seen.lists = true;
-                    seen.numbers = false;
                     for scalar in scalars {
                         distinct.add((key.clone(), scalar_text(scalar)), 1)?;
                     }
                 }
-                MetadataValue::Opaque(_) => seen.other = true,
+                MetadataValue::Opaque(_) => {}
             }
         }
     }
@@ -809,26 +786,30 @@ fn derive_dimensions(
     }
     Ok(keys
         .into_iter()
-        .filter(|(key, seen)| !seen.other && writable_key(key) && !(seen.scalars && seen.lists))
+        .filter(|(key, seen)| {
+            !seen.summary.other
+                && writable_key(key)
+                && !(seen.summary.scalars && seen.summary.lists)
+        })
         .filter_map(|(key, seen)| {
-            let kind = if seen.numbers && seen.scalars {
+            let kind = if seen.summary.numeric && seen.summary.scalars {
                 DimensionKind::Range {
-                    min: seen.min,
-                    max: seen.max,
+                    min: seen.summary.min.unwrap_or(f64::INFINITY),
+                    max: seen.summary.max.unwrap_or(f64::NEG_INFINITY),
                 }
             } else {
                 let distinct = seen.values as u64;
-                if distinct < 2 || distinct * 2 > seen.documents {
+                if distinct < 2 || distinct * 2 > seen.summary.present {
                     return None;
                 }
                 DimensionKind::Categorical {
-                    list: seen.lists,
+                    list: seen.summary.lists,
                     values: seen.values,
                 }
             };
             Some(Dimension {
                 key,
-                documents: seen.documents,
+                documents: seen.summary.present,
                 kind,
             })
         })
