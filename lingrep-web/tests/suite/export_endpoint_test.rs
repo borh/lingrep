@@ -456,58 +456,57 @@ async fn rejections_follow_the_requested_locale_and_default_to_english() {
 }
 
 #[tokio::test]
-async fn results_of_a_corpus_that_became_unavailable_are_a_conflict_with_a_next_step() {
-    let (fixture, runtime) = runtime_fixture(
-        "export-corrupt",
-        vec![vec![
-            TokenInfo::default().with_orth("食べる").with_pos("VERB"),
-        ]],
-    );
-    let cache_path = fixture.path.join("tokens.v1.zst");
-    let store = RequestStore::with_runtime(
-        Config {
-            dict_path: None,
-            corpora: Vec::new(),
-            input_format: None,
-            markdown: lingrep_core::corpus::MarkdownReaderConfig::new(
-                lingrep_core::corpus::SectionPolicy::default(),
-            ),
-            max_record_bytes: lingrep_core::execution::DEFAULT_MAX_INPUT_RECORD_BYTES,
-            detail_limits: DetailLimits { max_kwic: 10 },
-        },
-        runtime,
-    );
-    let workbench = WorkbenchId::new("export-corrupt");
-    let revision = complete(&store, &workbench, "verb := [upos=VERB].").await;
-    crate::v6_support::corrupt_first_token_block(&cache_path);
+async fn export_localizes_corruption_and_reports_the_subsequent_unavailable_corpus() {
+    for (query, lang, corrupted, unavailable) in [
+        (
+            "",
+            "en",
+            "The corpus data is damaged.",
+            "The corpus was rebuilt or became unavailable after these results",
+        ),
+        (
+            "?locale=ja",
+            "ja",
+            "コーパスデータが破損しています。",
+            "この結果を出したあとで、コーパスが再構築されたか、利用できなくなりました。",
+        ),
+    ] {
+        let (fixture, runtime) = runtime_fixture(
+            "export-corrupt",
+            vec![vec![
+                TokenInfo::default().with_orth("食べる").with_pos("VERB"),
+            ]],
+        );
+        let cache_path = fixture.path.join("tokens.v1.zst");
+        let store = RequestStore::with_runtime(
+            Config {
+                dict_path: None,
+                corpora: Vec::new(),
+                input_format: None,
+                markdown: lingrep_core::corpus::MarkdownReaderConfig::new(
+                    lingrep_core::corpus::SectionPolicy::default(),
+                ),
+                max_record_bytes: lingrep_core::execution::DEFAULT_MAX_INPUT_RECORD_BYTES,
+                detail_limits: DetailLimits { max_kwic: 10 },
+            },
+            runtime,
+        );
+        let workbench = WorkbenchId::new("export-corrupt");
+        let revision = complete(&store, &workbench, "verb := [upos=VERB].").await;
+        crate::v6_support::corrupt_first_token_block(&cache_path);
 
-    let damaged = get(&store, &export_uri(&workbench, revision)).await;
-    assert_eq!(
-        damaged.status(),
-        axum::http::StatusCode::INTERNAL_SERVER_ERROR
-    );
-    let body = body_text(damaged).await;
-    assert!(body.contains("The corpus data is damaged."), "{body}");
-
-    let unavailable = get(&store, &export_uri(&workbench, revision)).await;
-    assert_eq!(unavailable.status(), axum::http::StatusCode::CONFLICT);
-    let body = body_text(unavailable).await;
-    assert!(
-        body.contains("The corpus was rebuilt or became unavailable after these results"),
-        "{body}"
-    );
-
-    let japanese = get(
-        &store,
-        &format!("{}?locale=ja", export_uri(&workbench, revision)),
-    )
-    .await;
-    assert_eq!(japanese.status(), axum::http::StatusCode::CONFLICT);
-    let body = body_text(japanese).await;
-    assert!(
-        body.contains("この結果を出したあとで、コーパスが再構築されたか、利用できなくなりました。もう一度検索してから、ダウンロードしてください。"),
-        "{body}"
-    );
+        let uri = format!("{}{query}", export_uri(&workbench, revision));
+        for (status, expected) in [
+            (axum::http::StatusCode::INTERNAL_SERVER_ERROR, corrupted),
+            (axum::http::StatusCode::CONFLICT, unavailable),
+        ] {
+            let response = get(&store, &uri).await;
+            assert_eq!(response.status(), status);
+            let body = body_text(response).await;
+            assert!(body.contains(expected), "{body}");
+            assert!(body.contains(&format!("lang=\"{lang}\"")), "{body}");
+        }
+    }
 }
 
 #[tokio::test]

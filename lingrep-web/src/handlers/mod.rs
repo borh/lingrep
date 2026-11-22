@@ -141,22 +141,42 @@ pub(crate) async fn corrupt_artifact_response(
     runtime: &CorpusRuntime,
     read: &ReadyCorpus,
 ) -> Response {
+    let message = corrupt_artifact_message(runtime, read).await;
+    sanitized(
+        StatusCode::INTERNAL_SERVER_ERROR,
+        message.key,
+        message.english,
+    )
+}
+
+struct CorruptArtifactMessage {
+    key: &'static str,
+    english: &'static str,
+    japanese: &'static str,
+}
+
+async fn corrupt_artifact_message(
+    runtime: &CorpusRuntime,
+    read: &ReadyCorpus,
+) -> CorruptArtifactMessage {
     runtime.invalidator().invalidate_corrupt(read).await;
-    let (key, message) = match *runtime.readiness().borrow() {
-        CacheReadiness::Checking | CacheReadiness::Building { .. } => (
-            "corpus.rebuilding",
-            "The corpus cache is damaged and is being rebuilt. Search again when the corpus is ready.",
-        ),
-        CacheReadiness::Ready { .. } => (
-            "corpus.rebuilt",
-            "The corpus cache was damaged and has been rebuilt. Search again.",
-        ),
-        CacheReadiness::Failed { .. } => (
-            "corpus.damaged",
-            "The corpus data is damaged. This corpus is unavailable until the server is restarted.",
-        ),
-    };
-    sanitized(StatusCode::INTERNAL_SERVER_ERROR, key, message)
+    match *runtime.readiness().borrow() {
+        CacheReadiness::Checking | CacheReadiness::Building { .. } => CorruptArtifactMessage {
+            key: "corpus.rebuilding",
+            english: "The corpus cache is damaged and is being rebuilt. Search again when the corpus is ready.",
+            japanese: "コーパスキャッシュが破損しているため、再構築しています。コーパスの準備ができてから、もう一度検索してください。",
+        },
+        CacheReadiness::Ready { .. } => CorruptArtifactMessage {
+            key: "corpus.rebuilt",
+            english: "The corpus cache was damaged and has been rebuilt. Search again.",
+            japanese: "コーパスキャッシュが破損していたため、再構築しました。もう一度検索してください。",
+        },
+        CacheReadiness::Failed { .. } => CorruptArtifactMessage {
+            key: "corpus.damaged",
+            english: "The corpus data is damaged. This corpus is unavailable until the server is restarted.",
+            japanese: "コーパスデータが破損しています。サーバーを再起動するまで、このコーパスは利用できません。",
+        },
+    }
 }
 
 pub(crate) fn render_or_500<T: Template>(template: T) -> Response {

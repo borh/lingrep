@@ -357,7 +357,13 @@ async fn export(
     let (data, omissions) = match scan {
         Ok(Ok(scanned)) => scanned,
         Ok(Err(ExportScanError::CacheCorruption)) => {
-            return super::corrupt_artifact_response(&runtime, &ready).await;
+            let message = super::corrupt_artifact_message(&runtime, &ready).await;
+            return rejection(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                options.locale,
+                message.english,
+                message.japanese,
+            );
         }
         Ok(Err(ExportScanError::Cancelled)) => {
             return StatusCode::SERVICE_UNAVAILABLE.into_response();
