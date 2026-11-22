@@ -62,7 +62,7 @@ fn observations<T: TokenInfoTrait>(
             .scalar_key(&head)
             .and_then(|s| s.parse::<usize>().ok())
     };
-    let tree = |layer: TreeLayer| {
+    let tree = |layer: &TreeLayer| {
         let mut units = Vec::<Range<usize>>::new();
         let mut parents = Vec::new();
         match layer {
@@ -86,14 +86,22 @@ fn observations<T: TokenInfoTrait>(
                     parents.push(p.checked_sub(1));
                 }
             }
-            TreeLayer::Bunsetsu => {
+            TreeLayer::Bunsetsu | TreeLayer::Span(_) => {
+                let kind = match layer {
+                    TreeLayer::Span(kind) => kind.as_str(),
+                    _ => "bunsetsu",
+                };
+                let requires_word_root = matches!(layer, TreeLayer::Bunsetsu);
                 let mut chunks = spans
                     .iter()
                     .enumerate()
-                    .filter(|(_, s)| s.kind == "bunsetsu")
+                    .filter(|(_, s)| s.kind == kind)
                     .collect::<Vec<_>>();
                 if chunks.is_empty() {
                     return Err(Measurement::Unavailable);
+                }
+                if !requires_word_root && chunks.len() == 1 {
+                    return Err(Measurement::InvalidTree);
                 }
                 chunks.sort_by_key(|(_, s)| s.start);
                 let mut next = 0;
@@ -110,12 +118,13 @@ fn observations<T: TokenInfoTrait>(
                                 .position(|(other, _)| *other == id)
                                 .ok_or(Measurement::InvalidTree)?,
                         ),
-                        None if range.clone().any(|i| {
-                            word_parent(i) == Some(0)
-                                && tokens[i]
-                                    .scalar_key(&rel)
-                                    .is_some_and(|r| r == "root" || r.starts_with("root:"))
-                        }) =>
+                        None if !requires_word_root
+                            || range.clone().any(|i| {
+                                word_parent(i) == Some(0)
+                                    && tokens[i]
+                                        .scalar_key(&rel)
+                                        .is_some_and(|r| r == "root" || r.starts_with("root:"))
+                            }) =>
                         {
                             None
                         }
@@ -160,7 +169,7 @@ fn observations<T: TokenInfoTrait>(
     };
     Ok(match &m.source {
         MeasureSource::Tree(layer, series) => {
-            let (units, parents, depths) = tree(*layer)?;
+            let (units, parents, depths) = tree(layer)?;
             let links = links(parents);
             match series {
                 TreeSeries::Depth => depths,
@@ -176,12 +185,12 @@ fn observations<T: TokenInfoTrait>(
             }
         }
         MeasureSource::Depth(layer, id) => {
-            let (units, _, depths) = tree(*layer)?;
+            let (units, _, depths) = tree(layer)?;
             let i = captured(*id)?;
             vec![depths[units.iter().position(|r| r.contains(&i)).unwrap()]]
         }
         MeasureSource::Links { head, labels, test } => {
-            let (_, parents, _) = tree(TreeLayer::Word)?;
+            let (_, parents, _) = tree(&TreeLayer::Word)?;
             let h = captured(*head)?;
             let mut values = Vec::new();
             for (i, p) in links(parents) {

@@ -125,8 +125,12 @@ Use `key: [$n]` for a frequency table. Unknown counts leave the key unfilled.
 Bind occurrence measurements after the body and any where clause:
   profile := ^ []+ $ measure mean(tree(word).links.length) as $distance.
   verb := (?<v> [upos=VERB]) measure count($v -[*]-> [upos=NOUN]) as $n.
-Use word or bunsetsu trees; reduce links.length, nodes.depth, or
-boundaries.open_links with count, mean, or max. Read tree(word).depth($v)
+Use tree(word) for basic dependencies or name a governed span layer,
+for example tree(bunsetsu) or tree(custom.layer). Span layers must partition
+the sentence and have one connected root. Bunsetsu requires a word root in
+the root span. Other span layers require recorded governor links.
+Reduce links.length, nodes.depth, or boundaries.open_links with count, mean,
+or max. Read tree(word).depth($v)
 for one captured word, or count(match.words[TEST]) for a matched span.
 A measure keeps the occurrence and can supply a key with key: [$n].
 
