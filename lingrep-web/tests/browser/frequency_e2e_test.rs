@@ -3208,6 +3208,37 @@ async fn select_question_kwic(driver: &WebDriver) -> WebDriverResult<()> {
 }
 
 #[tokio::test]
+async fn question_actions_fit_at_intermediate_widths() -> WebDriverResult<()> {
+    let Some(driver) = driver().await? else {
+        return Ok(());
+    };
+    let served = serve_entries().await;
+    let result: WebDriverResult<()> = async {
+        driver.goto(served.base.trim_end_matches("frequencies")).await?;
+        for width in [481, 600] {
+            crate::resize(&driver, width, 550).await?;
+            two_frames(&driver).await?;
+            let summary = driver.find(By::Css("#question-actions > summary")).await?;
+            assert!(summary.is_displayed().await?, "question actions at {width}px");
+            summary.click().await?;
+            observed(&driver,
+                "const nav = document.querySelector('#question-actions nav').getBoundingClientRect(); \
+                 return nav.width > 0 && nav.left >= 0 && nav.right <= document.documentElement.clientWidth",
+                json!(true), "question actions fit the viewport").await?;
+            driver.find(By::Id("language")).await?.click().await?;
+            summary.click().await?;
+        }
+        crate::resize(&driver, 1100, 700).await?;
+        two_frames(&driver).await?;
+        assert!(driver.find(By::Id("language")).await?.is_displayed().await?);
+        assert_no_page_errors(&driver).await
+    }.await;
+    driver.quit().await?;
+    served.server.abort();
+    result
+}
+
+#[tokio::test]
 async fn work_zoom_keeps_the_open_match_when_the_view_changes() -> WebDriverResult<()> {
     let Some(driver) = driver().await? else {
         return Ok(());
@@ -3240,12 +3271,28 @@ async fn work_zoom_keeps_the_open_match_when_the_view_changes() -> WebDriverResu
             &format!("return document.querySelectorAll('{rows}').length === 8"),
             "the next page of works",
         ).await?;
+        observed(
+            &driver,
+            "return document.querySelector('#line-limit').matches(':disabled') && !document.querySelector('#line-limit').getClientRects().length",
+            json!(true),
+            "the line count is hidden in By work",
+        ).await?;
+        driver.execute(
+            "window.previewText = document.querySelector('.work-sample-list .context-right').firstChild",
+            Vec::new(),
+        ).await?;
         let zoom = driver.find(By::Css("[data-work-zoom]")).await?;
         zoom.send_keys(thirtyfour::Key::Right).await?;
         wait_for(
             &driver,
             &format!("return document.querySelectorAll('{rows}').length > 8"),
             "more matches in the same works",
+        ).await?;
+        observed(
+            &driver,
+            "return window.previewText === document.querySelector('.work-sample-list .context-right').firstChild",
+            json!(true),
+            "zooming to more matches preserves the first excerpt's text node",
         ).await?;
         zoom.send_keys(thirtyfour::Key::Right).await?;
         wait_for(&driver, "return !!document.querySelector('.work-sample-list .has-sentence')", "full sentences").await?;
@@ -3299,6 +3346,12 @@ async fn by_work_summary_uses_the_full_result_scope_after_scoped_kwic() -> WebDr
         let caption = driver.find(By::Css(".evidence-sentence")).await?.text().await?;
         select_question_kwic(&driver).await?;
         wait_for(&driver, "return document.querySelectorAll('.kwic-list > .kwic-row').length === 20", "the unscoped KWIC").await?;
+        observed(
+            &driver,
+            "return !document.querySelector('#line-limit').disabled && document.querySelector('#line-limit').getClientRects().length > 0",
+            json!(true),
+            "the line count is available in KWIC",
+        ).await?;
         driver.find(By::Css(".kwic-list .document-heading > a")).await?.click().await?;
         wait_for(&driver, "return /in 1 document\\./.test(document.querySelector('.evidence-sentence')?.textContent)", "the scoped KWIC total").await?;
         driver.find(By::Css("[data-layout=works]")).await?.click().await?;
@@ -3613,7 +3666,7 @@ async fn escape_closes_the_example_when_a_token_click_leaves_focus_on_the_result
             .await?
             .convert()?;
         driver.find(By::Css("#token-ribbon button")).await?.click().await?;
-        driver.find(By::Css("#line-limit")).await?.focus().await?;
+        driver.find(By::Css("#context-size")).await?.focus().await?;
         driver.action_chain().send_keys(Key::Escape).perform().await?;
         observed(
             &driver,

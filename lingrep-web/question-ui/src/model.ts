@@ -65,7 +65,7 @@ export interface Configuration { vectors_blake3?:string; datasets: Record<string
 export type MetadataValue = string | number | boolean;
 export type MetadataCondition = { numeric: true; min: string; max: string } | { numeric?: false; list: boolean; exclude: boolean; values: MetadataValue[]; labels?: Record<string, string> };
 export interface QuestionSettings { metadata: Record<string, MetadataCondition>; raw: string; context: number; lines: number; }
-export interface QuestionControls { state: QuestionSettings; /** Disables the example count while the displayed search found no lines; the count stays as the reader set it. */ examplesFound(found:number|null): void; where(): string; entries(): Record<string, string | number>; localize(): void; restore(params: URLSearchParams): void; }
+export interface QuestionControls { state: QuestionSettings; setLineLimit(visible:boolean,hasLines:boolean): void; where(): string; entries(): Record<string, string | number>; localize(): void; restore(params: URLSearchParams): void; }
 export interface Field { key: string; list: boolean; numeric: boolean; min: number; max: number; present: number; }
 export interface MetadataResult { fields: Field[]; documents: number; values: { value: MetadataValue; label: string; documents: number }[]; next: string | null; }
 export interface SentenceSpan { kind:string; start:number; end:number; head:number|null; label:string|null; governor:number|null; }
