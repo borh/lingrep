@@ -66,6 +66,7 @@ pub(crate) fn routes() -> Router<RequestStore> {
         .route("/runs/{id}/events", get(events))
         .route("/runs/{id}/cancel", post(cancel))
         .route("/runs/{id}/documents", get(documents))
+        .route("/runs/{id}/work-samples", get(work_samples))
         .route("/runs/{id}/occurrence", get(occurrence))
         .route("/runs/{id}/export", get(export))
 }
@@ -304,7 +305,7 @@ async fn project_run(
                     &definitions,
                     index.publication_attributes(),
                     INSPECTION_BYTES,
-                    None,
+                    OccurrenceOutput::Matches,
                 )
                 .await
                 {
@@ -358,7 +359,7 @@ async fn project_run(
                     &definitions,
                     &summary.publication_attributes,
                     INSPECTION_BYTES,
-                    None,
+                    OccurrenceOutput::Matches,
                 )
                 .await?;
                 preview_bytes = preview_bytes
@@ -599,19 +600,29 @@ async fn provenance(
         .await
         .map_err(unavailable)
 }
+fn document_metadata(provenance: Option<&SentenceProvenance>) -> Option<Value> {
+    let text = provenance?.rich.metadata_json.as_deref()?;
+    serde_json::from_str(text).ok()
+}
+
+fn document_field(metadata: Option<&Value>, key: &str) -> String {
+    metadata
+        .and_then(|value| value.get(key))
+        .map(|value| {
+            value
+                .as_str()
+                .map_or_else(|| value.to_string(), str::to_owned)
+        })
+        .unwrap_or_default()
+}
+
 fn document_labels(provenance: Option<&SentenceProvenance>) -> (String, String) {
-    let metadata = provenance
-        .and_then(|p| p.rich.metadata_json.as_deref())
-        .and_then(|text| serde_json::from_str::<Value>(text).ok());
-    let field = |key: &str| {
-        metadata
-            .as_ref()
-            .and_then(|v| v.get(key))
-            .map(|v| v.as_str().map_or_else(|| v.to_string(), str::to_owned))
-            .unwrap_or_default()
-    };
+    let metadata = document_metadata(provenance);
     let source_name = provenance.map_or("", |p| &*p.location.source_name);
-    (document_title(field("title"), source_name), field("author"))
+    (
+        document_title(document_field(metadata.as_ref(), "title"), source_name),
+        document_field(metadata.as_ref(), "author"),
+    )
 }
 
 /// `title`, or when it is empty the source file name without a corpus
@@ -665,6 +676,12 @@ fn graph_binding(binding: &GraphBinding) -> Value {
         }
     }
 }
+enum OccurrenceOutput {
+    Matches,
+    DocumentPage,
+    WorkSamples,
+}
+
 async fn project_occurrences(
     ready: &ReadyCorpus,
     occurrences: &[ResultOccurrence],
@@ -672,8 +689,12 @@ async fn project_occurrences(
     patterns: &[String],
     publication_attributes: &[lingrep_core::token_match::AttributeKey],
     max_sentence_bytes: usize,
-    max_response_bytes: Option<usize>,
+    projection: OccurrenceOutput,
 ) -> Result<Vec<Value>> {
+    let max_response_bytes = match projection {
+        OccurrenceOutput::Matches => None,
+        OccurrenceOutput::DocumentPage | OccurrenceOutput::WorkSamples => Some(32 * 1024 * 1024),
+    };
     let reader = ready
         .reader()
         .map_err(unavailable)?
@@ -726,6 +747,22 @@ async fn project_occurrences(
             Ok(value)
         }).collect::<Result<Vec<_>>>()?;
         let mut row = json!({"sequence":occurrence.sequence,"pattern":patterns.get(occurrence.reference.pattern_key.index()).ok_or_else(||invalid("This pattern is not part of the search."))?,"span":{"start":range.start,"end":range.end},"captures":projected_captures,"corpus_sentence_ordinal":sentence,"source_name":if occurrence.source_name.is_empty(){origin.as_ref().map(|p|p.location.source_name.as_ref()).unwrap_or_default()}else{occurrence.source_name.as_ref()},"document_ordinal":occurrence.document_ordinal,"document_sentence_ordinal":occurrence.document_sentence_ordinal,"surface":lingrep_core::token_match::display_text(&decoded, range.clone()),"tokens":&tokens[range.clone()],"left_context":&tokens[range.start.saturating_sub(24)..range.start],"right_context":&tokens[range.end..range.end.saturating_add(24).min(tokens.len())]});
+        if matches!(projection, OccurrenceOutput::WorkSamples) {
+            use lingrep_core::token_match::display_text;
+            let mut before = display_text(&decoded, 0..range.start);
+            if range.start > 0 && tokens[range.start].space_before {
+                before.push(' ');
+            }
+            let mut after = String::new();
+            if tokens
+                .get(range.end)
+                .is_some_and(|token| token.space_before)
+            {
+                after.push(' ');
+            }
+            after.push_str(&display_text(&decoded, range.end..tokens.len()));
+            row["sentence_text"] = json!([before, row["surface"], after]);
+        }
         if let Some(span) = &occurrence.char_span {
             row["char_span"] = json!({"start":span.start,"end":span.end});
         }
@@ -1080,7 +1117,7 @@ async fn documents(
         &patterns,
         index.publication_attributes(),
         INSPECTION_BYTES,
-        Some(32 * 1024 * 1024),
+        OccurrenceOutput::DocumentPage,
     )
     .await?;
     let mut landmarks = Vec::new();
@@ -1104,6 +1141,126 @@ async fn documents(
     Ok(Json(
         json!({"rows":rows,"landmarks":landmarks,"after":after,"start":page.start,"matches_total":page.matches_total,"previous":page.previous,"next":page.next,"document":document,"documents":inventory.documents,"documents_total":inventory.total,"documents_offset":inventory.offset,"selected":inventory.selected,"position":inventory.position,"previous_document":inventory.previous,"next_document":inventory.next}),
     ))
+}
+
+#[derive(Deserialize)]
+struct WorkSampleQuery {
+    pattern: String,
+    document: Option<u64>,
+    offset: Option<u64>,
+    after: Option<i64>,
+}
+
+struct WorkSamplePage {
+    ordinal: u64,
+    matches: u64,
+    next: Option<u64>,
+    first_sentence: u64,
+    rows: usize,
+}
+
+async fn work_samples(
+    State(store): State<RequestStore>,
+    Path(id): Path<String>,
+    query: std::result::Result<Query<WorkSampleQuery>, axum::extract::rejection::QueryRejection>,
+) -> Result<Json<Value>> {
+    const WORKS_PER_PAGE: usize = 5;
+    const MATCHES_PER_WORK: usize = 3;
+
+    let Query(query) =
+        query.map_err(|_| invalid("Choose a valid position in the work samples."))?;
+    let after = query.after.unwrap_or(-1);
+    let offset = query.offset.unwrap_or(0);
+    if after < -1
+        || after >= 0 && query.document.is_none()
+        || offset > i64::MAX as u64
+        || query
+            .document
+            .is_some_and(|ordinal| ordinal > i64::MAX as u64)
+    {
+        return Err(invalid("Choose a valid position in the work samples."));
+    }
+    let _permit = store.coordinators.acquire_reading_permit().await;
+    let (snapshot, ready, index) = completed(&store, &id).await?;
+    let pattern = snapshot
+        .patterns
+        .iter()
+        .find(|pattern| pattern.name == query.pattern)
+        .ok_or_else(|| invalid("Choose a pattern from this search."))?
+        .key;
+    let (documents, total, next) = if let Some(document) = query.document {
+        (vec![document], None, None)
+    } else {
+        let page = index
+            .documents(pattern, offset, WORKS_PER_PAGE)
+            .await
+            .map_err(unavailable)?;
+        let end = offset + page.documents.len() as u64;
+        (
+            page.documents
+                .iter()
+                .map(|document| document.ordinal)
+                .collect(),
+            Some(page.total),
+            (end < page.total).then_some(end),
+        )
+    };
+    let mut pages = Vec::with_capacity(documents.len());
+    let mut occurrences = Vec::new();
+    for ordinal in documents {
+        let page = index
+            .page(pattern, Some(ordinal), after, MATCHES_PER_WORK)
+            .await
+            .map_err(unavailable)?;
+        if let Some(first) = page.rows.first() {
+            pages.push(WorkSamplePage {
+                ordinal,
+                matches: page.matches_total,
+                next: page.next,
+                first_sentence: first.reference.sentence_index,
+                rows: page.rows.len(),
+            });
+            occurrences.extend(page.rows);
+        }
+    }
+    let patterns = snapshot
+        .patterns
+        .iter()
+        .map(|p| p.name.clone())
+        .collect::<Vec<_>>();
+    let projected = project_occurrences(
+        &ready,
+        &occurrences,
+        &snapshot.capture_catalog,
+        &patterns,
+        index.publication_attributes(),
+        INSPECTION_BYTES,
+        OccurrenceOutput::WorkSamples,
+    )
+    .await?;
+    let sentences: Vec<_> = pages.iter().map(|page| page.first_sentence).collect();
+    let origins = provenance(&ready, &sentences).await?;
+    let mut rows = projected.into_iter();
+    let groups: Vec<_> = pages
+        .into_iter()
+        .zip(origins)
+        .map(|(page, origin)| {
+            let (title, author) = document_labels(origin.as_ref());
+            let edition = document_field(
+                document_metadata(origin.as_ref()).as_ref(),
+                "orthographic_style",
+            );
+            let document = Document {
+                ordinal: page.ordinal,
+                title,
+                author,
+                matches: page.matches,
+            };
+            let rows: Vec<_> = rows.by_ref().take(page.rows).collect();
+            json!({"document":document,"edition":edition,"rows":rows,"next":page.next})
+        })
+        .collect();
+    Ok(Json(json!({"groups":groups,"total":total,"next":next})))
 }
 
 async fn export(State(store): State<RequestStore>, Path(id): Path<String>) -> Result<Response> {
@@ -1169,7 +1326,7 @@ async fn export(State(store): State<RequestStore>, Path(id): Path<String>) -> Re
                         &patterns,
                         index.publication_attributes(),
                         usize::MAX,
-                        None,
+                        OccurrenceOutput::Matches,
                     )
                     .await
                     .map_err(|e| std::io::Error::other(e.1))?;

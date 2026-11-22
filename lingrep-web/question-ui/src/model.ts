@@ -22,6 +22,7 @@ export interface MatchRecord {
   readonly source_name: string;
   readonly source_metadata?: { readonly document?: { readonly title?: string; readonly author?: string } };
   readonly surface: string;
+  readonly sentence_text?: readonly [string,string,string];
   readonly captures?: readonly { readonly name: string; readonly span: { readonly start: number; readonly end: number } }[];
   readonly graph_bindings?: readonly GraphBinding[];
   readonly tokens: readonly Token[];
@@ -70,6 +71,8 @@ export interface MetadataResult { fields: Field[]; documents: number; values: { 
 export interface SentenceSpan { kind:string; start:number; end:number; head:number|null; label:string|null; governor:number|null; }
 export interface StoredSentence { spans?:readonly SentenceSpan[]; analysis_identity: string; sentence: number; tokens: readonly Token[]; }
 export interface DocumentSummary { ordinal: number; title: string; author: string; matches: number; }
+export interface WorkSample { document: DocumentSummary; edition: string; rows: MatchRecord[]; next: number | null; }
+export interface WorkSamplesPage { groups: WorkSample[]; total: number | null; next: number | null; }
 export interface DocumentPage { landmarks: DocumentSummary[]; after: number; start: number; matches_total: number; previous: number | null; documents_total: number; documents_offset: number; selected: DocumentSummary | null; position: number | null; previous_document: number | null; next_document: number | null; documents: DocumentSummary[]; rows: MatchRecord[]; next: number | null; document: number | null; }
 export interface DocumentView { request: {document:number|null;after:number;documentsOffset:number|null;scopeDocument:number|null;limit:number}|null; scopeDocument: number | null; returnAfter: number; landmarks: DocumentSummary[]; start: number; matchesTotal: number; query: string; documentsTotal: number; documentsOffset: number; selectedDoc: DocumentSummary | null; position: number | null; previousDoc: number | null; nextDoc: number | null; documents: DocumentSummary[] | null; document: number | null; rows: MatchRecord[]; after: number; next: number | null; previousAfter: number | null; loading: boolean; error: string | null; epoch: number; limit: number; }
 export interface SavedQuestion { format: 'lingrep.question/v1' | 'lingrep.question-probe/v1'; question: string; source: string; corpus: string; analysis: string; where: string; [key: string]: string | number; }

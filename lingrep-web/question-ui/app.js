@@ -18,8 +18,8 @@ const ja = {
 };
 const extra = { readingOptions: 'Reading options', questionActions: 'Question actions', stopReplay: 'Stop replay', current: 'Current results', previous: 'Previous results', completed: 'Complete', partial: 'Searching · counts are partial', cancelled: 'Stopped · counts are partial', failed: 'Search failed', retained: 'Displayed examples', noLines: 'No lines for this pattern yet.', download: 'Download JSONL', source: 'Pattern used for this search', copy: 'Copy CLI command', copied: 'Copied', savedQuery: 'Download this query.lx', runNumber: 'Search', scope: 'Document condition', all: 'All documents', soFar: 'matches found', running: 'Searching', notTotal: 'Counts are partial until the search finishes.', stopped: 'Search stopped. Counts are partial.', failedKeep: 'Search failed. Previous results are retained.', errorRetry: 'Check the pattern or condition and run the search again.', draftRunning: 'Editing the next pattern. The running search is unchanged.', keeping: 'Showing previous results while searching.', loadingRead: 'Loading the original text…', readError: 'Could not load the original text. Open it again to retry.', tokenContext: 'Token context', real: 'Live search', replayed: 'Recorded search replay', unknownProgress: 'Scan percentage unavailable', occurrenceMissing: 'Could not open the frequency table occurrence in this search.' };
 const t = (key) => (locale === 'ja' ? ja[key] : null) ?? en[key] ?? extra[key] ?? key;
-Object.assign(ja, { catalogChanged: 'このリンクを作ったときから、サーバーのパターンが変わっています。今のパターンで検索すると、リンクを作ったときと結果が異なることがあります。', catalogSearch: '今のパターンで検索', catalogDefault: '既定の問いを開く', exportRun: '全結果を JSONL で保存', completeUndisplayed: '検索は完了しましたが、結果をここに表示できません。', completeUnexportable: '検索は完了しましたが、結果をここで表示することも保存することもできません。パターンを絞り込むか、コマンドラインの ling matches で全件を保存してください。', skipQuestion: '問いへ移動', skip: '検索結果へ移動', readingEnd: '。', noMatches: 'このパターンに一致する用例はありません。', partialCount: '途中までの件数', limitChoice: '定義を 1 つだけ検索:', chooseDefinition: '検索する定義を 1 つ選んでください。', occurrenceNotFound: 'この検索には、その文で同じ語が同じ役割に入る用例がありません。', occurrenceChanged: '頻度表を作ったときとコーパスまたはパターンが異なるため、用例を特定できません。', analysisChanged: 'この問いを保存したときから、コーパスの内容が変わっています。現在のコーパスで検索し直せます。', searchCurrentCorpus: '現在のコーパスで検索', resultLimit: '結果が多すぎて保持できません。パターンや文書の条件を絞り込んで、もう一度検索してください。', current: '用例', previous: '前回の完了した用例', boundaryBody: '検索中の件数は途中経過です。ダウンロードには全件を含みます。原文は文書の条件で絞り込まずに表示します。', return: '用例に戻る', during: '新しい検索の実行中は', keep: '前回の検索結果を表示' });
-Object.assign(extra, { completeUndisplayed: 'The search is complete, but its results cannot be displayed here.', completeUnexportable: 'The search is complete, but its results can be neither displayed nor downloaded here. Narrow the pattern, or save every match with ling matches on the command line.', root: 'heads the sentence', noMatches: 'No examples match this pattern.', partialCount: 'Count so far', limitChoice: 'Search one definition only:', chooseDefinition: 'Choose one definition to search.', occurrenceNotFound: 'This search has no example in that sentence with the same words in the same roles.', occurrenceChanged: 'The corpus or pattern differs from the one the frequency table counted, so the example cannot be located.' });
+Object.assign(ja, { catalogChanged: 'このリンクを作ったときから、サーバーのパターンが変わっています。今のパターンで検索すると、リンクを作ったときと結果が異なることがあります。', catalogSearch: '今のパターンで検索', catalogDefault: '既定の問いを開く', exportRun: '全結果を JSONL で保存', completeUndisplayed: '検索は完了しましたが、結果をここに表示できません。', completeUnexportable: '検索は完了しましたが、結果をここで表示することも保存することもできません。パターンを絞り込むか、コマンドラインの ling matches で全件を保存してください。', skipQuestion: '問いへ移動', skip: '検索結果へ移動', readingEnd: '。', noMatches: 'このパターンに一致する用例はありません。', partialCount: '途中までの件数', chooseDefinition: '検索する定義を 1 つ選んでください。', occurrenceNotFound: 'この検索には、その文で同じ語が同じ役割に入る用例がありません。', occurrenceChanged: '頻度表を作ったときとコーパスまたはパターンが異なるため、用例を特定できません。', analysisChanged: 'この問いを保存したときから、コーパスの内容が変わっています。現在のコーパスで検索し直せます。', searchCurrentCorpus: '現在のコーパスで検索', resultLimit: '結果が多すぎて保持できません。パターンや文書の条件を絞り込んで、もう一度検索してください。', current: '用例', previous: '前回の完了した用例', boundaryBody: '検索中の件数は途中経過です。ダウンロードには全件を含みます。原文は文書の条件で絞り込まずに表示します。', return: '用例に戻る', during: '新しい検索の実行中は', keep: '前回の検索結果を表示' });
+Object.assign(extra, { completeUndisplayed: 'The search is complete, but its results cannot be displayed here.', completeUnexportable: 'The search is complete, but its results can be neither displayed nor downloaded here. Narrow the pattern, or save every match with ling matches on the command line.', root: 'heads the sentence', noMatches: 'No examples match this pattern.', partialCount: 'Count so far', chooseDefinition: 'Choose one definition to search.', occurrenceNotFound: 'This search has no example in that sentence with the same words in the same roles.', occurrenceChanged: 'The corpus or pattern differs from the one the frequency table counted, so the example cannot be located.' });
 extra.current = 'Results';
 extra.resultLimit = 'Too many results to retain. Narrow the pattern or document conditions and search again.';
 extra.analysisChanged = 'The corpus has changed since this question was saved. You can search the current corpus instead.';
@@ -266,6 +266,22 @@ $('#restore-searches').addEventListener('click', async () => {
     }
 });
 const documentViews = new Map();
+const resultLayouts = new Map();
+let preferredLayout = 'works', preferredZoom = 0;
+const resultLayout = (run) => resultLayouts.get(run.id) ?? preferredLayout;
+const workViews = new WeakMap();
+const workRows = new WeakMap();
+function workView(page) {
+    let view = workViews.get(page);
+    if (!view) {
+        view = { groups: [], expanded: new Set(), total: null, next: null, loading: false, error: null, pinned: null };
+        workViews.set(page, view);
+    }
+    return view;
+}
+const byWork = (run) => !isReplay && run.phase === 'complete' && resultLayout(run) === 'works';
+const zoomLabels = () => locale === 'ja' ? ['作品', '用例', '文'] : ['Works', 'Matches', 'Sentences'];
+const zoomLevel = (panel) => Number($('[data-work-zoom]', panel).value);
 let isReplay = false;
 let viewLocation = defaultView();
 let viewEvidence = null;
@@ -336,7 +352,7 @@ function editFailedPattern(focus = true) {
     }
 }
 editError.addEventListener('click', () => editFailedPattern());
-const limitChoices = document.createElement('p');
+const limitChoices = document.createElement('details');
 limitChoices.id = 'limit-choices';
 limitChoices.className = 'limit-choices';
 limitChoices.hidden = true;
@@ -364,13 +380,25 @@ function renderLimitChoices(run) {
     if (renderSignatures.get(limitChoices) === signature)
         return;
     renderSignatures.set(limitChoices, signature);
-    limitChoices.replaceChildren(document.createTextNode(t('limitChoice') + ' '), ...choices.map(name => { const button = document.createElement('button'); button.type = 'button'; button.dataset.limitPattern = name; button.textContent = name; return button; }));
+    const summary = document.createElement('summary');
+    summary.textContent = t('chooseDefinition');
+    const list = document.createElement('div');
+    list.className = 'pattern-list';
+    for (const name of choices) {
+        const button = document.createElement('button');
+        button.type = 'button';
+        button.dataset.limitPattern = name;
+        button.textContent = name;
+        list.append(button);
+    }
+    limitChoices.replaceChildren(summary, list);
 }
 limitChoices.addEventListener('click', event => {
     const button = event.target.closest('[data-limit-pattern]'), run = state.current;
     if (!button || !run)
         return;
     const pattern = button.dataset.limitPattern;
+    limitChoices.open = false;
     setSource(run.source);
     $('#corpus').value = run.dataset;
     searchLimit = { source: run.source, pattern, document: searchLimit?.source === run.source ? searchLimit.document : null };
@@ -738,7 +766,7 @@ function render(force = false) {
         const elapsed = current.elapsed > 0 ? ` · ${Number(current.elapsed).toFixed(1)}s` : '';
         const keeping = current.phase === 'running' && !isReplay && $('#behavior').value === 'keep' && !!state.completed && state.completed.id !== current.id;
         $('#status').textContent = current.phase === 'running' ? `${prefix} · ${t('running')} · ${count(current.received)} ${t('soFar')}${elapsed}${keeping ? ' · ' + t('keeping') : ''}` : current.phase === 'complete' ? `${isReplay ? t('replayed') + ' · ' : ''}${t('completed')}` : current.phase === 'cancelled' ? t('stopped') : current.search_complete ? t(exportable(current) ? 'completeUndisplayed' : 'completeUnexportable') : overflowed(current) && !limitChoices.hidden ? t('chooseDefinition') : state.previous ? t('failedKeep') : t('errorRetry');
-        $('#live-counts').innerHTML = Object.entries(current.counts).map(([name, total]) => `<span>${escape(name)} <strong>${count(total)}</strong>${current.phase === 'running' ? ` <span>${locale === 'ja' ? '件（途中）' : 'so far'}</span>` : locale === 'ja' ? ' 件' : ''}</span>`).join('');
+        $('#live-counts').innerHTML = Object.entries(current.counts).filter(([name]) => name === (selection.get(current.id) ?? current.definitions[0])).map(([name, total]) => `<span>${escape(name)} <strong>${count(total)}</strong>${current.phase === 'running' ? ` <span>${locale === 'ja' ? '件（途中）' : 'so far'}</span>` : locale === 'ja' ? ' 件' : ''}</span>`).join('');
     }
     else
         $('#status').textContent = t('ready');
@@ -754,10 +782,16 @@ function render(force = false) {
     let visibleRuns = isReplay ? [current] : compared ? [earlier, current] : [viewEvidence ?? (pinned && inspecting ? inspecting.run : visible(state, behavior))];
     if (!isReplay && behavior === 'keep' && !viewEvidence && current?.phase === 'complete' && state.previous && state.previous.id !== current.id) {
         const pattern = selection.get(current.id) ?? current.definitions[0] ?? '', page = documentView(current, pattern);
-        if (page.documents === null && !page.error) {
+        const grouped = byWork(current), work = workView(page);
+        const preparing = grouped ? !!pattern && work.total === null && !work.error : page.documents === null && !page.error;
+        if (preparing) {
             visibleRuns = [state.previous];
             $('#status').textContent = locale === 'ja' ? '検索完了 · 新しい用例を準備しています…' : 'Search complete · preparing the new examples…';
-            if (!page.loading)
+            if (grouped) {
+                if (!work.loading)
+                    void loadWorkSamples(null, current, pattern, work);
+            }
+            else if (!page.loading)
                 void loadDocumentPage(null, current, pattern);
         }
     }
@@ -790,8 +824,9 @@ function render(force = false) {
             panel = document.createElement('article');
             panel.className = 'result-panel';
             panel.dataset.run = run.id;
-            panel.innerHTML = '<p class="result-scope"></p><ul class="result-notices" hidden></ul><div class="panel-body"><aside class="pattern-list" aria-label="Patterns"></aside><div class="lines-area"><div class="result-reading"><span class="evidence-sentence"></span> <span class="document-scope" hidden></span> <span class="line-controls"><span></span> <input type="search"></span> <details class="document-nav" aria-label="Documents" hidden><summary class="document-jump"></summary><div class="document-finder" hidden></div><div class="document-choice"></div></details> <span class="result-header"></span> <span class="line-note" role="status" hidden></span></div><div class="kwic-list"></div><nav class="document-pages" aria-label="Example pages" hidden></nav></div></div><details class="query-tools-detail"><summary></summary><pre></pre><div class="query-tools"><button type="button" data-copy></button><button type="button" data-source></button></div></details>';
+            panel.innerHTML = '<p class="result-scope"></p><ul class="result-notices" hidden></ul><div class="panel-body"><details class="pattern-picker"><summary></summary><div class="pattern-list"></div></details><div class="lines-area"><div class="result-modes" hidden><div class="result-layout" role="group"><button type="button" data-layout="works"></button><button type="button" data-layout="kwic"></button></div><label class="work-zoom"><span></span><input type="range" min="0" max="2" step="1" value="0" data-work-zoom><output></output></label><label class="kwic-sort"><span></span><select><option value="original"></option><option value="left"></option><option value="match"></option><option value="right"></option></select></label></div><div class="result-reading"><span class="evidence-sentence"></span> <span class="document-scope" hidden></span> <span class="line-controls"><span></span> <input type="search"></span> <details class="document-nav" aria-label="Documents" hidden><summary class="document-jump"></summary><div class="document-finder" hidden></div><div class="document-choice"></div></details> <span class="result-header"></span> <span class="line-note" role="status" hidden></span></div><div class="kwic-list"></div><nav class="document-pages" aria-label="Example pages" hidden></nav><button type="button" class="more-works" hidden></button></div></div><details class="query-tools-detail"><summary></summary><pre></pre><div class="query-tools"><button type="button" data-copy></button><button type="button" data-source></button></div></details>';
             $('.document-nav', panel).open = false;
+            bindResultModes(panel, run.id);
             $('.kwic-list', panel).addEventListener('click', event => { const row = event.target.closest('[data-entry-line]'); if (row)
                 void openEntryLine(runFor(run.id), Number(row.dataset.entryLine)); });
             $('.line-controls input', panel).addEventListener('input', e => { filters.set(run.id, e.target.value); viewLocation = concordanceFor(runFor(run.id)); renderLines(panel, runFor(run.id), true); updateDraft(); });
@@ -859,12 +894,15 @@ function render(force = false) {
             chosen = definitionNames.includes(preferredPattern) ? preferredPattern : definitionNames[0] ?? '';
         selection.set(run.id, chosen);
         const rail = $('.pattern-list', panel);
-        rail.hidden = definitionNames.length < 2;
+        const picker = $('.pattern-picker', panel);
+        picker.hidden = definitionNames.length < 2;
+        const summary = $('summary', picker), total = run.counts[chosen];
+        setConcordanceText(summary, chosen + (total == null ? '' : ` · ${count(total)}${run.phase === 'complete' ? '' : '+'}`));
         if (renderSignatures.get(rail) !== JSON.stringify(definitionNames)) {
             rail.innerHTML = definitionNames.map(name => `<button class="pattern-button" type="button" data-pattern="${escape(name)}"><span>${escape(name)}</span><span class="count"></span></button>`).join('');
             renderSignatures.set(rail, JSON.stringify(definitionNames));
             for (const button of rail.querySelectorAll('button'))
-                button.addEventListener('click', () => { preferredPattern = button.dataset.pattern ?? ''; selection.set(run.id, preferredPattern); void navigateView(hrefFor(run, { ...defaultView(), pattern: button.dataset.pattern ?? '' }), true); });
+                button.addEventListener('click', () => { preferredPattern = button.dataset.pattern ?? ''; selection.set(run.id, preferredPattern); picker.open = false; summary.focus({ preventScroll: true }); void navigateView(hrefFor(run, { ...defaultView(), layout: resultLayout(run), pattern: preferredPattern }), true); });
         }
         for (const button of rail.querySelectorAll('button')) {
             button.setAttribute('aria-pressed', String(button.dataset.pattern === chosen));
@@ -888,6 +926,130 @@ function documentView(run, pattern) {
     if (!documentViews.has(key))
         documentViews.set(key, { request: null, scopeDocument: null, returnAfter: -1, landmarks: [], start: 0, matchesTotal: 0, query: "", documentsTotal: 0, documentsOffset: 0, selectedDoc: null, position: null, previousDoc: null, nextDoc: null, documents: null, document: null, rows: [], after: -1, next: null, previousAfter: null, loading: false, error: null, epoch: 0, limit: 0 });
     return documentViews.get(key);
+}
+async function loadWorkSamples(panel, run, pattern, view, group) {
+    if (view.loading)
+        return;
+    view.loading = true;
+    view.error = null;
+    if (panel)
+        renderLines(panel, run);
+    const params = new URLSearchParams({ pattern });
+    if (group) {
+        params.set('document', String(group.document.ordinal));
+        params.set('after', String(group.next));
+    }
+    else if (view.next != null)
+        params.set('offset', String(view.next));
+    try {
+        const page = await request(`api/questions/runs/${run.id}/work-samples?${params}`);
+        if (group) {
+            const additional = page.groups[0];
+            group.rows.push(...(additional?.rows ?? []));
+            group.next = additional?.next ?? null;
+        }
+        else {
+            view.groups.push(...page.groups);
+            view.total = page.total;
+            view.next = page.next;
+        }
+    }
+    catch (error) {
+        view.error = errorMessage(error);
+    }
+    finally {
+        view.loading = false;
+        if (panel?.isConnected)
+            renderLines(panel, runFor(run.id));
+        else if (!panel)
+            render();
+    }
+}
+function bindResultModes(panel, id) {
+    $('[data-work-zoom]', panel).value = String(preferredZoom);
+    for (const button of panel.querySelectorAll('[data-layout]'))
+        button.addEventListener('click', () => {
+            const run = runFor(id), layout = button.dataset.layout;
+            const previous = resultLayout(run);
+            if (previous === layout)
+                return;
+            resultLayouts.set(id, previous);
+            preferredLayout = layout;
+            const active = inspecting?.run.id === id && !tokenLab.hidden ? inspecting.row : null;
+            const top = active ? tokenLab.getBoundingClientRect().top : null;
+            const parent = { ...concordanceFor(run), layout, document: null, scopeDocument: null, after: -1 };
+            const location = active ? { ...hitLocation(run, active, 'example'), returnTo: parent } : parent;
+            void navigateView(hrefFor(run, location), true).then(() => {
+                if (top != null && top >= 0 && top < innerHeight && inspecting?.run.id === id && !tokenLab.hidden) {
+                    window.scrollBy(0, tokenLab.getBoundingClientRect().top - top);
+                }
+            });
+        });
+    $('.kwic-sort select', panel).addEventListener('change', () => renderLines(panel, runFor(id)));
+    $('[data-work-zoom]', panel).addEventListener('input', () => {
+        preferredZoom = zoomLevel(panel);
+        const anchor = inspecting?.run.id === id && !tokenLab.hidden ? tokenLab : null;
+        const top = anchor?.getBoundingClientRect().top;
+        renderLines(panel, runFor(id));
+        if (anchor && top != null && top >= 0 && top < innerHeight)
+            window.scrollBy(0, anchor.getBoundingClientRect().top - top);
+    });
+    $('.more-works', panel).addEventListener('click', async () => {
+        const run = runFor(id), pattern = selection.get(id) ?? '', view = workView(documentView(run, pattern));
+        const firstNew = view.groups.length, focused = document.activeElement === $('.more-works', panel);
+        await loadWorkSamples(panel, run, pattern, view);
+        if (focused && document.activeElement === document.body && panel.classList.contains('work-results')) {
+            const ordinal = view.groups[firstNew]?.document.ordinal;
+            const first = panel.querySelector(`[data-work-heading="${ordinal}"] a`);
+            first?.focus();
+        }
+    });
+    $('.kwic-list', panel).addEventListener('click', event => {
+        const button = event.target.closest('[data-work-more],[data-work-fewer]');
+        if (!button)
+            return;
+        const run = runFor(id), pattern = selection.get(id) ?? '', view = workView(documentView(run, pattern));
+        const ordinal = Number(button.dataset.workMore ?? button.dataset.workFewer);
+        const group = view.groups.find(group => group.document.ordinal === ordinal);
+        if (!group)
+            return;
+        if (button.hasAttribute('data-work-fewer')) {
+            view.expanded.delete(ordinal);
+            renderLines(panel, run);
+            panel.querySelector(`[data-work-more="${ordinal}"]`)?.focus({ preventScroll: true });
+        }
+        else if (zoomLevel(panel) === 0 && !view.expanded.has(ordinal)) {
+            const focused = document.activeElement === button;
+            view.expanded.add(ordinal);
+            renderLines(panel, run);
+            if (focused && document.activeElement === document.body)
+                panel.querySelector(`[data-work-fewer="${ordinal}"]`)?.focus({ preventScroll: true });
+        }
+        else if (group.next != null)
+            void loadWorkSamples(panel, run, pattern, view, group);
+    });
+}
+function renderResultModes(panel, run, grouped) {
+    const modes = $('.result-modes', panel);
+    modes.hidden = isReplay || run.phase !== 'complete' || entryShown(run);
+    modes.querySelector('.result-layout')?.setAttribute('aria-label', locale === 'ja' ? '結果の表示形式' : 'Results view');
+    for (const button of modes.querySelectorAll('[data-layout]')) {
+        const works = button.dataset.layout === 'works';
+        setConcordanceText(button, works ? (locale === 'ja' ? '作品別' : 'By work') : 'KWIC');
+        button.setAttribute('aria-pressed', String(works === grouped));
+    }
+    const label = $('.work-zoom', modes);
+    label.hidden = !grouped;
+    const name = locale === 'ja' ? 'ズーム' : 'Zoom', level = zoomLabels()[zoomLevel(panel)];
+    setConcordanceText($('span', label), name);
+    setConcordanceText($('output', label), level);
+    $('[data-work-zoom]', label).setAttribute('aria-label', name);
+    $('[data-work-zoom]', label).setAttribute('aria-valuetext', level);
+    const sort = $('.kwic-sort', modes);
+    sort.hidden = grouped;
+    setConcordanceText($('span', sort), locale === 'ja' ? '表示中の用例を並べ替え' : 'Sort shown lines');
+    const orders = locale === 'ja' ? ['出現順', '左の文脈', '一致箇所', '右の文脈'] : ['Corpus order', 'Left context', 'Match', 'Right context'];
+    sort.querySelectorAll('option').forEach((option, index) => setConcordanceText(option, orders[index]));
 }
 async function loadDocumentPage(panel, run, pattern, document = null, after = -1, documentsOffset = null, scopeDocument = documentView(run, pattern).scopeDocument) {
     const view = documentView(run, pattern), epoch = ++view.epoch, limit = controls.state.lines;
@@ -1061,22 +1223,59 @@ function renderLines(panel, run, _force = false) {
     if (!run)
         return;
     panel.classList.toggle('listing-entry', entryShown(run));
+    const grouped = byWork(run) && !entryShown(run);
+    const list = $('.kwic-list', panel), more = $('.more-works', panel);
+    panel.classList.toggle('work-results', grouped);
+    list.classList.toggle('work-sample-list', grouped);
+    more.hidden = true;
+    renderResultModes(panel, run, grouped);
     if (entryShown(run)) {
         renderEntryList(panel, run);
         return;
     }
     const pattern = selection.get(run.id) ?? '', view = documentView(run, pattern);
-    if (!isReplay && run.phase === 'complete' && !view.loading && (!view.error && (view.documents === null || view.limit !== controls.state.lines) || view.error && view.request?.limit !== controls.state.lines)) {
+    const work = workView(view), zoom = zoomLevel(panel);
+    list.dataset.zoom = String(zoom);
+    if (grouped && pattern && work.total === null && !work.loading && !work.error) {
+        void loadWorkSamples(panel, run, pattern, work);
+        return;
+    }
+    if (!grouped && !isReplay && run.phase === 'complete' && !view.loading && (!view.error && (view.documents === null || view.limit !== controls.state.lines) || view.error && view.request?.limit !== controls.state.lines)) {
         void loadDocumentPage(panel, run, pattern, view.document, view.after);
         return;
     }
-    renderDocumentNavigation(panel, run, pattern, view);
+    $('.line-controls', panel).hidden = grouped;
+    if (grouped) {
+        $('.document-nav', panel).hidden = true;
+        $('.document-pages', panel).hidden = true;
+    }
+    else
+        renderDocumentNavigation(panel, run, pattern, view);
     const pageReady = !isReplay && run.phase === 'complete' && view.documents !== null;
     const prefixVisible = !view.request || view.request.after === -1 && view.request.document == null && view.request.scopeDocument == null;
     const allRows = pageReady ? view.rows : prefixVisible ? (run.rows[pattern] ?? []) : [];
     const filter = filters.get(run.id) ?? '', limit = controls.state.lines, context = controls.state.context;
-    const rows = allRows.filter(row => lineText(row).includes(filter)).slice(0, limit);
-    const shownCounts = new Map(), landmarks = new Map(view.landmarks.map(document => [document.ordinal, document]));
+    const works = new Map(work.groups.map(group => [group.document.ordinal, group]));
+    const landmarks = new Map((grouped ? work.groups.map(group => group.document) : view.landmarks).map(document => [document.ordinal, document]));
+    const pinned = inspecting?.run.id === run.id && !tokenLab.hidden ? inspecting.row : work.pinned;
+    const visibleWorkRows = grouped ? work.groups.flatMap(group => {
+        const rows = zoom > 0 || work.expanded.has(group.document.ordinal) ? [...group.rows] : group.rows.slice(0, 1);
+        if (pinned?.document_ordinal === group.document.ordinal && !rows.some(row => row.sequence === pinned.sequence))
+            rows.push(pinned);
+        return rows;
+    }) : [];
+    if (grouped && pinned && !visibleWorkRows.some(row => row.sequence === pinned.sequence))
+        visibleWorkRows.push(pinned);
+    workRows.set(panel, visibleWorkRows);
+    const rows = grouped ? visibleWorkRows : allRows.filter(row => lineText(row).includes(filter)).slice(0, limit);
+    const sort = $('.kwic-sort select', panel).value;
+    if (!grouped && run.phase === 'complete' && sort !== 'original') {
+        const collator = new Intl.Collator('ja');
+        const sortKey = (row) => sort === 'left' ? words([...(row.left_context ?? [])].reverse()) : sort === 'right' ? words(row.right_context) : row.surface;
+        const keys = new Map(rows.map(row => [row, sortKey(row)]));
+        rows.sort((a, b) => collator.compare(keys.get(a), keys.get(b)) || a.sequence - b.sequence);
+    }
+    const shownCounts = new Map();
     for (const row of rows)
         shownCounts.set(row.document_ordinal, (shownCounts.get(row.document_ordinal) ?? 0) + 1);
     const total = pageReady ? view.matchesTotal : run.counts[pattern] ?? 0, shownLines = Math.min(allRows.length, limit);
@@ -1089,7 +1288,7 @@ function renderLines(panel, run, _force = false) {
         : locale === 'ja' ? `${count(total)} 件が見つかりました · ${count(rows.length)} 件を表示` : `${count(rows.length)} shown · ${count(total)} found`;
     if (view.loading && !rows.length)
         $('.line-controls span', panel).textContent = locale === 'ja' ? `全 ${count(total)} 件` : `${count(total)} total matches`;
-    const matchingDocuments = pageReady ? (view.scopeDocument != null ? (total ? 1 : 0) : view.query ? null : view.documentsTotal) : null;
+    const matchingDocuments = grouped ? work.total : pageReady ? (view.scopeDocument != null ? (total ? 1 : 0) : view.query ? null : view.documentsTotal) : null;
     $('.evidence-sentence', panel).textContent = run.phase !== 'complete' && !isReplay ? (locale === 'ja' ? `途中までに ${count(total)} 件。` : `${count(total)} ${total === 1 ? 'match' : 'matches'} so far.`) : locale === 'ja' ? `${count(total)} 件${matchingDocuments == null ? '' : ` · ${count(matchingDocuments)} 文書`}。` : `${count(total)} ${total === 1 ? 'match' : 'matches'}${matchingDocuments == null ? '' : ` in ${count(matchingDocuments)} ${matchingDocuments === 1 ? 'document' : 'documents'}`}.`;
     const scope = $('.document-scope', panel);
     scope.hidden = view.scopeDocument == null;
@@ -1103,9 +1302,17 @@ function renderLines(panel, run, _force = false) {
     const note = $('.line-note', panel);
     note.setAttribute('role', 'status');
     note.textContent = view.loading && (!rows.length || view.documents !== null) ? (locale === 'ja' ? '用例を読み込んでいます…' : 'Loading examples…') : view.loading ? '' : view.error ? (locale === 'ja' ? `用例を読み込めませんでした。${view.error}` : `Examples could not be loaded. ${view.error}`) : run.phase === 'running' ? t('notTotal') : '';
+    if (grouped) {
+        const shown = count(work.groups.length);
+        const first = zoom === 0 && !work.expanded.size && !pinned;
+        const summary = locale === 'ja' ? (first ? `${shown} 作品から最初の用例` : `${shown} 作品を表示`) : (first ? `First match from each of ${shown} ${work.groups.length === 1 ? 'work' : 'works'}` : `Showing ${shown} ${work.groups.length === 1 ? 'work' : 'works'}`);
+        note.textContent = work.error ?? (work.loading ? (locale === 'ja' ? '用例を読み込んでいます…' : 'Loading examples…') : work.groups.length ? summary : '');
+        more.hidden = work.next == null && !(work.total == null && work.error);
+        more.disabled = work.loading;
+        setConcordanceText(more, work.total == null ? (locale === 'ja' ? 'もう一度読み込む' : 'Retry loading works') : (locale === 'ja' ? 'さらに作品を表示' : 'Show more works'));
+    }
     note.hidden = !note.textContent;
-    const list = $('.kwic-list', panel);
-    list.setAttribute('aria-busy', String(view.loading));
+    list.setAttribute('aria-busy', String(grouped ? work.loading : view.loading));
     let nodes = concordanceNodes.get(list);
     if (!nodes) {
         nodes = new Map();
@@ -1117,13 +1324,15 @@ function renderLines(panel, run, _force = false) {
         value.className = className;
         nodes.set(key, value);
     } return value; };
-    let previousDocument, sourceOffset = 0;
-    for (const row of rows) {
+    let previousDocument;
+    for (const [index, row] of rows.entries()) {
         if (previousDocument !== row.document_ordinal) {
-            const heading = node(`document:${row.document_ordinal}`, 'div', 'document-heading');
+            const heading = node(`document:${row.document_ordinal}:${sort === 'original' || grouped ? '' : row.sequence}`, 'div', 'document-heading');
+            if (grouped)
+                heading.dataset.workHeading = String(row.document_ordinal);
             const landmark = landmarks.get(row.document_ordinal);
             const shown = shownCounts.get(row.document_ordinal) ?? 0;
-            const href = hrefFor(run, { ...concordanceFor(run), scopeDocument: row.document_ordinal, returnAfter: view.scopeDocument == null ? view.after : view.returnAfter, document: row.document_ordinal, after: -1 });
+            const href = hrefFor(run, { ...concordanceFor(run), layout: 'kwic', scopeDocument: row.document_ordinal, returnAfter: view.scopeDocument == null ? view.after : view.returnAfter, document: row.document_ordinal, after: -1 });
             let content = concordanceHeadings.get(heading);
             if (!content) {
                 heading.innerHTML = '<a data-view></a><span></span><span class="document-match-count"></span>';
@@ -1132,11 +1341,12 @@ function renderLines(panel, run, _force = false) {
             }
             if (content.link.getAttribute('href') !== href)
                 content.link.setAttribute('href', href);
-            setConcordanceText(content.link, documentTitle(row));
-            const author = row.source_metadata?.document?.author ?? '';
-            if (content.author.hidden !== !author)
-                content.author.hidden = !author;
-            setConcordanceText(content.author, author);
+            setConcordanceText(content.link, landmark?.title || documentTitle(row));
+            const author = landmark?.author || row.source_metadata?.document?.author || '';
+            const edition = grouped ? works.get(row.document_ordinal)?.edition : '';
+            const source = [author, edition].filter(Boolean).join(' · ');
+            content.author.hidden = !source;
+            setConcordanceText(content.author, source);
             setConcordanceText(content.count, landmark ? count(landmark.matches) + (locale === 'ja' ? ' 件' : landmark.matches === 1 ? ' match' : ' matches') : count(shown) + (locale === 'ja' ? ' 件を表示' : ' shown'));
             desired.push(heading);
             previousDocument = row.document_ordinal;
@@ -1149,8 +1359,7 @@ function renderLines(panel, run, _force = false) {
         const href = hrefFor(run, hitLocation(run, row, 'example'));
         if (link.getAttribute('href') !== href)
             link.setAttribute('href', href);
-        const rowIndex = allRows.indexOf(row, sourceOffset), ordinal = view.start + rowIndex + 1;
-        sourceOffset = rowIndex + 1;
+        const ordinal = grouped ? index + 1 : view.start + allRows.indexOf(row) + 1;
         const label = (documentTitle(row)) + ', ' + ordinal + ': ' + lineText(row);
         if (link.getAttribute('aria-label') !== label)
             link.setAttribute('aria-label', label);
@@ -1163,15 +1372,30 @@ function renderLines(panel, run, _force = false) {
             content = { row: null, ordinal: -1, context: -1, number: link.children[0], left: link.children[1].firstElementChild, hit: link.children[2], right: link.children[3] };
             concordanceContent.set(link, content);
         }
-        if (content.row !== row || content.ordinal !== ordinal || content.context !== context) {
+        link.classList.toggle('has-sentence', grouped && zoom === 2 && !!row.sentence_text);
+        const contextKey = grouped ? -(context + 2) - zoom * 100 : context;
+        if (content.row !== row || content.ordinal !== ordinal || content.context !== contextKey) {
             const bound = boundOutside(row, row.span.end + (row.right_context?.length ?? 0));
             for (const [element, text] of [[content.number, String(ordinal)], [content.hit, row.surface]])
                 setConcordanceText(element, text);
-            setContext(content.left, context ? (row.left_context ?? []).slice(-context) : [], bound);
-            setContext(content.right, (row.right_context ?? []).slice(0, context), bound);
+            const left = context ? (row.left_context ?? []).slice(-context) : [], right = (row.right_context ?? []).slice(0, context);
+            if (grouped && zoom === 2 && row.sentence_text) {
+                const [before, match, after] = row.sentence_text;
+                setConcordanceText(content.left, before);
+                setConcordanceText(content.hit, match);
+                setConcordanceText(content.right, after);
+            }
+            else {
+                setContext(content.left, left, bound);
+                setContext(content.right, right, bound);
+                if (grouped && left.length && row.tokens[0]?.space_before)
+                    content.left.append(' ');
+                if (grouped && right[0]?.space_before)
+                    content.right.prepend(' ');
+            }
             content.row = row;
             content.ordinal = ordinal;
-            content.context = context;
+            content.context = contextKey;
         }
         desired.push(link);
         if (inspectionFailure?.runId === run.id && inspectionFailure.sequence === row.sequence) {
@@ -1194,8 +1418,28 @@ function renderLines(panel, run, _force = false) {
             if (readerPanel.open)
                 desired.push(readerPanel);
         }
+        if (grouped && rows[index + 1]?.document_ordinal !== row.document_ordinal) {
+            const group = works.get(row.document_ordinal);
+            const expanded = work.expanded.has(row.document_ordinal);
+            const summary = zoom === 0 && !expanded;
+            if (group && group.document.matches > 1 && (summary || group.next != null)) {
+                const action = node(`work-more:${row.document_ordinal}`, 'button', 'work-more');
+                action.type = 'button';
+                action.dataset.workMore = String(row.document_ordinal);
+                action.disabled = work.loading;
+                setConcordanceText(action, summary ? (locale === 'ja' ? 'この作品の用例を表示' : 'More from this work') : (locale === 'ja' ? 'さらに用例を表示' : 'Show more matches'));
+                desired.push(action);
+            }
+            if (zoom === 0 && expanded) {
+                const collapse = node(`work-fewer:${row.document_ordinal}`, 'button', 'work-more');
+                collapse.type = 'button';
+                collapse.dataset.workFewer = String(row.document_ordinal);
+                setConcordanceText(collapse, locale === 'ja' ? '用例を折りたたむ' : 'Show fewer matches');
+                desired.push(collapse);
+            }
+        }
     }
-    if (!rows.length) {
+    if (!rows.length && (!grouped || !work.loading && !work.error)) {
         const empty = node('empty', 'p', 'line-note');
         if (filter)
             filterEmpty(empty, run, pattern, filter, shownLines);
@@ -1216,6 +1460,8 @@ function renderLines(panel, run, _force = false) {
     desired.forEach((child, index) => { if (list.children[index] !== child)
         list.insertBefore(child, list.children[index] ?? null); });
     roveList(list);
+    if (grouped && inspecting?.run.id === run.id && !tokenLab.hidden)
+        renderExampleSteps();
     for (const key of nodes.keys())
         if (!used.has(key))
             nodes.delete(key);
@@ -1469,6 +1715,14 @@ function renderExampleSteps() {
         $('#token-origin').textContent = `${words.join('')} · ${count(at + 1)} / ${count(total)} · ${documentTitle(row)}`;
         return;
     }
+    const panel = panels.get(run.id), samples = panel && byWork(run) ? workRows.get(panel) : undefined;
+    if (samples) {
+        const position = samples.findIndex(value => value.sequence === row.sequence);
+        previous.disabled = position <= 0;
+        next.disabled = position < 0 || position === samples.length - 1;
+        $('#token-origin').textContent = documentTitle(row);
+        return;
+    }
     const page = documentView(run, row.pattern), position = page.rows.findIndex(value => value.sequence === row.sequence);
     previous.disabled = position <= 0 && page.previousAfter == null;
     next.disabled = position === page.rows.length - 1 && page.next == null;
@@ -1503,11 +1757,15 @@ for (const control of exampleSteps.querySelectorAll('button'))
             return;
         }
         const { run, row } = origin, step = Number(control.dataset.exampleStep), view = documentView(run, row.pattern), position = view.rows.findIndex(value => value.sequence === row.sequence);
+        const panel = panels.get(run.id), samples = panel && byWork(run) ? workRows.get(panel) : undefined;
         const top = tokenLab.getBoundingClientRect().top, epoch = navigationEpoch, hadFocus = document.activeElement === control;
         let successor = null;
         control.disabled = true;
         try {
-            let next = view.rows[position + step];
+            const sample = samples?.[samples.findIndex(value => value.sequence === row.sequence) + step];
+            if (samples && !sample)
+                return;
+            let next = sample ?? view.rows[position + step];
             let page;
             if (!next) {
                 const query = new URLSearchParams({ pattern: row.pattern, limit: String(controls.state.lines), continuous: view.scopeDocument == null ? '1' : '0', after: String(step < 0 ? view.previousAfter ?? -1 : row.sequence), q: view.query });
@@ -2042,7 +2300,8 @@ function displayedEvidence() {
 }
 function concordanceFor(run) {
     const pattern = selection.get(run.id) ?? run.definitions[0] ?? '', page = documentView(run, pattern);
-    return { kind: 'concordance', pattern, scopeDocument: page.scopeDocument, returnAfter: page.returnAfter, document: null, after: page.after, filter: filters.get(run.id) ?? '' };
+    const layout = resultLayout(run);
+    return { kind: 'concordance', layout, pattern, scopeDocument: layout === 'works' ? null : page.scopeDocument, returnAfter: page.returnAfter, document: null, after: layout === 'works' ? -1 : page.after, filter: filters.get(run.id) ?? '' };
 }
 function hitLocation(run, row, kind) {
     const example = { kind: 'example', pattern: row.pattern, document: row.document_ordinal, sequence: row.sequence, returnTo: concordanceFor(run) };
@@ -2085,6 +2344,11 @@ async function applyView(run, target, pin = true, epoch = ++navigationEpoch) {
         throw new Error('This pattern is not part of the saved search.');
     viewEvidence = pin ? run : null;
     viewLocation = target;
+    const parent = target.kind === 'concordance' ? target : target.returnTo;
+    const context = parent.kind === 'concordance' ? parent : parent.returnTo;
+    const layout = context.scopeDocument != null ? 'kwic' : context.layout ?? (target.kind !== 'concordance' || context.after >= 0 || context.document != null || context.filter ? 'kwic' : resultLayout(run));
+    const changedLayout = layout !== resultLayout(run);
+    resultLayouts.set(run.id, layout);
     if (target.kind !== 'reader' && $('#inspector').open)
         $('#inspector').close();
     if (target.kind === 'reader' && target.returnTo.kind === 'example') {
@@ -2113,7 +2377,7 @@ async function applyView(run, target, pin = true, epoch = ++navigationEpoch) {
         updateDraft();
         return;
     }
-    if (target.kind !== 'concordance' && inspecting?.run.id === run.id && target.sequence === inspecting.row.sequence && !tokenLab.hidden) {
+    if (!changedLayout && target.kind !== 'concordance' && inspecting?.run.id === run.id && target.sequence === inspecting.row.sequence && !tokenLab.hidden) {
         $('#close-inspector').setAttribute('href', hrefFor(run, target.kind === 'reader' ? target.returnTo : target));
         if (target.kind === 'reader') {
             readerTarget = inspecting;
@@ -2132,8 +2396,6 @@ async function applyView(run, target, pin = true, epoch = ++navigationEpoch) {
         tokenLab.hidden = true;
         inspecting = null;
     }
-    const parent = target.kind === 'concordance' ? target : target.returnTo;
-    const context = parent.kind === 'concordance' ? parent : parent.returnTo;
     const pattern = target.pattern || run.definitions[0] || '';
     selection.set(run.id, pattern);
     filters.set(run.id, context.filter);
@@ -2143,7 +2405,7 @@ async function applyView(run, target, pin = true, epoch = ++navigationEpoch) {
         page.loading = false;
         page.request = null;
     }
-    const needsPage = run.phase === 'complete' && (page.documents === null || page.scopeDocument !== scope || page.after !== context.after || context.document != null && context.document !== page.document);
+    const needsPage = !byWork(run) && run.phase === 'complete' && (page.documents === null || page.scopeDocument !== scope || page.after !== context.after || context.document != null && context.document !== page.document);
     page.returnAfter = context.returnAfter ?? -1;
     render();
     const panel = panels.get(run.id);
@@ -2156,7 +2418,11 @@ async function applyView(run, target, pin = true, epoch = ++navigationEpoch) {
     if (returnFocus != null && document.activeElement === document.body)
         (panel.querySelector(`[data-sequence="${returnFocus}"]`) ?? $('#results')).focus({ preventScroll: true });
     if (target.kind !== 'concordance') {
-        let row = documentView(run, pattern).rows.find(row => target.sequence != null && row.sequence === target.sequence) ?? run.rows[pattern]?.find(row => target.sequence != null && row.sequence === target.sequence);
+        const matchesTarget = (row) => target.sequence != null && row.sequence === target.sequence;
+        const work = workView(page);
+        let row = work.groups.flatMap(group => group.rows).find(matchesTarget) ?? page.rows.find(matchesTarget) ?? run.rows[pattern]?.find(matchesTarget);
+        if (!row && inspecting?.run.id === run.id && matchesTarget(inspecting.row))
+            row = inspecting.row;
         if (!row && run.phase !== 'complete') {
             pendingView = target;
             return;
@@ -2171,9 +2437,15 @@ async function applyView(run, target, pin = true, epoch = ++navigationEpoch) {
             throw new Error('This saved location has no matching example. Choose another document.');
         const entryRow = entryShown(run) && entryLines.lines[entryLines.at].sentence === row.corpus_sentence_ordinal ? panel.querySelector(`[data-entry-line="${entryLines.at}"]`) : null;
         let link = entryRow ?? panel.querySelector(`[data-sequence="${row.sequence}"]`);
-        if (!link) {
+        if (!link && byWork(run)) {
+            work.pinned = row;
+            renderLines(panel, run);
+            link = panel.querySelector(`[data-sequence="${row.sequence}"]`);
+        }
+        else if (!link) {
+            const ordinal = scope == null ? null : row.document_ordinal;
             filters.set(run.id, '');
-            await loadDocumentPage(panel, run, pattern, row.document_ordinal, row.sequence - 1);
+            await loadDocumentPage(panel, run, pattern, ordinal, row.sequence - 1, null, scope);
             link = panel.querySelector(`[data-sequence="${row.sequence}"]`);
         }
         if (epoch !== navigationEpoch || !link)

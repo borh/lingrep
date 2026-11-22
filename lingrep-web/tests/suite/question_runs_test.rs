@@ -200,6 +200,53 @@ fn expected_match(sequence: u64) -> Value {
 }
 
 #[tokio::test]
+async fn work_samples_reach_later_documents_and_page_each_work_independently() {
+    let (_fixture, store, identity) = fixture(8);
+    let app = lingrep_web::app_router(store);
+    let id = submit(&app, SOURCE, "", Some(&identity)).await;
+    assert_eq!(
+        updates(&app, &id).await.last().unwrap()["patch"]["phase"],
+        "complete"
+    );
+    let endpoint = format!("/api/questions/runs/{id}/work-samples?pattern=phrase");
+    let page = json_response(
+        request(&app, Method::GET, &endpoint, None).await,
+        StatusCode::OK,
+    )
+    .await;
+    assert_eq!(page["total"], 2);
+    assert!(page["next"].is_null());
+    for (at, (document, matches, first_sequence)) in
+        [(0, 35, 0), (1, 7, 70)].into_iter().enumerate()
+    {
+        let group = &page["groups"][at];
+        assert_eq!(group["document"]["ordinal"], document);
+        assert_eq!(group["document"]["matches"], matches);
+        assert_eq!(group["rows"].as_array().unwrap().len(), 3);
+        for (index, row) in group["rows"].as_array().unwrap().iter().enumerate() {
+            let mut expected = expected_match(first_sequence + index as u64 * 2);
+            expected["sentence_text"] = json!(["", "cat is", "。"]);
+            assert_eq!(*row, expected);
+        }
+        assert_eq!(group["next"], first_sequence + 4);
+    }
+    let more = json_response(
+        request(
+            &app,
+            Method::GET,
+            &format!("{endpoint}&document=1&after=74"),
+            None,
+        )
+        .await,
+        StatusCode::OK,
+    )
+    .await;
+    assert_eq!(more["groups"].as_array().unwrap().len(), 1);
+    assert_eq!(more["groups"][0]["rows"][0]["sequence"], 76);
+    assert_eq!(more["groups"][0]["next"], 80);
+}
+
+#[tokio::test]
 async fn submitted_runs_stream_bounded_previews_and_page_export_every_complete_match_once() {
     let (_fixture, store, identity) = fixture(8);
     let app = lingrep_web::app_router(store.clone());
