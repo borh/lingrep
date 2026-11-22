@@ -166,39 +166,7 @@ impl BoundTokenSentence {
                 actual: self.schema_digest,
             });
         }
-        let mut values = Vec::with_capacity(self.token_count * projection.len());
-        for token in 0..self.token_count {
-            for key in projection.keys() {
-                let value = match TokenSequence::value_key(self, token, key) {
-                    Some(AttributeValueRef::Scalar(value)) => {
-                        ProjectedAttributeValue::scalar(value)
-                    }
-                    Some(AttributeValueRef::StringSet(value)) => {
-                        ProjectedAttributeValue::string_set(value.iter().cloned())
-                    }
-                    None => match projection
-                        .kind(
-                            projection
-                                .ordinal_for_key(key)
-                                .expect("projected key has an ordinal"),
-                        )
-                        .expect("projected ordinal has a kind")
-                    {
-                        AttributeKind::Scalar => ProjectedAttributeValue::missing_scalar(),
-                        AttributeKind::StringSet => {
-                            ProjectedAttributeValue::string_set(std::iter::empty::<CompactString>())
-                        }
-                    },
-                };
-                values.push(value);
-            }
-        }
-        Self::from_projected_attribute_values(projection, self.token_count, values).map(
-            |mut sentence| {
-                sentence.spans.clone_from(&self.spans);
-                sentence.with_char_offsets(self.char_offsets.clone())
-            },
-        )
+        self.project_values(projection)
     }
 
     /// Projects a sentence onto a compatible subset schema.
@@ -232,11 +200,30 @@ impl BoundTokenSentence {
                 });
             }
         }
+        self.project_values(target)
+    }
+
+    fn project_values(&self, target: &BoundProjection) -> Result<Self, BoundTokenError> {
+        let source_ordinals: Vec<(Option<AttributeOrdinal>, AttributeKind)> = target
+            .keys()
+            .iter()
+            .zip(target.kinds())
+            .map(|(key, &kind)| {
+                let ordinal = self
+                    .keys
+                    .iter()
+                    .position(|candidate| candidate == key)
+                    .and_then(|index| u8::try_from(index).ok())
+                    .map(AttributeOrdinal::new);
+                (ordinal, kind)
+            })
+            .collect();
 
         let mut values = Vec::with_capacity(self.token_count * target.len());
         for token in 0..self.token_count {
-            for (key, kind) in target.keys().iter().zip(target.kinds()) {
-                let value = match TokenSequence::value_key(self, token, key) {
+            let row = self.token(token).expect("token index is in bounds");
+            for &(ordinal, kind) in &source_ordinals {
+                let value = match ordinal.and_then(|ordinal| row.value(ordinal)) {
                     Some(AttributeValueRef::Scalar(value)) => {
                         ProjectedAttributeValue::scalar(value)
                     }
@@ -538,7 +525,7 @@ impl TokenInfoTrait for BoundToken<'_> {
     }
 }
 
-impl super::TokenSequence for BoundTokenSentence {
+impl TokenSequence for BoundTokenSentence {
     fn spans(&self) -> &[super::SentenceSpan] {
         self.spans.as_deref().map_or(&[], Vec::as_slice)
     }
@@ -582,6 +569,19 @@ impl super::TokenSequence for BoundTokenSentence {
             .and_then(|index| u8::try_from(index).ok())
             .map(AttributeOrdinal::new)?;
         self.token(token)?.value(ordinal)
+    }
+
+    fn value_locator(
+        &self,
+        token: usize,
+        locator: &super::AttributeLocator,
+    ) -> Option<AttributeValueRef<'_>> {
+        if let Some(ordinal) = locator.ordinal()
+            && self.keys.get(ordinal.index()) == Some(locator.key())
+        {
+            return self.token(token)?.value(ordinal);
+        }
+        self.value_key(token, locator.key())
     }
 }
 
@@ -744,5 +744,74 @@ mod reproject_tests {
                 .get(target.ordinal_key("text").unwrap()),
             Some("猫")
         );
+    }
+
+    #[test]
+    fn value_locator_uses_bound_ordinal_and_falls_back_when_projection_differs() {
+        use crate::token_match::AttributeLocator;
+
+        let schema = TokenSchema::new([
+            SchemaAttribute::new("text", AttributeKind::Scalar).unwrap(),
+            SchemaAttribute::new("dep.enhanced", AttributeKind::StringSet).unwrap(),
+            SchemaAttribute::new("dep.rel", AttributeKind::Scalar).unwrap(),
+        ])
+        .unwrap();
+        let complete = schema
+            .bind_projection(schema.keys().iter().cloned())
+            .unwrap();
+        let sentence = BoundTokenSentence::from_projected_attribute_values(
+            &complete,
+            1,
+            complete
+                .keys()
+                .iter()
+                .map(|key| match key.as_str() {
+                    "text" => ProjectedAttributeValue::scalar("走る"),
+                    "dep.enhanced" => ProjectedAttributeValue::string_set(["0:root"]),
+                    "dep.rel" => ProjectedAttributeValue::scalar("root"),
+                    unexpected => panic!("unexpected test schema key: {unexpected}"),
+                })
+                .collect(),
+        )
+        .unwrap();
+
+        let text_key = AttributeKey::new("text").unwrap();
+        let enhanced_key = AttributeKey::new("dep.enhanced").unwrap();
+        let rel_key = AttributeKey::new("dep.rel").unwrap();
+
+        // Bound to matching projection ordinals.
+        let mut bound_text = AttributeLocator::symbolic(text_key.clone());
+        bound_text.bind(complete.ordinal_key("text").unwrap());
+        let mut bound_enhanced = AttributeLocator::symbolic(enhanced_key.clone());
+        bound_enhanced.bind(complete.ordinal_key("dep.enhanced").unwrap());
+        assert_eq!(
+            TokenSequence::value_locator(&sentence, 0, &bound_text),
+            Some(AttributeValueRef::Scalar("走る"))
+        );
+        assert_eq!(
+            TokenSequence::value_locator(&sentence, 0, &bound_enhanced),
+            Some(AttributeValueRef::StringSet(&[CompactString::new(
+                "0:root"
+            )]))
+        );
+
+        // Bound to a different ordinal than this sentence's layout: falls back to key lookup.
+        let mut mismatched_rel = AttributeLocator::symbolic(rel_key);
+        let wrong_ordinal = complete.ordinal_key("text").unwrap();
+        assert_ne!(wrong_ordinal, complete.ordinal_key("dep.rel").unwrap());
+        mismatched_rel.bind(wrong_ordinal);
+        assert_eq!(
+            TokenSequence::value_locator(&sentence, 0, &mismatched_rel),
+            Some(AttributeValueRef::Scalar("root"))
+        );
+
+        // Symbolic (unbound) locator and absent key.
+        let symbolic = AttributeLocator::symbolic(text_key);
+        assert_eq!(
+            TokenSequence::value_locator(&sentence, 0, &symbolic),
+            Some(AttributeValueRef::Scalar("走る"))
+        );
+        let absent = AttributeLocator::symbolic(AttributeKey::new("lemma").unwrap());
+        assert_eq!(TokenSequence::value_locator(&sentence, 0, &absent), None);
     }
 }
