@@ -300,22 +300,14 @@ impl VerifiedAdapterManifest {
                 "adapter command entrypoint is absent from the implementation manifest".to_owned(),
             ));
         }
-        match &command.verified_bundle {
-            Some(VerifiedBundle::Spacy { model_root }) => validate_spacy_bundle(
+        if let Some(bundle) = &command.verified_bundle {
+            validate_python_bundle(
                 &root,
                 &implementation,
                 &resources,
                 &command.entrypoint,
-                model_root,
-            )?,
-            Some(VerifiedBundle::Stanza { resource_root }) => validate_stanza_bundle(
-                &root,
-                &implementation,
-                &resources,
-                &command.entrypoint,
-                resource_root,
-            )?,
-            None => {}
+                bundle,
+            )?;
         }
         let mut paths = BTreeSet::new();
         if implementation
@@ -465,104 +457,96 @@ where
     Ok(admitted)
 }
 
-fn validate_spacy_bundle(
-    root: &Path,
-    implementation: &[ManifestEntry],
-    resources: &[ManifestEntry],
-    entrypoint: &Path,
-    model_root: &Path,
-) -> Result<(), ExternalProcessError> {
-    validate_python_project_bundle(
-        root,
-        implementation,
-        entrypoint,
-        "lingrep-spacy-adapter",
-        "spaCy",
-    )?;
-
-    let model = normalized_relative_utf8(model_root).map_err(ExternalProcessError::Manifest)?;
-    let prefix = format!("{model}/");
-    if resources.is_empty()
-        || resources
-            .iter()
-            .any(|entry| !entry.relative_path.starts_with(&prefix))
-    {
-        return Err(ExternalProcessError::Manifest(
-            "spaCy resources must be the nonempty exact model-root closure".to_owned(),
-        ));
-    }
-    let profile = format!("{prefix}lingrep-spacy-model.json");
-    if !resources.iter().any(|entry| entry.relative_path == profile) {
-        return Err(ExternalProcessError::Manifest(
-            "spaCy model profile is absent from the resource manifest".to_owned(),
-        ));
-    }
-
-    let mut files = BTreeSet::new();
-    collect_regular_files(root, &root.join(model_root), &mut files)?;
-    let declared = resources
-        .iter()
-        .map(|entry| entry.relative_path.clone())
-        .collect::<BTreeSet<_>>();
-    if files != declared {
-        return Err(ExternalProcessError::Manifest(
-            "spaCy resource manifest is not the exact model-root file closure".to_owned(),
-        ));
-    }
-    Ok(())
+struct PythonBundleSpec<'a> {
+    provider: &'a str,
+    launcher: &'a str,
+    root_label: &'a str,
+    resource_label: &'a str,
+    resource_root: &'a Path,
+    required_resources: &'a [(&'a str, &'a str)],
 }
 
-fn validate_stanza_bundle(
+impl VerifiedBundle {
+    fn spec(&self) -> PythonBundleSpec<'_> {
+        match self {
+            Self::Spacy { model_root } => PythonBundleSpec {
+                provider: "spaCy",
+                launcher: "lingrep-spacy-adapter",
+                root_label: "model-root",
+                resource_label: "spaCy model",
+                resource_root: model_root,
+                required_resources: &[("lingrep-spacy-model.json", "model profile")],
+            },
+            Self::Stanza { resource_root } => PythonBundleSpec {
+                provider: "Stanza",
+                launcher: "lingrep-stanza-adapter",
+                root_label: "resource-root",
+                resource_label: "Stanza resource",
+                resource_root,
+                required_resources: &[
+                    ("resources.json", "resource index"),
+                    ("lingrep-stanza-model.json", "model profile"),
+                ],
+            },
+        }
+    }
+}
+
+fn validate_python_bundle(
     root: &Path,
     implementation: &[ManifestEntry],
     resources: &[ManifestEntry],
     entrypoint: &Path,
-    resource_root: &Path,
+    bundle: &VerifiedBundle,
 ) -> Result<(), ExternalProcessError> {
+    let spec = bundle.spec();
     validate_python_project_bundle(
         root,
         implementation,
         entrypoint,
-        "lingrep-stanza-adapter",
-        "Stanza",
+        spec.launcher,
+        spec.provider,
     )?;
 
-    let resource =
-        normalized_relative_utf8(resource_root).map_err(ExternalProcessError::Manifest)?;
-    let prefix = format!("{resource}/");
+    let resource_root =
+        normalized_relative_utf8(spec.resource_root).map_err(ExternalProcessError::Manifest)?;
+    let prefix = format!("{resource_root}/");
     if resources.is_empty()
         || resources
             .iter()
             .any(|entry| !entry.relative_path.starts_with(&prefix))
     {
-        return Err(ExternalProcessError::Manifest(
-            "Stanza resources must be the nonempty exact resource-root closure".to_owned(),
-        ));
+        return Err(ExternalProcessError::Manifest(format!(
+            "{} resources must be the nonempty exact {} closure",
+            spec.provider, spec.root_label
+        )));
     }
-    for required in ["resources.json", "lingrep-stanza-model.json"] {
-        let path = format!("{prefix}{required}");
+    for (filename, description) in spec.required_resources {
+        let path = format!("{prefix}{filename}");
         if !resources.iter().any(|entry| entry.relative_path == path) {
             return Err(ExternalProcessError::Manifest(format!(
-                "Stanza {} is absent from the resource manifest",
-                if required == "resources.json" {
-                    "resource index"
-                } else {
-                    "model profile"
-                }
+                "{} {description} is absent from the resource manifest",
+                spec.provider
             )));
         }
     }
 
     let mut files = BTreeSet::new();
-    collect_regular_files(root, &root.join(resource_root), &mut files)?;
+    collect_regular_files(
+        root,
+        &root.join(spec.resource_root),
+        spec.resource_label,
+        &mut files,
+    )?;
     let declared = resources
         .iter()
         .map(|entry| entry.relative_path.clone())
         .collect::<BTreeSet<_>>();
     if files != declared {
-        return Err(ExternalProcessError::Manifest(
-            "Stanza resource manifest is not the exact resource-root file closure".to_owned(),
-        ));
+        return Err(ExternalProcessError::Manifest(format!(
+            "{} resource manifest is not the exact {} file closure",
+            spec.provider, spec.root_label
+        )));
     }
     Ok(())
 }
@@ -588,19 +572,27 @@ fn validate_python_project_bundle(
         .map_err(ExternalProcessError::Manifest)?;
     let project = normalized_relative_utf8(&project_root.join("pyproject.toml"))
         .map_err(ExternalProcessError::Manifest)?;
+    let project_label = format!("{provider} project");
     let mut project_files = BTreeSet::new();
     collect_regular_files(
         root,
         &root.join(project_root).join("bin"),
+        &project_label,
         &mut project_files,
     )?;
     collect_regular_files(
         root,
         &root.join(project_root).join("src"),
+        &project_label,
         &mut project_files,
     )?;
-    collect_regular_files(root, &root.join(lock), &mut project_files)?;
-    collect_regular_files(root, &root.join(project), &mut project_files)?;
+    collect_regular_files(root, &root.join(lock), &project_label, &mut project_files)?;
+    collect_regular_files(
+        root,
+        &root.join(project),
+        &project_label,
+        &mut project_files,
+    )?;
     let protocol = project_root
         .parent()
         .ok_or_else(|| {
@@ -619,9 +611,15 @@ fn validate_python_project_bundle(
     collect_regular_files(
         root,
         &protocol_path.join("pyproject.toml"),
+        "adapter protocol",
         &mut project_files,
     )?;
-    collect_regular_files(root, &protocol_path.join("src"), &mut project_files)?;
+    collect_regular_files(
+        root,
+        &protocol_path.join("src"),
+        "adapter protocol",
+        &mut project_files,
+    )?;
     let declared = implementation
         .iter()
         .map(|entry| entry.relative_path.clone())
@@ -637,23 +635,24 @@ fn validate_python_project_bundle(
 fn collect_regular_files(
     root: &Path,
     current: &Path,
+    label: &str,
     files: &mut BTreeSet<String>,
 ) -> Result<(), ExternalProcessError> {
     let metadata = std::fs::symlink_metadata(current).map_err(|error| {
         ExternalProcessError::Manifest(format!(
-            "cannot inspect spaCy model path {}: {error}",
+            "cannot inspect {label} path {}: {error}",
             current.display()
         ))
     })?;
     if metadata.file_type().is_symlink() {
         return Err(ExternalProcessError::Manifest(format!(
-            "spaCy model path {} contains a symlink",
+            "{label} path {} contains a symlink",
             current.display()
         )));
     }
     if metadata.is_file() {
         let relative = current.strip_prefix(root).map_err(|_| {
-            ExternalProcessError::Manifest("spaCy model escaped the manifest root".to_owned())
+            ExternalProcessError::Manifest(format!("{label} escaped the manifest root"))
         })?;
         if relative
             .components()
@@ -662,22 +661,22 @@ fn collect_regular_files(
                 .extension()
                 .is_some_and(|extension| extension == "pyc")
         {
-            return Err(ExternalProcessError::Manifest(
-                "spaCy model root contains a generated Python cache".to_owned(),
-            ));
+            return Err(ExternalProcessError::Manifest(format!(
+                "{label} root contains a generated Python cache"
+            )));
         }
         files.insert(normalized_relative_utf8(relative).map_err(ExternalProcessError::Manifest)?);
         return Ok(());
     }
     if !metadata.is_dir() {
         return Err(ExternalProcessError::Manifest(format!(
-            "spaCy model path {} is not regular",
+            "{label} path {} is not regular",
             current.display()
         )));
     }
     for entry in std::fs::read_dir(current).map_err(|error| {
         ExternalProcessError::Manifest(format!(
-            "cannot list spaCy model directory {}: {error}",
+            "cannot list {label} directory {}: {error}",
             current.display()
         ))
     })? {
@@ -685,11 +684,10 @@ fn collect_regular_files(
             root,
             &entry
                 .map_err(|error| {
-                    ExternalProcessError::Manifest(format!(
-                        "cannot read spaCy model entry: {error}"
-                    ))
+                    ExternalProcessError::Manifest(format!("cannot read {label} entry: {error}"))
                 })?
                 .path(),
+            label,
             files,
         )?;
     }
