@@ -45,6 +45,7 @@ contract_ids! {
     Capabilities => "lingrep.capabilities/v1",
     Check => "lingrep.check/v1",
     Completions => "lingrep.completions/v1",
+    Conllu => "lingrep.conllu/v1",
     Contrast => "lingrep.contrast/v1",
     Diagnostic => "lingrep.diagnostic/v1",
     Disk => "lingrep.disk/v1",
@@ -71,6 +72,7 @@ contract_ids! {
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum ContractKind {
+    Conllu,
     Jsonl,
     Tsv,
 }
@@ -91,6 +93,7 @@ pub struct ContractSummary<'a> {
 }
 
 pub enum ContractSpec {
+    Conllu(ContractSummary<'static>),
     Jsonl(JsonContractSpec),
     Tsv(TsvContractSpec),
 }
@@ -231,6 +234,7 @@ impl ContractSpec {
 
     pub fn summary(&self) -> ContractSummary<'static> {
         match self {
+            Self::Conllu(summary) => *summary,
             Self::Jsonl(spec) => spec.summary,
             Self::Tsv(spec) => spec.summary,
         }
@@ -239,12 +243,27 @@ impl ContractSpec {
     pub fn stream(&self) -> Option<&StreamShape> {
         match self {
             Self::Jsonl(spec) => Some(&spec.stream),
-            Self::Tsv(_) => None,
+            Self::Conllu(_) | Self::Tsv(_) => None,
         }
     }
 
     pub fn to_detail(&self) -> Result<super::contract::ContractDetailData, ContractBuildError> {
         Ok(match self {
+            Self::Conllu(summary) => super::contract::ContractDetailData {
+                id: summary.id.as_str().into(),
+                kind: summary.kind,
+                owners: strings(summary.owners),
+                summary: summary.summary.into(),
+                channel: Some(Channel::Stdout),
+                json_schema: None,
+                stream: None,
+                tsv: None,
+                ordering: "Sentences in corpus order, rows in CoNLL-U ID order.".into(),
+                coverage: "The last sentence carries # lingrep_export = complete N at clean EOF or # lingrep_export = prefix N after a limit. N counts its rows.".into(),
+                broken_pipe: "A closed pipe is a machine-output failure.".into(),
+                exit_status: "0 full or explicitly limited export, 1 processing/output failure, 2 invalid invocation.".into(),
+                example_ids: Vec::new(),
+            },
             Self::Jsonl(spec) => super::contract::ContractDetailData {
                 id: spec.summary.id.as_str().into(),
                 kind: spec.summary.kind,

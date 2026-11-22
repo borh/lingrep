@@ -2301,6 +2301,36 @@ artifact emits no creation receipt. `--progress always` reports the selected
 path. The `run` record distinguishes
 `prepared`, with the artifact's source and analysis identity, from `direct`.
 
+## Export an analyzed corpus as CoNLL-U
+
+```bash
+ling tokenize --output-format conllu treebank.conllu > export.conllu
+ling tokenize --output-format conllu --analyzer-config analyzer.toml source.txt > export.conllu
+ling tokenize --output-format conllu --corpus corpus.lingcorpus > export.conllu
+ling contracts lingrep.conllu/v1
+```
+
+Export streams admitted sentences in corpus order and defaults to all
+sentences. It uses exact token surfaces for FORM. Morphology-only analyses
+write `_` in HEAD and DEPREL. The export preserves pretokenized FEATS, MISC,
+basic and enhanced dependencies, empty nodes, sentence IDs and document
+boundaries. Multiword-token range rows and unrelated comments are omitted.
+Where character offsets are available, `# text` is reconstructed from FORM
+and the gaps between words using spaces.
+
+For analyzed input, `feat.*` attributes become FEATS and provider attributes
+and `norm` are emitted in MISC. MISC values escape percent signs, separators
+and line breaks with percent encoding. Bunsetsu and long-unit word boundaries
+are emitted as `BunsetuBILabel` and `LUWBILabel` where those layers are present.
+Other span layers have no CoNLL-U mapping. Analyzed sentences without an input
+ID receive a run-local ID derived from their corpus sentence ordinal.
+
+For a nonempty full export, the final sentence carries
+`# lingrep_export = complete N`, where `N` counts its word and empty-node
+rows. Check the row count and final blank line to detect interruption during
+publication of that sentence. An explicit limit marks the last sentence
+`# lingrep_export = prefix N`. Check the process exit status for an empty export.
+
 ## Prepared V1 corpora
 
 ```bash

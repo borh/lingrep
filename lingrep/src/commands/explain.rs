@@ -54,10 +54,11 @@ pub fn run(cli: &Cli, config: &ExecutionCliConfig) -> Result<CommandOutcome, Cli
         dictionary_path,
         dictionary_source,
         input_kind,
-        output_mode: match cli.output_mode() {
-            OutputMode::Human => "human",
-            OutputMode::Jsonl => "json",
-            OutputMode::Tsv => "tsv",
+        output_mode: match (&cli.command, cli.output_mode()) {
+            (Command::Tokenize(args), _) if args.output_format.is_some() => "conllu",
+            (_, OutputMode::Human) => "human",
+            (_, OutputMode::Jsonl) => "json",
+            (_, OutputMode::Tsv) => "tsv",
         }
         .into(),
         color: format!("{:?}", cli.color).to_lowercase(),

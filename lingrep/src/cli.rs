@@ -1417,6 +1417,10 @@ pub struct TokenizeArgs {
     #[arg(long, conflicts_with = "json", help_heading = "Output")]
     pub tsv: bool,
 
+    /// Write a CoNLL-U stream, unlimited by default.
+    #[arg(long, value_enum, conflicts_with_all = ["json", "tsv"], help_heading = "Output")]
+    pub output_format: Option<TokenizeOutputFormat>,
+
     /// Publish at most N sentences (text default: 100); `all` removes the limit.
     /// JSON and TSV output are unlimited by default.
     #[arg(long, value_name = "N|all", help_heading = "Output")]
@@ -1425,6 +1429,11 @@ pub struct TokenizeArgs {
     /// Validate inputs and print the execution plan without reading corpus records.
     #[arg(long, help_heading = "Diagnostics", hide_short_help = true)]
     pub plan: bool,
+}
+
+#[derive(Clone, Copy, Debug, ValueEnum)]
+pub enum TokenizeOutputFormat {
+    Conllu,
 }
 
 #[derive(Debug, Args)]
@@ -2344,7 +2353,7 @@ impl Cli {
             Command::Corpus(CorpusArgs {
                 command: CorpusCommand::Sources(args),
             }) if args.tsv => OutputMode::Tsv,
-            Command::Tokenize(args) if args.tsv => OutputMode::Tsv,
+            Command::Tokenize(args) if args.tsv || args.output_format.is_some() => OutputMode::Tsv,
             Command::Attributes(args) if args.tsv => OutputMode::Tsv,
             Command::Doctor(_)
             | Command::Dictionary(_)

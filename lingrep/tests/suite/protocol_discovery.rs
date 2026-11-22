@@ -16,14 +16,14 @@ fn contract_ids_are_complete_unique_and_back_existing_schema_constants() {
         doctor, invocation, neighbors, prune, query, sources, status, table, tokenize, variants,
     };
 
-    assert_eq!(ContractId::ALL.len(), 26);
+    assert_eq!(ContractId::ALL.len(), 27);
     let mut ids = ContractId::ALL
         .iter()
         .map(|id| id.as_str())
         .collect::<Vec<_>>();
     ids.sort_unstable();
     ids.dedup();
-    assert_eq!(ids.len(), 26);
+    assert_eq!(ids.len(), 27);
     assert_eq!(query::SCHEMA, ContractId::Query.as_str());
     assert_eq!(check::SCHEMA, ContractId::Check.as_str());
     assert_eq!(tokenize::SCHEMA, ContractId::Tokenize.as_str());
@@ -50,7 +50,7 @@ fn contract_ids_are_complete_unique_and_back_existing_schema_constants() {
 #[test]
 fn registry_is_complete_unique_and_summary_sorted() {
     let summaries = lingrep::protocol::registry::summaries();
-    assert_eq!(summaries.len(), 26);
+    assert_eq!(summaries.len(), 27);
     assert!(
         summaries
             .windows(2)
@@ -102,6 +102,7 @@ fn every_contract_example_id_resolves() {
     for id in lingrep::protocol::ContractId::ALL {
         let contract = lingrep::protocol::registry::get(*id);
         let referenced = match contract {
+            lingrep::protocol::discovery::ContractSpec::Conllu(_) => &[],
             lingrep::protocol::discovery::ContractSpec::Jsonl(spec) => spec.example_ids,
             lingrep::protocol::discovery::ContractSpec::Tsv(spec) => spec.example_ids,
         };
@@ -521,7 +522,7 @@ fn schema_json_distinguishes_compact_index_from_one_detail() {
     assert_eq!(records[0]["schema"], "lingrep.protocol-contract/v1");
     assert_eq!(records[0]["type"], "contract_index");
     let summaries = records[0]["data"]["contracts"].as_array().unwrap();
-    assert_eq!(summaries.len(), 26);
+    assert_eq!(summaries.len(), 27);
     assert!(
         summaries
             .iter()

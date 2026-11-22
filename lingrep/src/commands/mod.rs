@@ -5,6 +5,7 @@ pub(crate) mod attributes;
 pub mod check;
 mod check_diagram;
 pub mod completions;
+mod conllu_export;
 pub mod contrast;
 pub mod corpus;
 mod corpus_metadata;

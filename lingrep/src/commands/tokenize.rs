@@ -5,12 +5,14 @@ use std::path::Path;
 use std::sync::Arc;
 use std::time::Instant;
 
-use lingrep_core::corpus::{AdmittedCorpus, CorpusReadConfig, resolve_input_format};
+use lingrep_core::corpus::{AdmittedCorpus, CorpusFormat, CorpusReadConfig, resolve_input_format};
 use lingrep_core::execution::{
-    ExecutionBatch, ExecutionError, ExecutionLimits as MatcherLimits, SentenceBatchSource,
+    ExecutionBatch, ExecutionError, ExecutionLimits as MatcherLimits, NativeAnalysisSource,
+    SentenceBatchSource,
 };
 use lingrep_corpus::{AnalysisInputs, CorpusArtifact, ReaderIdentity, TokenSchemaIdentity};
 
+use super::conllu_export::{self, ConlluExport};
 use super::query_completion::{CompletionObservation, FilesystemCompletion};
 use super::query_projection::token_evidence;
 use super::query_support::{
@@ -19,7 +21,7 @@ use super::query_support::{
     write_token_schema_notice,
 };
 use super::{CommandOutcome, admission_identity};
-use crate::analyzer_selection::resolve_native;
+use crate::analyzer_selection::resolve_input;
 use crate::cli::{ExecutionCliConfig, TokenizeArgs};
 use crate::direct_source::{
     FilesystemCorpusEvents, admitted_filesystem_events, boxed_direct_source, encode_digest,
@@ -52,12 +54,13 @@ struct SentencePublisher<'a, W> {
     projection: &'a PublishedProjection,
     stream_id: Option<String>,
     limit: Option<u64>,
+    conllu: Option<&'a mut ConlluExport>,
 }
 
 impl<W: Write> SentencePublisher<'_, W> {
     fn stream(
         &mut self,
-        source: &mut impl SentenceBatchSource,
+        source: &mut (impl SentenceBatchSource + ?Sized),
         limits: &MatcherLimits,
         terminal: &TerminalArbiter,
         mut progress: impl FnMut(u64, u64),
@@ -103,22 +106,26 @@ impl<W: Write> SentencePublisher<'_, W> {
                 }
                 let token_count = u64::try_from(sentence.value.words().len())
                     .map_err(|_| ExecutionError::ResourceAccounting)?;
-                publish_projection(
-                    self.writer,
-                    &TokenizeEnvelope::new(TokenizeEvent::Sentence(SentenceData {
-                        corpus_sentence_ordinal: sentence.location.corpus_sentence_ordinal,
-                        source_name: sentence.location.source_name.to_string(),
-                        stream_id: self.stream_id.clone(),
-                        document_ordinal: sentence.location.document_ordinal,
-                        document_sentence_ordinal: sentence.location.document_sentence_ordinal,
-                        tokens: token_evidence(
-                            sentence.value.words(),
-                            0..sentence.value.words().len(),
-                            self.projection,
-                        ),
-                    })),
-                    self.output,
-                )?;
+                if let Some(export) = self.conllu.as_mut() {
+                    export.sentence(self.writer, &sentence, self.projection.attributes())?;
+                } else {
+                    publish_projection(
+                        self.writer,
+                        &TokenizeEnvelope::new(TokenizeEvent::Sentence(SentenceData {
+                            corpus_sentence_ordinal: sentence.location.corpus_sentence_ordinal,
+                            source_name: sentence.location.source_name.to_string(),
+                            stream_id: self.stream_id.clone(),
+                            document_ordinal: sentence.location.document_ordinal,
+                            document_sentence_ordinal: sentence.location.document_sentence_ordinal,
+                            tokens: token_evidence(
+                                sentence.value.words(),
+                                0..sentence.value.words().len(),
+                                self.projection,
+                            ),
+                        })),
+                        self.output,
+                    )?;
+                }
                 counts.max_tokenized_bytes = counts.max_tokenized_bytes.max(tokenized_bytes);
                 counts.sentences_emitted = counts
                     .sentences_emitted
@@ -145,6 +152,7 @@ pub fn run(
     terminal: &TerminalArbiter,
     output: OutputMode,
 ) -> Result<CommandOutcome, CliError> {
+    let conllu = args.output_format.is_some();
     let limit = resolve_match_limit(output, args.limit);
     let resolved_corpus = crate::corpus_mode::resolve(
         &args.input,
@@ -155,7 +163,7 @@ pub fn run(
         output,
     )?;
     if let Some(artifact) = resolved_corpus.corpus.as_deref() {
-        return run_prepared(artifact, config, terminal, output, limit);
+        return run_prepared(artifact, config, terminal, output, limit, conllu);
     }
 
     let started = Instant::now();
@@ -165,26 +173,29 @@ pub fn run(
         output,
         ResultDelivery::Streaming,
     );
-    let dict_path = matches!(&config.analyzer, crate::cli::AnalyzerCliConfig::Vibrato)
-        .then(|| args.input.direct_dictionary_path())
-        .transpose()?;
     let root = args.input.root.as_deref();
     let stdin = root.is_none_or(|path| path == Path::new("-"));
     let format = resolve_input_format(if stdin { None } else { root }, args.input.input_format);
-    let resolved = resolve_native(config, dict_path.as_deref(), terminal.cancellation())?;
-    let dictionary_digest = resolved.resource_identity;
-    let analyzer_plan = resolved
-        .plan
-        .for_format(format, config.limits.max_tokenized_bytes)?;
-    let analyzer_record =
-        lingrep_corpus::AnalyzerRecord::from_descriptor(analyzer_plan.descriptor());
-    let analyzer_schema = analyzer_plan.schema().clone();
+    let dict_path = (format != CorpusFormat::Conllu
+        && matches!(&config.analyzer, crate::cli::AnalyzerCliConfig::Vibrato))
+    .then(|| args.input.direct_dictionary_path())
+    .transpose()?;
+    let resolved = resolve_input(
+        format,
+        config,
+        dict_path.as_deref(),
+        terminal.cancellation(),
+    )?;
+    let dictionary_digest = resolved.resource_identity();
+    let descriptor = resolved.descriptor().clone();
+    let analyzer_record = lingrep_corpus::AnalyzerRecord::from_descriptor(&descriptor);
+    let analyzer_schema = resolved.schema();
     let bound_projection = analyzer_schema
         .bind_projection(analyzer_schema.keys().iter().cloned())
         .map_err(|error| CliError::Parse(error.to_string()))?;
-    let analyzer_run = AnalyzerRun::new(&analyzer_record, "locally-executed", &analyzer_schema);
-    let analyzer_segmentation = analyzer_plan.descriptor().segmentation();
-    let analyzer_session = analyzer_plan.create_session();
+    let analyzer_run = AnalyzerRun::new(&analyzer_record, "locally-executed", analyzer_schema);
+    let full_projection = PublishedProjection::new(analyzer_schema.keys());
+    let metadata = conllu.then(conllu_export::metadata).transpose()?;
 
     crate::cli::validate_format_root(format, root, stdin).map_err(CliError::InvalidArgs)?;
     let markdown_config = args
@@ -199,17 +210,13 @@ pub fn run(
     let analysis_inputs = AnalysisInputs::with_token_schema(
         reader_identity,
         admission_identity(),
-        analyzer_plan.descriptor(),
+        &descriptor,
         TokenSchemaIdentity::from_bytes(*analyzer_schema.digest().as_bytes()),
     )
     .map_err(CliError::corpus)?;
     let dictionary_identity = encode_digest(dictionary_digest);
     let reader_identity_text = encode_digest(reader_identity.as_bytes());
     let token_schema_identity = Arc::new(encode_digest(analysis_inputs.token_schema().as_bytes()));
-    // `tokenize` publishes the tokenizer's own output, so every attribute is
-    // in scope by definition. Built once for the selected schema.
-    let full_projection = PublishedProjection::new(analyzer_schema.keys());
-
     let ((source, source_stats), completion_observation) = if stdin {
         let (observation, events) = crate::direct_source::stdin_events(
             &reader_config,
@@ -220,7 +227,9 @@ pub fn run(
             boxed_direct_source(Box::new(
                 source_from_events(AdmittedCorpus::new(events))
                     .with_normalization(config.normalization)
-                    .with_segmentation(config.segmentation),
+                    .with_segmentation(config.segmentation)
+                    .with_projection(bound_projection.clone())
+                    .with_source_metadata(metadata.clone()),
             )),
             CompletionObservation::Stdin {
                 stream_id,
@@ -239,7 +248,9 @@ pub fn run(
             boxed_direct_source(Box::new(
                 source_from_events(admitted_filesystem_events(events))
                     .with_normalization(config.normalization)
-                    .with_segmentation(config.segmentation),
+                    .with_segmentation(config.segmentation)
+                    .with_projection(bound_projection.clone())
+                    .with_source_metadata(metadata.clone()),
             )),
             CompletionObservation::Filesystem {
                 observation,
@@ -248,12 +259,15 @@ pub fn run(
         )
     };
     let run_corpus = completion_observation.run_corpus();
-    let mut source = lingrep_core::execution::NativeAnalysisSource::new(
-        source,
-        analyzer_session,
-        bound_projection,
-        analyzer_segmentation,
-    );
+    let mut source: Box<dyn SentenceBatchSource> = match resolved.into_native_plan() {
+        Some(plan) => Box::new(NativeAnalysisSource::new(
+            source,
+            plan.create_session(),
+            bound_projection,
+            descriptor.segmentation(),
+        )),
+        None => source,
+    };
     let limits = config.limits;
     limits.validate()?;
     let sentence_stream_id = match &run_corpus {
@@ -280,11 +294,14 @@ pub fn run(
         worker_count: 1,
     })));
 
+    let mut export = conllu.then(|| ConlluExport::new(format == CorpusFormat::Conllu));
     let post_run = (|| -> Result<CommandOutcome, CliError> {
         let stdout = io::stdout();
         let mut writer = stdout.lock();
-        publish_projection(&mut writer, &run, output)?;
-        writer.flush().map_err(execution_output_io)?;
+        if !conllu {
+            publish_projection(&mut writer, &run, output)?;
+            writer.flush().map_err(execution_output_io)?;
+        }
 
         let Some(TokenizeCounts {
             sentences_emitted,
@@ -297,9 +314,10 @@ pub fn run(
             projection: &full_projection,
             stream_id: sentence_stream_id,
             limit,
+            conllu: export.as_mut(),
         })
         .stream(
-            &mut source,
+            source.as_mut(),
             &limits,
             terminal,
             |sentences_emitted, tokens_emitted| {
@@ -325,6 +343,10 @@ pub fn run(
 
         if !terminal.try_claim_completion() {
             return Ok(CommandOutcome::Cancelled);
+        }
+        if let Some(export) = &export {
+            export.finish(&mut writer, termination)?;
+            return Ok(CommandOutcome::Success);
         }
         publish_projection(
             &mut writer,
@@ -362,6 +384,7 @@ fn run_prepared(
     terminal: &TerminalArbiter,
     output: OutputMode,
     limit: Option<u64>,
+    conllu: bool,
 ) -> Result<CommandOutcome, CliError> {
     let started = Instant::now();
     let artifact = CorpusArtifact::open(path)?;
@@ -380,7 +403,16 @@ fn run_prepared(
     let projection = schema
         .bind_projection(schema.keys().iter().cloned())
         .map_err(|error| CliError::Parse(error.to_string()))?;
-    let mut source = artifact.bound_sentence_source(&projection)?;
+    let mut source = if conllu {
+        artifact.bound_sentence_source_with_metadata(
+            &projection,
+            conllu_export::metadata()?,
+            artifact.provenance_reader()?,
+        )?
+    } else {
+        artifact.bound_sentence_source(&projection)?
+    };
+    let pretokenized = schema == lingrep_core::corpus::conllu::token_schema();
     let limits = MatcherLimits {
         // Prepared tokenization publishes one sentence at a time, matching the
         // direct path's exact resident-token boundary.
@@ -420,11 +452,14 @@ fn run_prepared(
         worker_count: 1,
     })));
 
+    let mut export = conllu.then(|| ConlluExport::new(pretokenized));
     let post_run = (|| -> Result<CommandOutcome, CliError> {
         let stdout = io::stdout();
         let mut writer = stdout.lock();
-        publish_projection(&mut writer, &run, output)?;
-        writer.flush().map_err(execution_output_io)?;
+        if !conllu {
+            publish_projection(&mut writer, &run, output)?;
+            writer.flush().map_err(execution_output_io)?;
+        }
 
         let Some(TokenizeCounts { sentences_emitted, tokens_emitted, max_tokenized_bytes, termination }) =
             (SentencePublisher {
@@ -433,6 +468,7 @@ fn run_prepared(
                 projection: &full_projection,
                 stream_id: None,
                 limit,
+                conllu: export.as_mut(),
             }).stream(&mut source, &limits, terminal, |sentences_emitted, tokens_emitted| {
                 presentation_progress.snapshot(move || format!(
                     "tokenized {sentences_emitted} prepared sentences, emitted {tokens_emitted} tokens"
@@ -442,6 +478,10 @@ fn run_prepared(
         presentation_progress.finish();
         if !terminal.try_claim_completion() {
             return Ok(CommandOutcome::Cancelled);
+        }
+        if let Some(export) = &export {
+            export.finish(&mut writer, termination)?;
+            return Ok(CommandOutcome::Success);
         }
         publish_projection(
             &mut writer,
@@ -636,6 +676,7 @@ mod tests {
             projection: &PublishedProjection::new(schema.keys()),
             stream_id: Some("test-stream".into()),
             limit: None,
+            conllu: None,
         }
         .stream(
             source,

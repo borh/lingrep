@@ -64,6 +64,9 @@ fn capability(command: &Command, path: &str) -> CapabilityData {
     if has_tsv {
         output_modes.push("tsv".into());
     }
+    if path == "tokenize" {
+        output_modes.push("conllu".into());
+    }
     if matches!(
         path,
         "explore" | "serve" | "analyzer" | "analyzer prepare" | "corpus render"

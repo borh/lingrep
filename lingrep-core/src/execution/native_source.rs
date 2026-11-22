@@ -1,5 +1,3 @@
-use std::collections::BTreeMap;
-
 use crate::{
     analysis::{AnalyzerSession, SegmentationMode},
     token_match::BoundProjection,
@@ -10,13 +8,15 @@ use super::{
 };
 
 /// Converts bounded admitted text batches into schema-bound native analysis.
+///
+/// With analyzer segmentation, documents must arrive in nondecreasing document ID order.
 pub struct NativeAnalysisSource<S, A> {
     source: S,
     analyzer: A,
     projection: BoundProjection,
     segmentation: SegmentationMode,
     next_corpus_sentence: u64,
-    next_document_sentence: BTreeMap<u64, u64>,
+    next_document_sentence: Option<(u64, u64)>,
     failed: bool,
 }
 
@@ -34,7 +34,7 @@ impl<S, A> NativeAnalysisSource<S, A> {
             projection,
             segmentation,
             next_corpus_sentence: 0,
-            next_document_sentence: BTreeMap::new(),
+            next_document_sentence: None,
             failed: false,
         }
     }
@@ -136,7 +136,7 @@ where
         let mut charges = Vec::with_capacity(output_count);
         let mut aggregate = 0_usize;
         let mut candidate_ordinal = self.next_corpus_sentence;
-        let mut document_ordinals = self.next_document_sentence.clone();
+        let mut document_position = self.next_document_sentence;
         for (analyzed_input, input_location) in
             analyzed.into_inputs().into_vec().into_iter().zip(locations)
         {
@@ -168,21 +168,30 @@ where
                 let location = match self.segmentation {
                     SegmentationMode::Input => input_location.clone(),
                     SegmentationMode::Analyzer => {
-                        let document_sentence = document_ordinals
-                            .entry(input_location.document_id.get())
-                            .or_default();
+                        let document = input_location.document_id.get();
+                        let document_sentence = match document_position {
+                            Some((previous, next)) if previous == document => next,
+                            Some((previous, _)) if previous > document => {
+                                return Err(ExecutionError::Source {
+                                    ordinal: candidate_ordinal,
+                                    message: "native analysis requires ordered documents".into(),
+                                });
+                            }
+                            _ => 0,
+                        };
                         let location = super::SentenceLocation {
                             lookaround_divisions: None,
                             source_metadata: input_location.source_metadata.clone(),
                             corpus_sentence_ordinal: candidate_ordinal,
                             document_id: input_location.document_id,
                             document_ordinal: input_location.document_ordinal,
-                            document_sentence_ordinal: *document_sentence,
+                            document_sentence_ordinal: document_sentence,
                             source_name: input_location.source_name.clone(),
                         };
-                        *document_sentence = document_sentence
+                        let next = document_sentence
                             .checked_add(1)
                             .ok_or(ExecutionError::ResourceAccounting)?;
+                        document_position = Some((document, next));
                         location
                     }
                 };
@@ -200,7 +209,7 @@ where
             }
         }
         self.next_corpus_sentence = candidate_ordinal;
-        self.next_document_sentence = document_ordinals;
+        self.next_document_sentence = document_position;
         Ok(Some(ExecutionBatch::bound_tokenized_with_charges(
             output, charges,
         )))

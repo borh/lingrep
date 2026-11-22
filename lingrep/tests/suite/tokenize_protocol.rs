@@ -688,3 +688,149 @@ fn tokenize_tsv_content_columns_are_populated() {
         );
     }
 }
+
+#[test]
+fn conllu_export_round_trips_sentence_analysis_in_direct_and_prepared_modes() {
+    use lingrep_core::corpus::conllu::{Reader, token_schema};
+    use lingrep_core::token_match::TokenSequence;
+
+    let directory = TempDir::new().unwrap();
+    let input = directory.path().join("syntax.conllu");
+    let artifact = directory.path().join("syntax.lingcorpus");
+    let source = concat!(
+        "# newdoc id = example\n",
+        "# sent_id = s-1\n",
+        "# text = Ａねこだ\n",
+        "# translated = A cat\n",
+        "1-2\tＡねこ\t_\t_\t_\t_\t_\t_\t_\tSpaceAfter=No\n",
+        "1\tＡ\tＡ\tNOUN\t名詞\tCase=Nom|Foreign=Yes\t3\tnsubj\t3:nsubj|1.1:obj\tBunsetuBILabel=B|BunsetuPositionType=SEM_HEAD|LUWBILabel=B|LUWPOS=名詞|SpaceAfter=No\n",
+        "1.1\t補語\t補語\tNOUN\t名詞\tNumber=Sing\t_\t_\t3:obj\tNote=example\n",
+        "2\tねこ\t猫\tNOUN\t名詞\t_\t1\tcompound\t1:compound\tBunsetuBILabel=I|LUWBILabel=I|SpaceAfter=No\n",
+        "3\tだ\tだ\tAUX\t助動詞\t_\t0\troot\t0:root\tBunsetuBILabel=B|BunsetuPositionType=ROOT|LUWBILabel=B\n\n",
+        "# newdoc\n",
+        "# sent_id = s-2\n",
+        "1\t犬\t犬\tNOUN\t名詞\t_\t0\troot\t_\t_\n\n",
+    );
+    std::fs::write(&input, source).unwrap();
+
+    let direct = lingrep()
+        .args(["tokenize", "--output-format", "conllu"])
+        .arg(&input)
+        .output()
+        .unwrap();
+    assert!(
+        direct.status.success(),
+        "{}",
+        String::from_utf8_lossy(&direct.stderr)
+    );
+    lingrep()
+        .args(["corpus", "build", "--output"])
+        .arg(&artifact)
+        .arg(&input)
+        .assert()
+        .success();
+    let prepared = lingrep()
+        .args(["tokenize", "--output-format", "conllu", "--corpus"])
+        .arg(&artifact)
+        .output()
+        .unwrap();
+    assert!(prepared.status.success(), "{:?}", prepared.stderr);
+    assert_eq!(direct.stdout, prepared.stdout);
+
+    let exported = std::str::from_utf8(&direct.stdout).unwrap();
+    assert!(exported.ends_with("1\t犬\t犬\tNOUN\t名詞\t_\t0\troot\t_\t_\n\n"));
+    assert!(exported.contains("# lingrep_export = complete 1\n"));
+    assert!(!exported.contains("1-2\t"));
+    assert!(!exported.contains("# translated"));
+    let schema = token_schema();
+    let projection = schema
+        .bind_projection(schema.keys().iter().cloned())
+        .unwrap();
+    let expected: Vec<_> = Reader::new(source.as_bytes(), "input")
+        .collect::<Result<_, _>>()
+        .unwrap();
+    let actual: Vec<_> = Reader::new(exported.as_bytes(), "export")
+        .collect::<Result<_, _>>()
+        .unwrap();
+    assert_eq!(expected.len(), actual.len());
+    for (before, after) in expected.iter().zip(&actual) {
+        assert_eq!(before.sent_id(), after.sent_id());
+        assert_eq!(before.newdoc(), after.newdoc());
+        assert_eq!(before.enhanced_graph(), after.enhanced_graph());
+        let before_words = before.project(&projection).unwrap();
+        let after_words = after.project(&projection).unwrap();
+        assert_eq!(before_words.spans(), after_words.spans());
+        assert_eq!(
+            before_words.with_char_offsets(None),
+            after_words.with_char_offsets(None)
+        );
+    }
+
+    let limited = lingrep()
+        .args(["tokenize", "--output-format", "conllu", "--limit", "1"])
+        .arg(&input)
+        .output()
+        .unwrap();
+    assert!(limited.status.success());
+    assert!(limited.stdout.ends_with(b"\n\n"));
+    assert!(
+        std::str::from_utf8(&limited.stdout)
+            .unwrap()
+            .contains("# lingrep_export = prefix 4\n")
+    );
+    assert_eq!(Reader::new(limited.stdout.as_slice(), "prefix").count(), 1);
+
+    let malformed = directory.path().join("malformed.conllu");
+    std::fs::write(&malformed, format!("{source}invalid row\n\n")).unwrap();
+    let interrupted = lingrep()
+        .args([
+            "tokenize",
+            "--output-format",
+            "conllu",
+            "--batch-sentences",
+            "1",
+        ])
+        .arg(&malformed)
+        .output()
+        .unwrap();
+    assert!(!interrupted.status.success());
+    assert!(
+        !std::str::from_utf8(&interrupted.stdout)
+            .unwrap()
+            .contains("# lingrep_export = ")
+    );
+}
+
+#[test]
+fn conllu_export_writes_missing_syntax_for_morphology() {
+    let directory = TempDir::new().unwrap();
+    let dictionary = MiniDictionary::new();
+    let input = directory.path().join("text.txt");
+    std::fs::write(&input, "猫。\n犬。\n").unwrap();
+
+    let output = lingrep()
+        .args(["tokenize", "--output-format", "conllu", "--dict-path"])
+        .arg(dictionary.path())
+        .arg(&input)
+        .output()
+        .unwrap();
+    assert!(output.status.success(), "{:?}", output.stderr);
+    let stdout = std::str::from_utf8(&output.stdout).unwrap();
+    assert!(stdout.ends_with("\n\n"));
+    assert!(stdout.contains("# lingrep_export = complete 2\n"));
+    for row in stdout
+        .lines()
+        .filter(|line| !line.starts_with('#') && !line.is_empty())
+    {
+        let columns: Vec<_> = row.split('\t').collect();
+        assert_eq!(columns.len(), 10);
+        assert_eq!(&columns[6..9], &["_", "_", "_"]);
+    }
+    let sentences = lingrep_core::corpus::conllu::Reader::new(stdout.as_bytes(), "morphology")
+        .collect::<Result<Vec<_>, _>>()
+        .unwrap();
+    assert_eq!(sentences.len(), 2);
+    assert_eq!(sentences[0].sent_id(), Some("lingrep-0"));
+    assert_eq!(sentences[0].text(), "猫。");
+    assert_eq!(sentences[1].sent_id(), Some("lingrep-1"));
+}

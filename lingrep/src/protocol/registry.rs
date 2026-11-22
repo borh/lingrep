@@ -1,4 +1,4 @@
-use super::discovery::{ContractSpec, ContractSummary};
+use super::discovery::{ContractKind, ContractSpec, ContractSummary};
 use super::{
     ContractId, attributes, capabilities, check, completions, contract, contrast, diagnostic,
     dictionary, disk, doctor, invocation, manpages, neighbors, prune, query, sources, status,
@@ -7,6 +7,12 @@ use super::{
 
 pub fn get(id: ContractId) -> ContractSpec {
     match id {
+        ContractId::Conllu => ContractSpec::Conllu(ContractSummary {
+            id,
+            kind: ContractKind::Conllu,
+            owners: &["tokenize"],
+            summary: "CoNLL-U corpus export selected by --output-format conllu.",
+        }),
         ContractId::Attributes => attributes::contract(),
         ContractId::AttributesTsv => crate::output::attributes_contract(),
         ContractId::Query => query::contract(),
