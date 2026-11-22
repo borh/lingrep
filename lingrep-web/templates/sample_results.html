@@ -1,7 +1,7 @@
 {% import "macros.html" as macros %}
 <section class="sample-results" aria-live="polite">
 {% match run %}{% when Some with (run) %}
-  <p class="sample-run" data-sample-run><span data-i18n="sample.tokenized_by">Sample tokenized by</span> <code>{{ run.analyzer }}</code>{% match run.corpus_analyzer %}{% when Some with (corpus) %} <span class="sample-run-warning" data-sample-corpus-differs><span data-i18n="sample.corpus_differs">The selected corpus uses a different token schema. Its analyzer is</span> <code>{{ corpus }}</code><span data-i18n="sample.corpus_differs_note">. Corpus searches can return different matches.</span></span>{% when None %}{% endmatch %}</p>
+  <p class="sample-run" data-sample-run>{% if run.stored %}<span data-sample-stored data-i18n="sample.stored_tokens">Tokens read from the corpus artifact, analyzed by</span>{% else %}<span data-i18n="sample.tokenized_by">Sample tokenized by</span>{% endif %} <code>{{ run.analyzer }}</code>{% match run.corpus_analyzer %}{% when Some with (corpus) %} <span class="sample-run-warning" data-sample-corpus-differs><span data-i18n="sample.corpus_differs">The selected corpus uses a different token schema. Its analyzer is</span> <code>{{ corpus }}</code><span data-i18n="sample.corpus_differs_note">. Corpus searches can return different matches.</span></span>{% when None %}{% endmatch %}</p>
   {% match run.binding %}
   {% when SampleBinding::Bound with { unavailable } %}
   {% if unavailable.len() > 0 %}
@@ -31,6 +31,16 @@
     </ul>
     {% else %}
     <p class="sample-claims-summary" data-i18n="sample.claims_hold" data-i18n-args='{"checked": {{ report.checked }}}'>Example and counterexample checks passed ({{ report.checked }}).</p>
+    {% endif %}
+    {% if report.vacuous.len() > 0 %}
+    <div class="sample-claims-vacuous" data-sample-claims-vacuous>
+      <p data-i18n="sample.claims_vacuous" data-i18n-args='{"count": {{ report.vacuous.len() }}}'>Counterexamples that do not test a constraint ({{ report.vacuous.len() }}). The definition does not match them with any one attribute test, token element or lookaround removed.</p>
+      <ul>
+      {% for claim in report.vacuous %}
+        <li><code>{{ claim.definition }}</code> <span lang="ja">{{ claim.example }}</span> <span class="muted" data-i18n="sample.claims_vacuous_tried" data-i18n-args='{"tried": {{ claim.tried }}}'>({{ claim.tried }} relaxations tried)</span></li>
+      {% endfor %}
+      </ul>
+    </div>
     {% endif %}
     <p class="sample-claims-note" data-i18n="sample.claims_note">These checks compare the catalog's expectations with match results from the sample tokenizer.</p>
   </section>
@@ -101,7 +111,7 @@
       <span class="sample-match-span">[{{ m.start }}..{{ m.end }}] {{ m.pattern_name }}</span>
       {% match m.add_example %}{% when Some with (edit) %}<button type="button" class="btn btn-secondary btn-compact" data-claim-insert="examples" data-claim-offset="{{ edit.offset }}" data-claim-text="{{ edit.text }}" data-claim-expects="{{ edit.expects }}"><span data-i18n="sample.add_example">Add this sentence to the definition's examples</span></button>{% when None %}{% endmatch %}
       <div class="kwic-token-ribbon">
-      {% for t in m.tokens %}<button type="button" class="kwic-token kwic-token-match" lang="ja" data-sample-token="{{ t.index }}" aria-pressed="false"{% if !t.pos.is_empty() || !t.lemma.is_empty() %} title="{{ t.pos }}{% if !t.pos.is_empty() && !t.lemma.is_empty() %} · {% endif %}{{ t.lemma }}{% if !t.cform.is_empty() %} · {{ t.cform }}{% endif %}"{% endif %}>{{ t.orth }}</button>{% endfor %}
+      {% for t in m.tokens %}<button type="button" class="kwic-token kwic-token-match" lang="ja" data-sample-token="{{ t.index }}"{% if !t.source_ranges.is_empty() %} data-source-ranges="{{ t.source_ranges }}"{% endif %} aria-pressed="false"{% if !t.pos.is_empty() || !t.lemma.is_empty() %} title="{{ t.pos }}{% if !t.pos.is_empty() && !t.lemma.is_empty() %} · {% endif %}{{ t.lemma }}{% if !t.cform.is_empty() %} · {{ t.cform }}{% endif %}"{% endif %}>{{ t.orth }}</button>{% endfor %}
       </div>
       {% call macros::capture_lane(m.capture_lanes.iter(), "sample-capture-{}"|format(m.render_index), m.tokens.len()) %}{% endcall %}
       {% for capture in m.captures %}

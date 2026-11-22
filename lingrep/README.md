@@ -23,6 +23,7 @@ ling coverage
 ling explore
 ling serve
 ling corpus build|inspect|inventory|variants|disk|prune|render
+ling diff
 ling neighbors
 ling dictionary install
 ling analyzer prepare

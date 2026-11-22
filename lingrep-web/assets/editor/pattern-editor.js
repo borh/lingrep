@@ -53,6 +53,18 @@ function followedLink() {
     performance.getEntriesByType("navigation")[0]?.type === "navigate";
 }
 
+/** The pattern a Workbench hit's debug link left for the Sample page, once. */
+function takeHandoff(textarea) {
+  if (textarea.id !== "sample-pattern") return null;
+  try {
+    const handed = sessionStorage.getItem("lingrep:sample-pattern-handoff");
+    sessionStorage.removeItem("lingrep:sample-pattern-handoff");
+    return handed;
+  } catch (_error) {
+    return null;
+  }
+}
+
 function attachDraftPersistence(textarea) {
   if (textarea.dataset.lxDraft === "attached") return;
   textarea.dataset.lxDraft = "attached";
@@ -62,6 +74,8 @@ function attachDraftPersistence(textarea) {
     followedLink: followedLink(),
   });
   if (draft !== null) textarea.value = draft;
+  const handed = takeHandoff(textarea);
+  if (handed !== null) textarea.value = handed;
   textarea.addEventListener("input", () => {
     try {
       localStorage.setItem(draftKey(textarea), storedDraft(textarea.defaultValue, textarea.value));
@@ -947,6 +961,125 @@ export function patternDefinitions(source, { includeDuplicates = false } = {}) {
   return definitions;
 }
 
+/** The name of the pattern or fragment whose `:=` line is the last at or before `offset`, or null. */
+export function definitionAtOffset(source, offset) {
+  const re = /(?:^|\n)[ \t]*(?:(pattern|fragment|set|lexicon)\s+)?([^\s:=#()[\]{},.|&@$]+)(?:\s+by\s+\[[^\]]+\])?\s*:=/g;
+  let found = null;
+  let match;
+  while ((match = re.exec(source)) !== null) {
+    const lineStart = match.index + (match[0].startsWith("\n") ? 1 : 0);
+    if (lineStart > offset && found !== null) break;
+    found = { name: match[2], kind: match[1] ?? "pattern" };
+  }
+  return found && ["pattern", "fragment"].includes(found.kind) ? found.name : null;
+}
+
+// The diagram panel named by `data-pattern-diagram="<textarea id>"`. It loads
+// only while open. Returns the function to call when the source or the cursor
+// changes.
+/**
+ * The Workbench panel that compares the editor's pattern with the pattern of
+ * the last search over the selected corpus.
+ */
+function patternCompare(state, textarea) {
+  const panel = document.querySelector(`[data-pattern-compare="${textarea.id}"]`);
+  if (!panel) return;
+  const body = panel.querySelector("[data-compare-body]");
+  const note = panel.querySelector("[data-compare-note]");
+  const say = (key) => {
+    note.dataset.i18n = key;
+    note.textContent = t(key);
+  };
+  panel.querySelector("[data-compare-run]").addEventListener("click", () => {
+    const source = state.source();
+    if (state.submittedSource === undefined) return say("diff.no_search");
+    if (state.submittedSource === source) return say("diff.same");
+    const form = textarea.closest("form");
+    const field = (name) => form?.querySelector(`[name="${name}"]`)?.value ?? "";
+    say("diff.running");
+    body.replaceChildren();
+    void globalThis.htmx.ajax("POST", "api/pattern/compare", {
+      target: body,
+      swap: "innerHTML",
+      values: {
+        a: state.submittedSource,
+        b: source,
+        corpus: field("corpus"),
+        level: panel.querySelector("[data-compare-level]").value,
+        search_scope: field("search_scope"),
+        overlaps: field("overlaps"),
+      },
+    }).then(() => say("diff.help"), () => say("diff.failed"));
+  });
+}
+
+function patternDiagram(state, textarea) {
+  const panel = document.querySelector(`[data-pattern-diagram="${textarea.id}"]`);
+  if (!panel) return () => {};
+  const body = panel.querySelector("[data-diagram-body]");
+  const note = panel.querySelector("[data-diagram-note]");
+  const nameNode = panel.querySelector("[data-diagram-name]");
+  const expand = panel.querySelector("[data-diagram-expand]");
+  let controller = null;
+  let timer = null;
+  let shown = null;
+  const say = (key) => {
+    if (key) note.dataset.i18n = key;
+    else delete note.dataset.i18n;
+    note.textContent = key ? t(key) : "";
+  };
+  const load = async () => {
+    if (!panel.open) return;
+    const source = state.source();
+    const offset = state.view?.state.selection.main.head ?? textarea.selectionStart ?? 0;
+    const definition = definitionAtOffset(source, offset);
+    if (definition === null) {
+      if (!body.firstChild) say("editor.diagram_none");
+      return;
+    }
+    const key = JSON.stringify([source, definition, expand.checked]);
+    if (key === shown) return;
+    controller?.abort();
+    controller = new AbortController();
+    try {
+      const response = await fetch("api/pattern/diagram", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ source, definition, expand: expand.checked }),
+        signal: controller.signal,
+      });
+      const result = await response.json();
+      if (result.status === "rendered") {
+        const svg = new DOMParser().parseFromString(result.svg, "image/svg+xml").documentElement;
+        body.replaceChildren(document.importNode(svg, true));
+        nameNode.textContent = definition;
+        panel.removeAttribute("data-stale");
+        shown = key;
+        say(null);
+      } else if (result.status === "invalid") {
+        panel.toggleAttribute("data-stale", Boolean(body.firstChild));
+        say(body.firstChild ? "editor.diagram_stale" : "editor.diagram_invalid");
+      } else if (result.status === "unavailable") {
+        body.replaceChildren();
+        nameNode.textContent = definition;
+        panel.removeAttribute("data-stale");
+        delete note.dataset.i18n;
+        note.textContent = result.reason;
+      } else {
+        say("editor.diagram_failed");
+      }
+    } catch (error) {
+      if (error?.name !== "AbortError") say("editor.diagram_failed");
+    }
+  };
+  panel.addEventListener("toggle", load);
+  expand.addEventListener("change", load);
+  return () => {
+    clearTimeout(timer);
+    timer = setTimeout(load, CHECK_DELAY_MS);
+  };
+}
+
 /// One-line preview of a lingrep patterns source for folded UI chrome: the first actual
 /// pattern name. Grammar-level statements everyone ships (`defaults`,
 /// `set NAME := {…}`, `fragment NAME := …`) explain nothing to a researcher,
@@ -1465,6 +1598,34 @@ function patternTreeSitter(state, cm) {
   );
 }
 
+// Marks `state.sampleSource`, the source ranges that consumed the sample token
+// selected in the results. `sample:source` on the textarea sets them.
+function sampleSourceMarks(state, cm) {
+  const { ViewPlugin, Decoration } = cm;
+  const compute = (view) => {
+    const length = view.state.doc.length;
+    const ranges = (state.sampleSource ?? [])
+      .filter(([from, to]) => from < to && to <= length)
+      .sort(([a], [b]) => a - b);
+    return Decoration.set(
+      ranges.map(([from, to]) => Decoration.mark({ class: "cm-sample-source" }).range(from, to)),
+      true,
+    );
+  };
+  return ViewPlugin.fromClass(
+    class {
+      constructor(view) {
+        this.decorations = compute(view);
+      }
+      update(update) {
+        if (update.docChanged) state.sampleSource = [];
+        this.decorations = compute(update.view);
+      }
+    },
+    { decorations: (plugin) => plugin.decorations },
+  );
+}
+
 const PORTABLE_ATTRIBUTES = PATTERN_ATTRIBUTES.map(([key]) => key).filter((key) => !key.includes("."));
 
 export function localSyntaxMessage(errorText) {
@@ -1890,6 +2051,14 @@ async function enhance(textarea, grammar, cm, options = {}) {
     });
   }
   states.set(textarea, state);
+  state.refreshDiagram = patternDiagram(state, textarea);
+  patternCompare(state, textarea);
+  textarea.addEventListener("sample:source", (event) => {
+    state.sampleSource = event.detail?.ranges ?? [];
+    if (!state.view) return;
+    const [first] = state.sampleSource;
+    state.view.dispatch(first ? { effects: cm.EditorView.scrollIntoView(first[0]) } : {});
+  });
 
   const view = new cm.EditorView({
     parent: wrapper,
@@ -1910,6 +2079,15 @@ async function enhance(textarea, grammar, cm, options = {}) {
       }),
       cm.lintGutter(),
       patternHoverTooltip(cm),
+      sampleSourceMarks(state, cm),
+      cm.EditorView.updateListener.of((update) => {
+        if (!update.selectionSet && !update.docChanged) return;
+        state.refreshDiagram();
+        textarea.dispatchEvent(new CustomEvent("pattern:cursor", {
+          bubbles: true,
+          detail: { offset: update.docChanged ? null : update.state.selection.main.head },
+        }));
+      }),
       patternSignatureHelp(cm),
       patternTreeSitter(state, cm),
       patternTheme(cm),

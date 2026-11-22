@@ -1069,7 +1069,7 @@ expression: baseline
         },
         "pattern ある": {
             "category": "\"命題内容\"",
-            "examples": "[\"可能性がある\",\"問題がある\"]",
+            "examples": "[\"問題があると考えられる\",\"課題があると思われる\"]",
             "groups": "[\"s0_conditional\"]",
             "layer": "\"S0\"",
             "priority_order": "3",
@@ -1088,7 +1088,7 @@ expression: baseline
         },
         "pattern こと": {
             "category": "\"S1d 名詞形式\"",
-            "examples": "[\"ついていないことがある\",\"経験されることがある\",\"経験されることもある\"]",
+            "examples": "[\"ついていないことがある\",\"経験されることがある\",\"求めることもできる\"]",
             "layer": "\"S1\"",
             "priority_order": "2",
             "research_classes": "[\"S3D\"]",
@@ -1247,7 +1247,7 @@ expression: baseline
         },
         "pattern だ": {
             "category": "\"その他\"",
-            "examples": "[\"問題だ\",\"重要である\",\"結果であった\"]",
+            "examples": "[\"問題だ\",\"それは事実である\",\"結果であった\"]",
             "layer": "\"S0\"",
             "priority_order": "3",
             "research_classes": "[\"S1A\"]",
@@ -1586,7 +1586,7 @@ expression: baseline
         },
         "pattern なる": {
             "category": "\"命題内容\"",
-            "examples": "[\"問題となる\",\"大きくなる\"]",
+            "examples": "[\"明らかになると考えられる\",\"大きくなると思われる\"]",
             "groups": "[\"s0_conditional\"]",
             "layer": "\"S0\"",
             "priority_order": "3",
@@ -1856,7 +1856,7 @@ expression: baseline
         },
         "pattern 行う": {
             "category": "\"命題内容\"",
-            "examples": "[\"分析を行う\",\"検討を行う\"]",
+            "examples": "[\"分析を行うと考えられる\",\"検討を行うのである\"]",
             "groups": "[\"s0_conditional\"]",
             "layer": "\"S0\"",
             "priority_order": "3",

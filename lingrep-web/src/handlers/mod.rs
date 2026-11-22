@@ -11,6 +11,7 @@ pub mod inspect;
 mod live_summary;
 pub mod neighbors;
 mod overlaps;
+mod pattern_compare;
 pub mod pattern_detail;
 pub mod pattern_editor;
 pub mod permalink;

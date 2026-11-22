@@ -5040,7 +5040,7 @@ expression: repository_catalog_fingerprints()
                     ),
                     (
                         "examples",
-                        "- ついていないことがある\n- 経験されることがある\n- 経験されることもある\n",
+                        "- ついていないことがある\n- 経験されることがある\n- 求めることもできる\n",
                     ),
                     (
                         "layer",
@@ -6132,7 +6132,7 @@ expression: repository_catalog_fingerprints()
                     ),
                     (
                         "examples",
-                        "- 問題だ\n- 重要である\n- 結果であった\n",
+                        "- 問題だ\n- それは事実である\n- 結果であった\n",
                     ),
                     (
                         "layer",
@@ -6165,7 +6165,7 @@ expression: repository_catalog_fingerprints()
                     ),
                     (
                         "examples",
-                        "- 問題となる\n- 大きくなる\n",
+                        "- 明らかになると考えられる\n- 大きくなると思われる\n",
                     ),
                     (
                         "groups",
@@ -6202,7 +6202,7 @@ expression: repository_catalog_fingerprints()
                     ),
                     (
                         "examples",
-                        "- 可能性がある\n- 問題がある\n",
+                        "- 問題があると考えられる\n- 課題があると思われる\n",
                     ),
                     (
                         "groups",
@@ -6239,7 +6239,7 @@ expression: repository_catalog_fingerprints()
                     ),
                     (
                         "examples",
-                        "- 分析を行う\n- 検討を行う\n",
+                        "- 分析を行うと考えられる\n- 検討を行うのである\n",
                     ),
                     (
                         "groups",

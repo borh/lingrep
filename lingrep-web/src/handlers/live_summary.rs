@@ -80,26 +80,9 @@ async fn summary(State(store): State<RequestStore>, Json(request): Json<Request>
     let Some(ready) = slot.runtime.ready().await else {
         return failure(StatusCode::CONFLICT, "corpus_not_ready");
     };
-    let clause = if scope.is_unrestricted() {
-        None
-    } else {
-        let Ok(provenance) = ready.provenance().await else {
-            return failure(StatusCode::CONFLICT, "corpus_unavailable");
-        };
-        let Ok(labels) = provenance
-            .section_coverage(lingrep_corpus::MAX_SECTION_LABELS)
-            .await
-        else {
-            return failure(StatusCode::CONFLICT, "corpus_unavailable");
-        };
-        let all = labels
-            .into_iter()
-            .map(|label| label.label)
-            .collect::<Vec<_>>();
-        match scope.where_clause(&all) {
-            Ok(clause) => clause,
-            Err(_) => return failure(StatusCode::UNPROCESSABLE_ENTITY, "unsupported_scope"),
-        }
+    let clause = match scope_clause(&ready, &scope).await {
+        Ok(clause) => clause,
+        Err((status, code)) => return failure(status, code),
     };
     let Ok(artifact) = std::fs::canonicalize(ready.artifact.directory()) else {
         return failure(StatusCode::CONFLICT, "corpus_unavailable");
@@ -160,7 +143,31 @@ async fn summarize_admitted(
     .await
 }
 
-fn program(executable: &std::path::Path) -> std::io::Result<PathBuf> {
+/// The `--where` clause that selects `scope` in `ready`, or `None` for the
+/// whole corpus.
+pub(super) async fn scope_clause(
+    ready: &crate::corpus_runtime::ReadyCorpus,
+    scope: &SearchScope,
+) -> Result<Option<String>, (StatusCode, &'static str)> {
+    if scope.is_unrestricted() {
+        return Ok(None);
+    }
+    let unavailable = (StatusCode::CONFLICT, "corpus_unavailable");
+    let provenance = ready.provenance().await.map_err(|_| unavailable)?;
+    let labels = provenance
+        .section_coverage(lingrep_corpus::MAX_SECTION_LABELS)
+        .await
+        .map_err(|_| unavailable)?;
+    let all = labels
+        .into_iter()
+        .map(|label| label.label)
+        .collect::<Vec<_>>();
+    scope
+        .where_clause(&all)
+        .map_err(|_| (StatusCode::UNPROCESSABLE_ENTITY, "unsupported_scope"))
+}
+
+pub(super) fn program(executable: &std::path::Path) -> std::io::Result<PathBuf> {
     let sibling = executable.with_file_name(if cfg!(windows) { "ling.exe" } else { "ling" });
     if sibling.is_file() {
         Ok(sibling)
@@ -172,7 +179,7 @@ fn program(executable: &std::path::Path) -> std::io::Result<PathBuf> {
     }
 }
 
-async fn bounded_read(
+pub(super) async fn bounded_read(
     reader: impl tokio::io::AsyncRead + Unpin,
     limit: u64,
 ) -> std::io::Result<Vec<u8>> {

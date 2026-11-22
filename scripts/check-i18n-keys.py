@@ -35,7 +35,7 @@ PLACEHOLDER = re.compile(r"\{(\w+)\}")
 # Namespaced keys quoted anywhere in source (covers conditional t() calls and
 # the i18n-key fields populated server-side in Rust).
 NAMESPACED = re.compile(
-    r'"((?:banner|capture|corpus|detail|editor|group|hero|help|hit|inspector|library|nav|notice|reading|results|sample|status|token_inspection|views|frequency|compare|picker)\.[\w]+)"'
+    r'"((?:banner|capture|corpus|detail|editor|group|hero|help|hit|inspector|library|nav|notice|reading|results|sample|status|token_inspection|views|frequency|compare|diff|picker)\.[\w]+)"'
 )
 # Rust sources that name an i18n key directly: a key the server chooses (a
 # landing notice, a refusal banner) is emitted through `data-i18n="{{ … }}"`,
@@ -46,6 +46,7 @@ RUST = [
     WEB / "src" / "handlers" / "index.rs",
     WEB / "src" / "handlers" / "search.rs",
     WEB / "src" / "handlers" / "mod.rs",
+    WEB / "src" / "handlers" / "pattern_compare.rs",
     WEB / "src" / "handlers" / "pattern_editor.rs",
     WEB / "src" / "handlers" / "reading.rs",
     WEB / "src" / "handlers" / "sample.rs",

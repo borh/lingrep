@@ -146,6 +146,95 @@ fn explicit_example_verification_reports_claims_identity_and_policy_failures() {
 }
 
 #[test]
+fn verification_reports_vacuous_counterexamples_and_candidates_from_a_sentence_file() {
+    use lingrep_core::testing::MiniDictionary;
+    let directory = tempfile::tempdir().unwrap();
+    let path = directory.path().join("claims.lx");
+    let sentences = directory.path().join("sentences.txt");
+    let dictionary = MiniDictionary::new();
+    let catalog = "counterexamples: [\"猫鳥\", \"鳥鳥鳥\"]\np := [text=猫] [text=犬].";
+    std::fs::write(&path, catalog).unwrap();
+    std::fs::write(&sentences, "猫犬\n\n犬\n鳥犬\n猫鳥\n鳥\n").unwrap();
+    let check = |format: &[&str]| {
+        let output = lingrep_without_dictionary()
+            .args(format)
+            .args(["check", "--verify-examples", "--dict-path"])
+            .arg(dictionary.path())
+            .arg("--propose-counterexamples")
+            .arg(&sentences)
+            .arg("--patterns")
+            .arg(&path)
+            .output()
+            .unwrap();
+        // A vacuous counterexample holds, so verification still passes.
+        assert_eq!(
+            output.status.code(),
+            Some(0),
+            "{}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        output.stdout
+    };
+
+    let examples = &parse_jsonl(&check(&["--json"]))[0]["data"]["examples"];
+    let vacuous = &examples["vacuous_counterexamples"];
+    assert_eq!(vacuous.as_array().map(Vec::len), Some(1));
+    assert_eq!(vacuous[0]["example"], "鳥鳥鳥");
+    let kinds = |relaxations: &serde_json::Value| {
+        relaxations
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|relaxation| relaxation["kind"].as_str().unwrap().to_owned())
+            .collect::<Vec<_>>()
+    };
+    assert_eq!(
+        kinds(&vacuous[0]["relaxations_tried"]),
+        ["attribute_test", "element", "attribute_test", "element"]
+    );
+
+    let scan = &examples["counterexample_candidates"];
+    assert_eq!(scan["sentences_scanned"], 5);
+    assert_eq!(scan["definitions_evaluated"], 1);
+    let candidates = scan["candidates"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|candidate| {
+            (
+                candidate["sentence"].as_str().unwrap().to_owned(),
+                candidate["relaxation"]["kind"].as_str().unwrap().to_owned(),
+                candidate["relaxation"]["element"]["byte_start"]
+                    .as_u64()
+                    .unwrap() as usize,
+            )
+        })
+        .collect::<Vec<_>>();
+    let first = catalog.find("[text=猫]").unwrap();
+    let second = catalog.find("[text=犬]").unwrap();
+    // `猫犬` matches as written and `鳥` is two relaxations away.
+    assert_eq!(
+        candidates,
+        [
+            ("犬".to_owned(), "element".to_owned(), first),
+            ("鳥犬".to_owned(), "attribute_test".to_owned(), first),
+            ("猫鳥".to_owned(), "attribute_test".to_owned(), second),
+        ]
+    );
+
+    let human = String::from_utf8(check(&[])).unwrap();
+    assert!(
+        human.contains("p: vacuous_counterexample: 鳥鳥鳥"),
+        "{human}"
+    );
+    assert!(
+        human.contains("5 sentence(s) scanned against 1 definition(s)"),
+        "{human}"
+    );
+    assert!(human.contains("p: candidate: 鳥犬"), "{human}");
+}
+
+#[test]
 fn a_failed_example_states_where_the_furthest_attempt_stopped() {
     use lingrep_core::testing::MiniDictionary;
     let directory = tempfile::tempdir().unwrap();

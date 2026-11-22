@@ -2081,6 +2081,68 @@ fn a_profile_lists_the_most_frequent_values_and_the_chosen_ones_and_bins_a_wide_
 }
 
 #[test]
+fn the_workbench_comparison_lists_one_sided_occurrences_with_reader_links_and_its_coverage() {
+    let fixture = fixture();
+    let server = served(&fixture, &[]);
+    let _ = get(&server, "/");
+    let compare = |a: &str, b: &str, level: &str| {
+        let body = format!("a={}&b={}&level={level}", encode(a), encode(b));
+        for _ in 0..200 {
+            let mut stream = TcpStream::connect(&server.address).unwrap();
+            write!(stream, "POST /api/pattern/compare HTTP/1.1\r\nHost: {}\r\nContent-Type: application/x-www-form-urlencoded\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}", server.address, body.len(), body).unwrap();
+            let mut response = String::new();
+            stream.read_to_string(&mut response).unwrap();
+            let retry = ["diff.busy", "diff.corpus_not_ready"]
+                .iter()
+                .any(|key| response.contains(key));
+            if !retry {
+                return response;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(20));
+        }
+        panic!("the comparison stayed busy");
+    };
+    let cats = "p := (?<w> [text=猫]).";
+
+    // The same spans under another capture name: equal at the span level,
+    // different published records.
+    let renamed = "p := (?<v> [text=猫]).";
+    let span = compare(cats, renamed, "span");
+    assert!(span.contains(r#"data-compare-summary="none""#), "{span}");
+    assert!(span.contains(r#"data-compare-coverage="full""#), "{span}");
+    assert!(!span.contains("equivalent") && !span.contains("identical"));
+    let record = compare(cats, renamed, "record");
+    assert!(
+        record.contains(r#"data-compare-level="record""#),
+        "{record}"
+    );
+    assert!(
+        record.contains(r#"data-compare-summary="differs""#),
+        "{record}"
+    );
+    assert!(record.contains(r#"data-compare-side="a_only""#));
+    assert!(record.contains(r#"data-compare-side="b_only""#));
+
+    // A wider pattern: every additional occurrence links to the reader.
+    let wider = compare(cats, "p := (?<w> [text in {猫, 犬}]).", "span");
+    assert!(
+        wider.contains(r#"data-compare-summary="differs""#),
+        "{wider}"
+    );
+    assert!(!wider.contains(r#"data-compare-side="a_only""#));
+    let links = wider.matches("data-compare-read=").count();
+    assert_eq!(
+        links,
+        wider.matches(r#"data-compare-side="b_only""#).count()
+    );
+    assert_eq!(links, 4, "{wider}");
+    assert!(wider.contains("#read="));
+
+    let invalid = compare(cats, "p := [", "span");
+    assert!(invalid.contains(r#"data-i18n="diff.invalid""#), "{invalid}");
+}
+
+#[test]
 fn edited_capture_keys_run_fresh_cli_summaries_without_rewriting_saved_tables() {
     let source = "key: [$word.text]\npattern p := (?<word> []).\n";
     let fixture = fixture_with(source, DOCUMENTS);

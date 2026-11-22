@@ -20,8 +20,71 @@ use crate::state::RequestStore;
 pub fn routes() -> Router<RequestStore> {
     Router::new()
         .merge(super::live_summary::routes())
+        .merge(super::pattern_compare::routes())
         .route("/check", post(check))
         .route("/format", post(format))
+        .route("/diagram", post(diagram))
+}
+
+#[derive(Deserialize)]
+struct DiagramRequest {
+    source: String,
+    definition: String,
+    #[serde(default)]
+    expand: bool,
+}
+
+#[derive(Serialize)]
+#[serde(tag = "status", rename_all = "snake_case")]
+enum DiagramResponse {
+    /// The `DiagramCatalog` rendering `ling check --diagram` produces.
+    Rendered {
+        svg: String,
+    },
+    /// The source does not compile.
+    Invalid,
+    /// The source has no pattern or fragment of that name, or its diagram
+    /// exceeds a rendering limit.
+    Unavailable {
+        reason: String,
+    },
+    BadRequest,
+}
+
+const DIAGRAM_COLUMNS: usize = 100;
+
+async fn diagram(
+    State(store): State<RequestStore>,
+    request: Result<Json<DiagramRequest>, JsonRejection>,
+) -> Response {
+    use lingrep_core::fsm::{CompileLimits, DiagramCatalog, DiagramError, PatternSource};
+    let Ok(Json(request)) = request else {
+        return (StatusCode::BAD_REQUEST, Json(DiagramResponse::BadRequest)).into_response();
+    };
+    let rendered = store
+        .coordinators
+        .pattern_task(move || {
+            DiagramCatalog::parse(
+                PatternSource::named(WEB_PATTERN_SOURCE_NAME, &request.source),
+                CompileLimits::default(),
+            )?
+            .diagram(&request.definition, request.expand)?
+            .render_embedded_svg(DIAGRAM_COLUMNS)
+        })
+        .await;
+    match rendered {
+        Err(error) => super::pattern_task_error(error),
+        Ok(Ok(svg)) => Json(DiagramResponse::Rendered { svg }).into_response(),
+        Ok(Err(DiagramError::Compile(_))) => (
+            StatusCode::UNPROCESSABLE_ENTITY,
+            Json(DiagramResponse::Invalid),
+        )
+            .into_response(),
+        Ok(Err(error)) => Json(DiagramResponse::Unavailable {
+            reason: error.to_string(),
+        })
+        .into_response(),
+    }
 }
 
 #[derive(Deserialize)]

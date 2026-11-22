@@ -39,6 +39,7 @@ pub fn get(id: ContractId) -> ContractSpec {
         ContractId::Table => table::contract(),
         ContractId::Contrast => contrast::contract(),
         ContractId::Neighbors => neighbors::contract(),
+        ContractId::Diff => super::diff::contract(),
         ContractId::WindowCounts => window_counts::contract(),
     }
 }

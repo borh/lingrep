@@ -433,6 +433,10 @@ async fn kwic_views_surface_section_and_document_provenance() {
         !detail0.contains("methods"),
         "the hit outside the div must show no section"
     );
+    assert!(
+        detail0.contains(r#"data-debug-sentence=""#),
+        "a hit links to the Sample debugger"
+    );
     let detail1 = get(&store, "/hit-detail/prov-e2e/1/0/1").await;
     assert!(detail1.contains("provenance-panel"));
     assert!(detail1.contains("methods"));

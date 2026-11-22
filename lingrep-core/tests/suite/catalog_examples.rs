@@ -74,6 +74,46 @@ fn every_tracked_catalog_example_matches_its_own_definition() {
     );
 }
 
+/// Examples in `patterns/sf-experimental.lx` whose definition matches and
+/// result policy never publishes.
+///
+/// `こと`, `だろう`, `としておく`, `とみられる` and `のだ` match every span that
+/// `ことも`, `であろう`, `としておこう`, `と見られる` and `のである` match, in the
+/// same layer, and `resolve all partition: layer` ranks equal spans by
+/// pattern name.
+const SHADOWED_EXAMPLES: [(&str, &str); 7] = [
+    ("ことも", "創建時の植物系葺材に価値を求めることも可能である"),
+    ("であろう", "そうであろう"),
+    ("であろう", "可能性が高いであろう"),
+    ("としておこう", "仮定としておこう"),
+    ("と見られる", "このように変更がなされたと見られる"),
+    ("と見られる", "宝珠を失ったと見られる"),
+    ("のである", "それが結論のである"),
+];
+
+#[test]
+fn every_tracked_catalog_example_is_published_except_the_shadowed_ones() {
+    let mut unpublished = Vec::new();
+    for (name, text) in tracked_catalog_sources() {
+        for failure in report_for(&name, &text).post_policy_failures {
+            unpublished.push((name.clone(), failure.definition, failure.example));
+        }
+    }
+    unpublished.sort();
+
+    let expected: Vec<(String, String, String)> = SHADOWED_EXAMPLES
+        .iter()
+        .map(|(definition, example)| {
+            (
+                "patterns/sf-experimental.lx".to_owned(),
+                (*definition).to_owned(),
+                (*example).to_owned(),
+            )
+        })
+        .collect();
+    assert_eq!(unpublished, expected);
+}
+
 #[test]
 fn the_verified_example_counts_are_what_the_catalogs_contain() {
     // Guards the check against becoming vacuous. An empty failure list is the
@@ -306,4 +346,40 @@ fn the_verified_nesting_claim_counts_are_what_the_catalogs_contain() {
     .collect();
 
     assert_eq!(counts, expected);
+}
+
+#[test]
+fn a_counterexample_no_single_relaxation_matches_is_vacuous() {
+    use lingrep_core::fsm::RelaxationOutcome;
+    let (name, text) = tracked_catalog_sources()
+        .into_iter()
+        .find(|(name, _)| name == "patterns/double-wo.lx")
+        .expect("the catalog is tracked");
+    let output = compile_catalog(PatternSource::named(&name, &text), CompileLimits::default())
+        .expect("the catalog compiles");
+    let relax = |sentence: &str| {
+        output.relax_definition(
+            "double_wo_exclude_directional_frame",
+            &tokenize_japanese(sentence)[..],
+        )
+    };
+
+    // The definition's own counterexample is one particle from its example.
+    let RelaxationOutcome::Distinguished { by, .. } = relax("を上へ左手を下") else {
+        panic!("a minimal pair matches under one relaxation");
+    };
+    assert_eq!(
+        by.constraint,
+        lingrep_core::fsm::RelaxedConstraint::AttributeTest {
+            attribute: "unidic.orthbase".to_owned(),
+            test: "=に".to_owned()
+        }
+    );
+
+    // Its final token is a 動詞, which every anchor of the catalog excludes.
+    let RelaxationOutcome::Vacuous { tried } = relax("をいずれ近いうちに実現を目指す")
+    else {
+        panic!("no single relaxation reaches this sentence");
+    };
+    assert!(!tried.is_empty());
 }

@@ -359,6 +359,7 @@ fn claims_are_checked_against_the_definition_and_against_what_policy_publishes()
                     ))
                 ),
             ],
+            vacuous: Vec::new(),
         })
     );
     assert_eq!(run_of("pattern a := 甲.").claims, SampleClaims::Undeclared);
@@ -493,4 +494,125 @@ fn a_sample_sentence_can_be_inserted_into_a_definitions_claims_once() {
 
     let inherited = "defaults\n  examples: [\"犬\"]\nend\npattern p := 猫.";
     assert_eq!(edits(inherited).0, None, "a default's list is not edited");
+}
+
+#[test]
+fn a_match_token_carries_the_source_ranges_of_the_element_and_reference_that_consumed_it() {
+    use lingrep_web::sample::SampleAnalysis;
+    let dictionary = lingrep_core::testing::MiniDictionary::new();
+    let tokenizer =
+        lingrep_core::dictionary::create_tokenizer_from_path(&dictionary.path().to_string_lossy())
+            .expect("the dictionary loads");
+    let plan = lingrep_core::analysis::VibratoPlan::new(tokenizer, dictionary.path())
+        .expect("the plan builds");
+    let source = "fragment 動物 := [text=猫].\npattern p := @動物 [text=と] [text=犬].\n";
+    let report = lingrep_web::sample::analyze_sample(source, "猫と犬", &plan, "test".into());
+    let SampleAnalysis::Matched { matches, .. } = report.analysis else {
+        panic!("猫と犬 matches");
+    };
+    let utf16 = source.encode_utf16().collect::<Vec<_>>();
+    let texts = matches[0]
+        .tokens
+        .iter()
+        .map(|token| {
+            token
+                .source_ranges
+                .split(' ')
+                .map(|range| {
+                    let (from, to) = range.split_once('-').expect("from-to");
+                    String::from_utf16(&utf16[from.parse().unwrap()..to.parse().unwrap()]).unwrap()
+                })
+                .collect::<Vec<_>>()
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(
+        texts,
+        vec![
+            vec!["[text=猫]".to_owned(), "@動物".to_owned()],
+            vec!["[text=と]".to_owned()],
+            vec!["[text=犬]".to_owned()],
+        ]
+    );
+}
+
+#[test]
+fn a_counterexample_that_no_single_relaxation_matches_is_listed_as_vacuous() {
+    use lingrep_web::sample::{SampleClaims, VacuousClaim};
+    // `甲丁` is one token test from `甲 乙`; `丁丁丁` is not within one
+    // relaxation of it.
+    let run = run_of("counterexamples: [\"甲丁\", \"丁丁丁\"] pattern a := 甲 乙.");
+    let SampleClaims::Checked(report) = run.claims else {
+        panic!("the claims are checked");
+    };
+    assert_eq!(report.failures, Vec::new());
+    assert_eq!(
+        report.vacuous,
+        vec![VacuousClaim {
+            definition: "a".into(),
+            example: "丁丁丁".into(),
+            tried: 4,
+        }]
+    );
+}
+
+#[test]
+fn a_stored_dependency_sentence_matches_a_where_clause_the_sample_tokenizer_cannot_bind() {
+    use lingrep_web::sample::{
+        SampleAnalysis, SampleBinding, WhyNotOutcome, analyze_stored_sentence,
+    };
+    let schema = lingrep_core::corpus::conllu::token_schema();
+    let projection = schema
+        .bind_projection(schema.keys().iter().cloned())
+        .expect("the schema projects itself");
+    let stored = |relation: &str| {
+        let conllu = format!(
+            "1\t猫\t猫\tNOUN\t_\t_\t2\t{relation}\t_\t_\n2\t鳴く\t鳴く\tVERB\t_\t_\t0\troot\t_\t_\n"
+        );
+        lingrep_core::corpus::conllu::Reader::new(
+            std::io::BufReader::new(conllu.as_bytes()),
+            "stored-sentence-test",
+        )
+        .next()
+        .expect("one sentence")
+        .expect("parses")
+        .project(&projection)
+        .expect("projects")
+    };
+    let source = "p := (?<n> [upos=NOUN]) (?<v> [upos=VERB]) where $v -[nsubj]-> $n.";
+
+    let report = analyze_stored_sentence(source, &schema, &stored("nsubj"), "conllu".into());
+    let run = report.run.expect("the pattern compiles");
+    assert!(run.stored);
+    assert_eq!(run.analyzer, "conllu");
+    assert_eq!(
+        run.binding,
+        SampleBinding::Bound {
+            unavailable: Vec::new()
+        }
+    );
+    let SampleAnalysis::Matched {
+        tokens, matches, ..
+    } = report.analysis
+    else {
+        panic!("the where clause holds on the stored dependency edge");
+    };
+    assert_eq!(
+        tokens
+            .iter()
+            .map(|token| token.orth.as_str())
+            .collect::<Vec<_>>(),
+        ["猫", "鳴く"]
+    );
+    assert_eq!((matches[0].start, matches[0].end), (0, 2));
+    assert_eq!(matches[0].captures.len(), 2);
+
+    let report = analyze_stored_sentence(source, &schema, &stored("obj"), "conllu".into());
+    assert!(matches!(report.analysis, SampleAnalysis::NoMatches { .. }));
+    let unmatched = report.run.expect("the pattern compiles").unmatched;
+    assert_eq!(
+        unmatched[0].definitions[0].outcome,
+        WhyNotOutcome::WhereRejected {
+            spans: "0..2".into()
+        }
+    );
 }

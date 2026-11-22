@@ -13,6 +13,7 @@ pub mod contract;
 pub mod contrast;
 pub mod diagnostic;
 pub mod dictionary;
+pub mod diff;
 pub mod discovery;
 pub mod disk;
 pub mod doctor;

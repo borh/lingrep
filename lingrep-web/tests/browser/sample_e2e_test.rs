@@ -325,6 +325,150 @@ async fn a_sample_sentence_becomes_an_example_and_a_counterexample_that_are_chec
 }
 
 #[tokio::test]
+async fn a_match_token_and_the_pattern_element_that_consumed_it_highlight_each_other()
+-> WebDriverResult<()> {
+    let Some(driver) = driver().await? else {
+        return Ok(());
+    };
+    let served = serve().await;
+    let set = "const field = document.querySelector(arguments[0]); field.value = arguments[1]; \
+               field.dispatchEvent(new Event('input', {bubbles: true}));";
+    let pattern = "fragment 動物 := [text=猫].\npattern p := @動物 [text=と] [text=犬].\n";
+    let offset = |needle: &str| {
+        pattern
+            .find(needle)
+            .and_then(|byte| pattern.get(..byte))
+            .map(|before| before.encode_utf16().count())
+    };
+    let place_cursor = "return import(new URL('assets/editor/pattern-editor.js', document.baseURI).href) \
+        .then((editor) => { editor.selectSource(document.querySelector('#sample-pattern'), arguments[0]); return true; })";
+    let consumed = "return [...document.querySelectorAll('.sample-match [data-source-hit]')] \
+        .map((token) => token.textContent.trim())";
+    let result: WebDriverResult<()> = async {
+        driver.goto(&served.base).await?;
+        wait_for(&driver, CHECKED, "the editor's first check").await?;
+        driver
+            .execute(set, vec![json!("#sample-text"), json!("猫と犬")])
+            .await?;
+        driver
+            .execute(set, vec![json!("#sample-pattern"), json!(pattern)])
+            .await?;
+        wait_for(
+            &driver,
+            "return document.querySelectorAll('.sample-match').length === 1 \
+             && document.querySelectorAll('.sample-match [data-source-ranges]').length === 3",
+            "one match of three tokens with source ranges",
+        )
+        .await?;
+
+        driver
+            .execute(
+                "document.querySelector('.sample-match [data-source-ranges]').click()",
+                vec![],
+            )
+            .await?;
+        observed(
+            &driver,
+            "return [...document.querySelectorAll('.cm-sample-source')].map((mark) => mark.textContent).join('')",
+            json!("[text=猫]@動物"),
+            "the fragment element and the reference marked for 猫",
+        )
+        .await?;
+
+        driver
+            .execute(place_cursor, vec![json!(offset("@動物 [text=と]").map(|at| at + 1))])
+            .await?;
+        observed(&driver, consumed, json!(["猫"]), "the token the reference consumed").await?;
+        driver
+            .execute(place_cursor, vec![json!(offset("[text=犬]").map(|at| at + 2))])
+            .await?;
+        observed(&driver, consumed, json!(["犬"]), "the token the element consumed").await
+    }
+    .await;
+    driver.quit().await?;
+    served.server.abort();
+    result
+}
+
+#[tokio::test]
+async fn the_editor_shows_the_diagram_of_the_definition_at_the_cursor() -> WebDriverResult<()> {
+    let Some(driver) = driver().await? else {
+        return Ok(());
+    };
+    let served = serve().await;
+    let set = "const field = document.querySelector(arguments[0]); field.value = arguments[1]; \
+               field.dispatchEvent(new Event('input', {bubbles: true}));";
+    let pattern = "fragment N := [text=猫].\npattern p := @N [text=だ].\n";
+    let place_cursor = "return import(new URL('assets/editor/pattern-editor.js', document.baseURI).href) \
+        .then((editor) => { editor.selectSource(document.querySelector('#sample-pattern'), arguments[0]); return true; })";
+    // The definition named, whether the drawing spells out the fragment's
+    // test, and whether the panel is marked stale.
+    let shows = |name: &str, fragment_body: bool, stale: bool| {
+        format!(
+            "const panel = document.querySelector('[data-pattern-diagram]'); \
+             const svg = panel.querySelector('svg.pattern-fsm-svg'); \
+             return !!svg && panel.querySelector('[data-diagram-name]').textContent === '{name}' \
+               && svg.textContent.includes('猫') === {fragment_body} \
+               && panel.hasAttribute('data-stale') === {stale}"
+        )
+    };
+    let result: WebDriverResult<()> = async {
+        driver.goto(&served.base).await?;
+        wait_for(&driver, CHECKED, "the editor's first check").await?;
+        driver
+            .execute(set, vec![json!("#sample-pattern"), json!(pattern)])
+            .await?;
+        driver
+            .execute(
+                "document.querySelector('[data-pattern-diagram]').open = true",
+                vec![],
+            )
+            .await?;
+
+        driver
+            .execute(
+                place_cursor,
+                vec![json!(pattern.encode_utf16().count() - 4)],
+            )
+            .await?;
+        wait_for(&driver, &shows("p", false, false), "the diagram of p").await?;
+        driver
+            .execute(
+                "document.querySelector('[data-diagram-expand]').click()",
+                vec![],
+            )
+            .await?;
+        wait_for(
+            &driver,
+            &shows("p", true, false),
+            "the expanded diagram of p",
+        )
+        .await?;
+
+        driver.execute(place_cursor, vec![json!(12)]).await?;
+        wait_for(&driver, &shows("N", true, false), "the diagram of N").await?;
+
+        driver
+            .execute(
+                set,
+                vec![json!("#sample-pattern"), json!("fragment N := [text=猫.")],
+            )
+            .await?;
+        wait_for(
+            &driver,
+            &shows("N", true, true),
+            "the previous diagram, stale",
+        )
+        .await?;
+        Ok(())
+    }
+    .await;
+    driver.quit().await?;
+    served.server.abort();
+    result
+}
+
+#[tokio::test]
 async fn a_failed_sample_run_shows_the_servers_reason_but_not_a_gateway_page() -> WebDriverResult<()>
 {
     let Some(driver) = driver().await? else {
@@ -476,6 +620,183 @@ async fn the_overlapping_matches_option_changes_which_patterns_are_counted() -> 
             )
             .await?;
         }
+        Ok(())
+    }
+    .await;
+    driver.quit().await?;
+    served.server.abort();
+    result
+}
+
+#[tokio::test]
+async fn a_hit_opens_in_the_sample_debugger_with_stored_tokens_until_the_text_is_edited()
+-> WebDriverResult<()> {
+    let Some(driver) = driver().await? else {
+        return Ok(());
+    };
+    let served = serve().await;
+    let index = format!("{}workbench", served.base.trim_end_matches("sample"));
+    let result: WebDriverResult<()> = async {
+        driver.goto(&index).await?;
+        wait_for(
+            &driver,
+            "return !!document.querySelector('.pattern-editor .cm-content')",
+            "the editor on Corpus Search",
+        )
+        .await?;
+        // The link a hit's detail renders, clicked with the Workbench's pattern.
+        driver
+            .execute(
+                "const pattern = document.querySelector('#corpus-pattern'); \
+                 pattern.value = 'handed := [text=x].\\n'; \
+                 const link = document.createElement('a'); \
+                 link.dataset.debugSentence = '0.0.1'; \
+                 link.href = 'sample'; \
+                 document.body.append(link); \
+                 link.click();",
+                vec![],
+            )
+            .await?;
+        wait_for(
+            &driver,
+            "return location.pathname.endsWith('/sample') \
+               && new URLSearchParams(location.search).get('sentence') === '0' \
+               && !!document.querySelector('[data-sample-stored]')",
+            "the stored sentence in the Sample debugger",
+        )
+        .await?;
+        wait_for(
+            &driver,
+            "return document.querySelector('#sample-pattern').value === 'handed := [text=x].\\n' \
+               && document.querySelectorAll('.sample-match').length === 1 \
+               && document.querySelector('#sample-text').value === 'x'",
+            "the Workbench pattern matching the stored sentence",
+        )
+        .await?;
+        driver
+            .execute(
+                "const text = document.querySelector('#sample-text'); \
+                 text.value = 'x x'; \
+                 text.dispatchEvent(new Event('input', {bubbles: true}));",
+                vec![],
+            )
+            .await?;
+        wait_for(
+            &driver,
+            "return !document.querySelector('[data-sample-stored]') \
+               && !!document.querySelector('[data-sample-run] [data-i18n=\"sample.tokenized_by\"]') \
+               && document.querySelector('[data-corpus-sentence-note] [data-i18n]').dataset.i18n === 'sample.opened_edited'",
+            "the sample tokenizer after the text is edited",
+        )
+        .await?;
+        Ok(())
+    }
+    .await;
+    driver.quit().await?;
+    served.server.abort();
+    result
+}
+
+#[tokio::test]
+async fn the_comparison_panel_posts_the_last_searched_and_the_edited_pattern() -> WebDriverResult<()>
+{
+    let Some(driver) = driver().await? else {
+        return Ok(());
+    };
+    let served = serve().await;
+    let index = format!("{}workbench", served.base.trim_end_matches("sample"));
+    let note = "return document.querySelector('[data-compare-note]').dataset.i18n";
+    let press = "document.querySelector('[data-pattern-compare]').open = true; \
+                 document.querySelector('[data-compare-run]').click();";
+    let set = "const pattern = document.querySelector('#corpus-pattern'); \
+               pattern.value = arguments[0]; \
+               pattern.dispatchEvent(new Event('input', {bubbles: true}));";
+    let result: WebDriverResult<()> = async {
+        driver.goto(&index).await?;
+        wait_for(
+            &driver,
+            "return !!document.querySelector('.pattern-editor .cm-content')",
+            "the editor on Corpus Search",
+        )
+        .await?;
+        driver
+            .execute(
+                "window.__compare = []; \
+                 document.addEventListener('htmx:configRequest', (event) => { \
+                   if (event.detail.path.includes('api/pattern/compare')) __compare.push(event.detail.parameters); });",
+                vec![],
+            )
+            .await?;
+        driver.execute(press, vec![]).await?;
+        wait_for(
+            &driver,
+            &format!("{note} === 'diff.no_search'"),
+            "the note that no search has run",
+        )
+        .await?;
+
+        driver.execute(set, vec![json!("kept := [text=x].\n")]).await?;
+        driver
+            .execute(
+                "document.querySelector('[data-corpus-search]').requestSubmit();",
+                vec![],
+            )
+            .await?;
+        wait_for(
+            &driver,
+            "return !!document.querySelector('#pattern-table tbody tr')",
+            "the search results",
+        )
+        .await?;
+        driver.execute(press, vec![]).await?;
+        wait_for(
+            &driver,
+            &format!("{note} === 'diff.same'"),
+            "the note that the editor holds the searched pattern",
+        )
+        .await?;
+
+        driver.execute(set, vec![json!("kept := [].\n")]).await?;
+        driver
+            .execute(
+                "document.querySelector('[data-compare-level]').value = 'record';",
+                vec![],
+            )
+            .await?;
+        driver.execute(press, vec![]).await?;
+        // The test server has no `ling` binary beside it, so the run itself
+        // fails; the request and the swapped answer are what is checked.
+        wait_for(
+            &driver,
+            "return !!document.querySelector('[data-compare-body] [data-compare-error]')",
+            "the comparison's answer in the panel",
+        )
+        .await?;
+        observed(
+            &driver,
+            "const sent = __compare[0]; \
+             return JSON.stringify([__compare.length, sent.a, sent.b, sent.level, !!sent.corpus])",
+            json!(r#"[1,"kept := [text=x].\n","kept := [].\n","record",true]"#),
+            "the compared patterns and level",
+        )
+        .await?;
+
+        // A one-sided occurrence of a comparison opens the reader on its sentence.
+        driver
+            .execute(
+                "document.querySelector('[data-compare-body]').innerHTML = \
+                   '<a href=\"#read=0.0.1&amp;scope=document\" data-compare-read=\"0.0.1\">x</a>'; \
+                 document.querySelector('[data-compare-read]').click();",
+                vec![],
+            )
+            .await?;
+        wait_for(
+            &driver,
+            "return !!document.querySelector('[data-addressed-reader]')?.open \
+               && location.hash.includes('read=0.0.1')",
+            "the reader on the compared sentence",
+        )
+        .await?;
         Ok(())
     }
     .await;

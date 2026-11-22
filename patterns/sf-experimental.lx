@@ -500,7 +500,7 @@ output_name: "もの"
 role: "research"
 layer: "S1"
 category: "S1d 名詞形式"
-examples: ["ついていないことがある", "経験されることがある", "経験されることもある"]
+examples: ["ついていないことがある", "経験されることがある", "求めることもできる"]
 priority_order: 2
 research_classes: ["S3D"]
 こと := (@KOTO [text=は] | @KOTO [text=が] | @KOTO [text=も] | @KOTO [text=から] | @KOTO [text=に] | @KOTO [text=を]).
@@ -766,7 +766,7 @@ research_classes: ["S3A"]
 role: "research"
 layer: "S0"
 category: "その他"
-examples: ["問題だ", "重要である", "結果であった"]
+examples: ["問題だ", "それは事実である", "結果であった"]
 priority_order: 3
 research_classes: ["S1A"]
 だ := @DA.
@@ -774,7 +774,7 @@ research_classes: ["S1A"]
 role: "research"
 layer: "S0"
 category: "命題内容"
-examples: ["問題となる", "大きくなる"]
+examples: ["明らかになると考えられる", "大きくなると思われる"]
 groups: ["s0_conditional"]
 priority_order: 3
 research_classes: ["S1A"]
@@ -783,7 +783,7 @@ research_classes: ["S1A"]
 role: "research"
 layer: "S0"
 category: "命題内容"
-examples: ["可能性がある", "問題がある"]
+examples: ["問題があると考えられる", "課題があると思われる"]
 groups: ["s0_conditional"]
 priority_order: 3
 research_classes: ["S1A"]
@@ -792,7 +792,7 @@ research_classes: ["S1A"]
 role: "research"
 layer: "S0"
 category: "命題内容"
-examples: ["分析を行う", "検討を行う"]
+examples: ["分析を行うと考えられる", "検討を行うのである"]
 groups: ["s0_conditional"]
 priority_order: 3
 research_classes: ["S1A"]

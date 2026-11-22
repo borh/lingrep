@@ -2,6 +2,7 @@
   <div class="hit-reading-controls">
     <button type="button" class="btn btn-secondary" data-reading-open data-read="{{ read }}" hx-get="api/hit-context/{{ workbench_id }}/{{ revision }}/{{ pattern_key }}/{{ reference_ordinal }}/paragraph" hx-target="#reading-body-{{ pattern_key }}-{{ reference_ordinal }}" hx-swap="innerHTML" hx-sync="#reading-body-{{ pattern_key }}-{{ reference_ordinal }}:replace" data-i18n="reading.show_paragraph">Show paragraph</button>
     <button type="button" class="btn btn-secondary" data-reading-open data-read="{{ read }}" hx-get="api/hit-context/{{ workbench_id }}/{{ revision }}/{{ pattern_key }}/{{ reference_ordinal }}/document" hx-target="#reading-body-{{ pattern_key }}-{{ reference_ordinal }}" hx-swap="innerHTML" hx-sync="#reading-body-{{ pattern_key }}-{{ reference_ordinal }}:replace" data-i18n="reading.open_document">Open document</button>
+    <a class="btn btn-secondary" data-debug-sentence="{{ read }}" href="sample"><span data-i18n="hit.debug_sentence">Debug this sentence with its stored analysis</span></a>
   </div>
   <dialog class="reading-dialog" aria-labelledby="reading-title-{{ pattern_key }}-{{ reference_ordinal }}">
     <header class="reading-dialog-header"><h2 id="reading-title-{{ pattern_key }}-{{ reference_ordinal }}" data-i18n="reading.title">Read match context</h2><form method="dialog"><button type="submit" class="btn btn-secondary" aria-label="Close reader" data-i18n-aria-label="reading.close"><span aria-hidden="true">×</span></button></form></header>

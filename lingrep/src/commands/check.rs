@@ -272,6 +272,10 @@ fn publish_check<W: Write>(
                         }
                     }
                 }
+                for line in counterexample_lines(examples) {
+                    writeln!(writer, "{}", SafeText::from_untrusted(&line))
+                        .map_err(crate::protocol::OutputError::from)?;
+                }
             }
             if let Some(binding) = &data.binding {
                 if let Some(refusal) = &binding.refusal {
@@ -559,6 +563,73 @@ fn explanation_lines(explanation: &crate::protocol::check::NoMatchExplanation) -
     lines
 }
 
+fn relaxation_text(relaxation: &crate::protocol::check::Relaxation) -> String {
+    let element = &relaxation.element;
+    let at = format!("{}:{}:{}", element.source, element.line, element.column);
+    match (&relaxation.attribute, &relaxation.test) {
+        (Some(attribute), Some(test)) => {
+            let mut shown = test.chars().take(60).collect::<String>();
+            if shown.len() < test.len() {
+                shown.push('…');
+            }
+            format!("the test {attribute} {shown} at {at}")
+        }
+        _ => format!("the {} at {at}", relaxation.kind),
+    }
+}
+
+fn counterexample_lines(examples: &crate::protocol::check::ExampleVerification) -> Vec<String> {
+    let mut lines = Vec::new();
+    for vacuous in &examples.vacuous_counterexamples {
+        lines.push(format!(
+            "{}: vacuous_counterexample: {}",
+            vacuous.definition, vacuous.example
+        ));
+        lines.push(format!(
+            "  the definition does not match it with any one of its {} constraint(s) removed, so it does not test a constraint",
+            vacuous.relaxations_tried.len()
+        ));
+        lines.extend(
+            vacuous
+                .relaxations_tried
+                .iter()
+                .map(|relaxation| format!("  tried without {}", relaxation_text(relaxation))),
+        );
+    }
+    for unchecked in &examples.unchecked_counterexamples {
+        lines.push(format!(
+            "{}: unchecked_counterexample: {}",
+            unchecked.definition, unchecked.example
+        ));
+        lines.push(format!("  {}", unchecked.reason));
+    }
+    if let Some(scan) = &examples.counterexample_candidates {
+        lines.push(format!(
+            "counterexample candidates from {}: {} sentence(s) scanned against {} definition(s); at most {} per definition and constraint",
+            scan.source, scan.sentences_scanned, scan.definitions_evaluated, scan.candidates_per_relaxation
+        ));
+        if !scan.definitions_skipped.is_empty() {
+            lines.push(format!(
+                "  not evaluated: {}",
+                scan.definitions_skipped.join(", ")
+            ));
+        }
+        for candidate in &scan.candidates {
+            lines.push(format!(
+                "{}: candidate: {}",
+                candidate.definition, candidate.sentence
+            ));
+            lines.push(format!(
+                "  matches tokens {}..{} without {}",
+                candidate.span[0],
+                candidate.span[1],
+                relaxation_text(&candidate.relaxation)
+            ));
+        }
+    }
+    lines
+}
+
 fn verify_examples(
     args: &CheckArgs,
     config: &crate::cli::ExecutionCliConfig,
@@ -692,6 +763,39 @@ fn verify_examples(
         .into_iter()
         .map(convert)
         .collect::<Result<Vec<_>, _>>()?;
+    let mut vacuous_counterexamples = Vec::new();
+    let mut unchecked_counterexamples = Vec::new();
+    for (definition, example, outcome) in output.relax_counterexamples(&tokenize) {
+        if failures
+            .iter()
+            .any(|failure| failure.definition == definition && failure.example == example)
+        {
+            continue;
+        }
+        match outcome {
+            lingrep_core::fsm::RelaxationOutcome::Distinguished { .. }
+            | lingrep_core::fsm::RelaxationOutcome::BodyMatches => {}
+            lingrep_core::fsm::RelaxationOutcome::Vacuous { tried } => {
+                vacuous_counterexamples.push(crate::protocol::check::VacuousCounterexample {
+                    definition,
+                    example,
+                    relaxations_tried: tried.into_iter().map(Into::into).collect(),
+                });
+            }
+            lingrep_core::fsm::RelaxationOutcome::Unchecked { reason } => {
+                unchecked_counterexamples.push(crate::protocol::check::UncheckedCounterexample {
+                    definition,
+                    example,
+                    reason,
+                });
+            }
+        }
+    }
+    let counterexample_candidates = args
+        .propose_counterexamples
+        .as_deref()
+        .map(|path| propose_counterexamples(path, output, &tokenize))
+        .transpose()?;
     if let Some(error) = failure.into_inner() {
         return Err(CliError::Corpus(format!(
             "example analysis failed: {error}"
@@ -709,6 +813,70 @@ fn verify_examples(
         failures,
         post_policy_checked: report.post_policy_checked as u64,
         post_policy_failures,
+        vacuous_counterexamples,
+        unchecked_counterexamples,
+        counterexample_candidates,
+    })
+}
+
+/// Candidates kept per definition and relaxation.
+const CANDIDATES_PER_RELAXATION: usize = 3;
+
+fn propose_counterexamples(
+    path: &std::path::Path,
+    output: &lingrep_core::fsm::CompileOutput,
+    tokenize: &dyn Fn(&str) -> Vec<lingrep_core::token_match::TokenInfo>,
+) -> Result<crate::protocol::check::CandidateScan, CliError> {
+    use lingrep_core::fsm::RelaxationOutcome;
+    let text = std::fs::read_to_string(path)
+        .map_err(|error| CliError::Corpus(format!("{}: {error}", path.display())))?;
+    let definitions = output.matcher.patterns().keys().collect::<Vec<_>>();
+    let mut skipped = std::collections::BTreeSet::new();
+    let mut kept = std::collections::BTreeMap::<_, usize>::new();
+    let mut candidates = Vec::new();
+    let mut sentences_scanned = 0u64;
+    for sentence in text.lines().map(str::trim).filter(|line| !line.is_empty()) {
+        sentences_scanned += 1;
+        let tokens = tokenize(sentence);
+        for definition in &definitions {
+            if skipped.contains(definition.as_str()) {
+                continue;
+            }
+            match output.relax_definition(definition, tokens.as_slice()) {
+                RelaxationOutcome::Distinguished { by, span } => {
+                    let relaxation = crate::protocol::check::Relaxation::from(by);
+                    let count = kept
+                        .entry((definition.to_string(), relaxation.clone()))
+                        .or_default();
+                    if *count < CANDIDATES_PER_RELAXATION {
+                        *count += 1;
+                        candidates.push(crate::protocol::check::CounterexampleCandidate {
+                            definition: definition.to_string(),
+                            sentence: sentence.to_owned(),
+                            relaxation,
+                            span: [span.0 as u64, span.1 as u64],
+                        });
+                    }
+                }
+                RelaxationOutcome::Unchecked { .. } if tokens.is_empty() => {}
+                RelaxationOutcome::Unchecked { .. } => {
+                    skipped.insert(definition.as_str());
+                }
+                RelaxationOutcome::BodyMatches | RelaxationOutcome::Vacuous { .. } => {}
+            }
+        }
+    }
+    candidates.sort_by(|left, right| {
+        (&left.definition, left.relaxation.element.byte_start)
+            .cmp(&(&right.definition, right.relaxation.element.byte_start))
+    });
+    Ok(crate::protocol::check::CandidateScan {
+        source: path.display().to_string(),
+        sentences_scanned,
+        definitions_evaluated: (definitions.len() - skipped.len()) as u64,
+        definitions_skipped: skipped.into_iter().map(str::to_owned).collect(),
+        candidates_per_relaxation: CANDIDATES_PER_RELAXATION as u64,
+        candidates,
     })
 }
 

@@ -18,6 +18,7 @@ mod corpus_render;
 mod corpus_sources;
 mod dependency_evidence;
 mod diagram_export;
+mod diff;
 mod direct_protocol;
 mod disk_protocol;
 mod document_reader;

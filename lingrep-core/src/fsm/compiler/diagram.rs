@@ -840,6 +840,12 @@ impl PatternDiagram {
         self.render_svg_with_style(width, SvgStyle::Standalone)
     }
 
+    /// [`Self::render_svg`] without its stylesheet, for a page that styles
+    /// `.pattern-fsm-svg` itself.
+    pub fn render_embedded_svg(&self, width: usize) -> Result<String, DiagramError> {
+        self.render_svg_with_style(width, SvgStyle::Embedded)
+    }
+
     fn render_svg_with_style(&self, width: usize, style: SvgStyle) -> Result<String, DiagramError> {
         let (drawings, mut notes) = self.layout(width)?;
         notes.extend(self.publication_note.map(str::to_owned));

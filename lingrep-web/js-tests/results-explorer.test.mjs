@@ -506,3 +506,12 @@ test("a claim insert is applied at its byte offset, and only to the source it wa
   assert.equal(applyClaimInsert(`# edited\n${source}`, { offset, text: ', "犬"', expects: "]\npattern p" }), null);
   assert.equal(applyClaimInsert(source, { offset: 13, text: "x", expects: "" }), null, "inside a character");
 });
+
+test("a token's source ranges cover a cursor inside its element or a reference that reached it", async () => {
+  const { parseSourceRanges, sourceRangesCover } = await import("../assets/results-explorer.js");
+  const ranges = parseSourceRanges("12-23 40-42");
+  assert.deepEqual(ranges, [[12, 23], [40, 42]]);
+  assert.deepEqual([11, 12, 23, 30, 41].map((offset) => sourceRangesCover(ranges, offset)), [false, true, true, false, true]);
+  assert.deepEqual(parseSourceRanges(""), []);
+  assert.deepEqual(parseSourceRanges(undefined), []);
+});

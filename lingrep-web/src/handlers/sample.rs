@@ -50,6 +50,54 @@ pub struct SampleForm {
     /// Corpus key for comparing the corpus and sample token schemas.
     #[serde(default)]
     pub corpus: Option<String>,
+    /// Corpus sentence ordinal whose stored analysis replaces tokenizing
+    /// `sample`. The page stops sending it once the text is edited.
+    #[serde(default)]
+    pub corpus_sentence: Option<u64>,
+}
+
+/// A corpus sentence's stored tokens, its token schema and its analyzer's name.
+type StoredSentence = (
+    lingrep_core::token_match::BoundTokenSentence,
+    lingrep_core::token_match::TokenSchema,
+    String,
+);
+
+/// `None` when the corpus is unknown or not ready, or the sentence is absent
+/// or larger than the sample limit.
+async fn stored_sentence(
+    store: &RequestStore,
+    corpus: Option<&str>,
+    sentence: u64,
+) -> Option<StoredSentence> {
+    let slot = store.corpora.resolve(corpus)?;
+    let ready = slot.runtime.ready().await?;
+    // Stored sentences carry the schema's token attributes; the enhanced
+    // graph is stored apart from them and is not read here.
+    let schema = lingrep_core::token_match::TokenSchema::new(
+        ready
+            .artifact
+            .token_schema()
+            .ok()?
+            .attributes()
+            .iter()
+            .filter(|attribute| {
+                attribute.provider() != lingrep_core::token_match::AttributeProvider::EnhancedGraph
+            })
+            .cloned()
+            .collect::<Vec<_>>(),
+    )
+    .ok()?;
+    let analyzer = ready.artifact.analyzer();
+    let name = format!("{} {}", analyzer.family, analyzer.profile);
+    let reader = ready.reader().ok()?.bind(&ready.identity)?;
+    let words = tokio::task::spawn_blocking(move || {
+        reader.sentence_attributes_bounded(sentence, MAX_SAMPLE_BYTES)
+    })
+    .await
+    .ok()?
+    .ok()??;
+    Some((words, schema, name))
 }
 
 pub fn routes() -> Router<RequestStore> {
@@ -61,9 +109,23 @@ pub fn page_routes() -> Router<RequestStore> {
     Router::new().route("/sample", get(sample_page))
 }
 
+#[derive(Deserialize)]
+struct SampleQuery {
+    corpus: Option<String>,
+    sentence: Option<u64>,
+}
+
+/// The corpus sentence the page opens with.
+struct OpenedSentence {
+    corpus: String,
+    ordinal: u64,
+    text: String,
+}
+
 #[derive(Template)]
 #[template(path = "sample.html")]
 struct SamplePage {
+    opened: Option<OpenedSentence>,
     seed_pattern: String,
     current_page: &'static str,
     frequency_view: bool,
@@ -73,8 +135,23 @@ struct SamplePage {
 /// Seeded from the same `--patterns` default the index seeds from, so landing
 /// here first still starts from the server's catalog. The two pages then
 /// diverge: each pattern box persists its own draft under its own id.
-async fn sample_page(State(store): State<RequestStore>) -> Html<String> {
+async fn sample_page(
+    State(store): State<RequestStore>,
+    axum::extract::Query(query): axum::extract::Query<SampleQuery>,
+) -> Html<String> {
+    let mut opened = None;
+    if let Some(ordinal) = query.sentence
+        && let Some((words, ..)) = stored_sentence(&store, query.corpus.as_deref(), ordinal).await
+        && let Some(slot) = store.corpora.resolve(query.corpus.as_deref())
+    {
+        opened = Some(OpenedSentence {
+            corpus: slot.name.as_str().to_owned(),
+            ordinal,
+            text: lingrep_core::token_match::display_text(&words, 0..words.len()),
+        });
+    }
     SamplePage {
+        opened,
         seed_pattern: store.default_pattern.to_string(),
         current_page: "sample",
         frequency_view: !store.frequency.is_empty(),
@@ -119,6 +196,45 @@ pub async fn run_sample(
     };
     let pattern = form.pattern;
     let sample = form.sample;
+    if let Some(sentence) = form.corpus_sentence {
+        let Some((words, schema, analyzer)) =
+            stored_sentence(&store, form.corpus.as_deref(), sentence).await
+        else {
+            return fragment(
+                StatusCode::NOT_FOUND,
+                "sample.stored_unavailable",
+                "This corpus sentence could not be read. Edit the text to analyze it with the sample tokenizer.",
+            );
+        };
+        let report = tokio::task::spawn_blocking(move || {
+            let _permit = permit;
+            crate::sample::analyze_stored_sentence(&pattern, &schema, &words, analyzer)
+        })
+        .await;
+        return match report {
+            Ok(report) => SampleResults {
+                analysis: report.analysis,
+                run: report.run,
+            }
+            .render()
+            .map(Html)
+            .map_or_else(
+                |_| {
+                    fragment(
+                        StatusCode::INTERNAL_SERVER_ERROR,
+                        "sample.render_failed",
+                        "Could not render sample results.",
+                    )
+                },
+                IntoResponse::into_response,
+            ),
+            Err(_) => fragment(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "sample.render_failed",
+                "Could not render sample results.",
+            ),
+        };
+    }
     let corpus = super::pattern_editor::corpus_schema(&store, form.corpus.as_deref()).await;
     // The tokenizer's first-call dictionary load is synchronous I/O; resolve it
     // inside the blocking pool so the async executor never blocks. A load
@@ -214,6 +330,7 @@ mod tests {
                         pattern: "p := [].".into(),
                         sample: "猫".into(),
                         corpus: None,
+                        corpus_sentence: None,
                     }),
                 );
                 tokio::pin!(pending);

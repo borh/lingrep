@@ -288,3 +288,69 @@ async fn check_with_a_corpus_refuses_a_dependency_where_its_schema_cannot_answer
         "vibrato morphology"
     );
 }
+
+#[tokio::test]
+async fn a_corpus_sentence_is_shown_with_its_stored_tokens_until_the_form_omits_it() {
+    let (_fixture, store) = morphology_store();
+    let page = lingrep_web::handlers::sample::page_routes()
+        .with_state(store.clone())
+        .oneshot(
+            Request::builder()
+                .uri("/sample?sentence=0")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    let page = String::from_utf8(
+        page.into_body()
+            .collect()
+            .await
+            .unwrap()
+            .to_bytes()
+            .to_vec(),
+    )
+    .unwrap();
+    assert!(page.contains(r#"name="corpus_sentence" value="0""#));
+    assert!(page.contains(r#"placeholder="猫が走る。">猫</textarea>"#));
+
+    let post = |fields: Vec<(&'static str, &'static str)>| {
+        let store = store.clone();
+        async move {
+            let response = lingrep_web::handlers::sample::routes()
+                .with_state(store)
+                .oneshot(
+                    Request::builder()
+                        .method("POST")
+                        .uri("/sample")
+                        .header("content-type", "application/x-www-form-urlencoded")
+                        .body(Body::from(serde_urlencoded::to_string(fields).unwrap()))
+                        .unwrap(),
+                )
+                .await
+                .unwrap();
+            let status = response.status();
+            let body = response.into_body().collect().await.unwrap().to_bytes();
+            (status, String::from_utf8(body.to_vec()).unwrap())
+        }
+    };
+    let pattern = "noun := [upos=NOUN].";
+
+    let (status, html) = post(vec![
+        ("pattern", pattern),
+        ("sample", "ignored"),
+        ("corpus_sentence", "0"),
+    ])
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    assert!(html.contains("data-sample-stored"), "{html}");
+    assert!(html.contains("sample-match"), "{html}");
+
+    let (status, _) = post(vec![
+        ("pattern", pattern),
+        ("sample", "ignored"),
+        ("corpus_sentence", "7"),
+    ])
+    .await;
+    assert_eq!(status, StatusCode::NOT_FOUND);
+}

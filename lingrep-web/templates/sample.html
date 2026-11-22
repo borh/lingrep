@@ -26,13 +26,27 @@
                     spellcheck="false" autocapitalize="off" autocorrect="off" autocomplete="off"
                     placeholder="test := [upos=VERB]." required>{{ seed_pattern }}</textarea>
         </div>
+        <details class="pattern-diagram" data-pattern-diagram="sample-pattern">
+          <summary><span data-i18n="editor.diagram_title">Recognition diagram of the definition at the cursor</span> <code data-diagram-name></code></summary>
+          <label class="pattern-diagram-expand"><input type="checkbox" data-diagram-expand> <span data-i18n="editor.diagram_expand">Expand references</span></label>
+          <p class="pattern-diagram-note muted" role="status" data-diagram-note></p>
+          <div class="pattern-diagram-body" data-diagram-body></div>
+        </details>
       </div>
       <div class="sample-text-field">
         <label for="sample-text"><span data-i18n="sample.label">Sample text</span> <span class="muted"><span data-i18n="sample.hint">(one sentence per line)</span></span></label>
+        {% match opened %}{% when Some with (sentence) %}
+        <input type="hidden" name="corpus" value="{{ sentence.corpus }}">
+        <input type="hidden" name="corpus_sentence" value="{{ sentence.ordinal }}" data-corpus-sentence>
+        <p class="sample-opened muted" data-corpus-sentence-note><span data-i18n="sample.opened_stored" data-i18n-args='{"ordinal": {{ sentence.ordinal }}}'>Corpus sentence {{ sentence.ordinal }}, shown with the analysis stored in the corpus. Editing the text switches to the sample tokenizer.</span> <code>{{ sentence.corpus }}</code></p>
+        <textarea id="sample-text" class="sample-input" name="sample" rows="6" lang="ja"
+                  placeholder="猫が走る。">{{ sentence.text }}</textarea>
+        {% when None %}
         <textarea id="sample-text" class="sample-input" name="sample" rows="6" lang="ja"
                   placeholder="猫が走る。">この結果は重要であると考えられる。
 さらなる検証が必要であると思われる。
 その可能性が高いと言えるのではないだろうか。</textarea>
+        {% endmatch %}
       </div>
       <div class="sample-actions">
         <button type="submit" class="btn btn-primary"><span data-i18n="sample.run">Run on sample</span></button>
