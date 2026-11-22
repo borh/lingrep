@@ -28,10 +28,13 @@ import sys
 OPERATIONS = {
     "rename": re.compile(r"\bfs::rename\b|\blibc::rename|\brenameat2?\b|\brenamex_np\b"),
     "symlink": re.compile(r"\bsymlink(_file|_dir)?\s*\(|\bfs::symlink\b|\bsymlinkat\b"),
-    "hard_link": re.compile(r"\bhard_link\b|\blibc::link(at)?\b"),
-    "persist": re.compile(r"\.persist(_noclobber)?\s*\("),
+    "hard_link": re.compile(r"\bhard_link\b|\b(?:libc|fs)::link(?:at)?\b"),
+    "persist": re.compile(r"(?:\.|\bNamedTempFile\s*::\s*)persist(?:_noclobber)?\s*\("),
     "sqlite_wal": re.compile(
-        r"journal_mode[\s=(,'\"\\]*WAL|SqliteJournalMode::Wal|locking_mode", re.IGNORECASE
+        r"\bjournal_mode[\s=(,'\"\\]*(?:WAL|DELETE)\b|SqliteJournalMode::(?:Wal|Delete)\b"
+        r"|\bPRAGMA\s+(?:\w+\s*\.\s*)?wal_checkpoint\b|[\"']wal_checkpoint[\"']"
+        r"|locking_mode",
+        re.IGNORECASE,
     ),
 }
 
