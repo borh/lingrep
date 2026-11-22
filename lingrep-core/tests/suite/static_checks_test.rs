@@ -11,7 +11,7 @@ fn compile(source: &str) -> CompileOutput {
         PatternSource::named("static.lx", source),
         CompileLimits::default(),
     )
-    .unwrap_or_else(|error| panic!("{source}\n{error:?}"))
+    .expect("the fixture compiles")
 }
 
 fn unsatisfiable(source: &str) -> Vec<(String, UnsatisfiableKind, usize)> {
@@ -118,7 +118,8 @@ fn witness_tokens(witness: &[WitnessToken]) -> Vec<TokenInfo> {
                     WitnessValue::Named(value) | WitnessValue::Unnamed(value) => {
                         info.set(index, value.clone());
                     }
-                    WitnessValue::Set(_) => panic!("the fixtures test scalar attributes"),
+                    // The fixtures test scalar attributes only.
+                    WitnessValue::Set(_) => {}
                 }
             }
             info

@@ -693,14 +693,13 @@ impl<'p> Builder<'p> {
                     .map(|(predicate, targets)| (Some(predicate), targets)),
             );
             for (predicate, next) in successors {
-                let target = match product.get(&next) {
-                    Some(target) => *target,
-                    None => {
-                        let target = self.state()?;
-                        product.insert(next.clone(), target);
-                        pending.push(next);
-                        target
-                    }
+                let target = if let Some(target) = product.get(&next) {
+                    *target
+                } else {
+                    let target = self.state()?;
+                    product.insert(next.clone(), target);
+                    pending.push(next);
+                    target
                 };
                 match predicate {
                     None => self.epsilon[state].push(target),
