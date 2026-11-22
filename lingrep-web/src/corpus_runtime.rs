@@ -569,45 +569,67 @@ impl CorpusRuntimeInvalidator {
     /// Declared artifacts remain on disk, with the runtime failed until restart.
     /// Dropping the future leaves the state unchanged or the transition complete.
     pub async fn invalidate_corrupt(&self, read: &ReadyCorpus) -> bool {
-        let mut lifecycle = self.inner.lifecycle.lock().await;
-        let CacheLifecycle::Ready {
-            artifact,
-            on_corruption,
-            ..
-        } = &*lifecycle
-        else {
-            return false;
-        };
-        if !Arc::ptr_eq(artifact, &read.artifact) {
-            return false;
-        }
-        let (discard, rebuild) = match on_corruption {
-            OnCorruption::Keep => (None, false),
-            OnCorruption::Rebuild(path) => (Some(path.clone()), true),
-            OnCorruption::Discard(path) => (Some(path.clone()), false),
-        };
-        tracing::error!(rebuild, "corpus artifact reported corrupt");
-        if let Some(path) = discard
-            && let Err(error) = fs::remove_dir_all(&path)
-        {
-            tracing::error!(path = %path.display(), cause = %error, "failed to discard corrupt artifact");
-        }
-        if rebuild {
-            *lifecycle = CacheLifecycle::Building { rebuild: true };
-            self.inner
-                .readiness_tx
-                .send_replace(CacheReadiness::Building { lines_processed: 0 });
-            CorpusRuntime {
-                inner: Arc::clone(&self.inner),
+        let (discard, rebuild) = {
+            let mut lifecycle = self.inner.lifecycle.lock().await;
+            let CacheLifecycle::Ready {
+                artifact,
+                on_corruption,
+                ..
+            } = &*lifecycle
+            else {
+                return false;
+            };
+            if !Arc::ptr_eq(artifact, &read.artifact) {
+                return false;
             }
-            .spawn_builder();
-        } else {
-            *lifecycle = CacheLifecycle::Failed;
-            self.inner
-                .readiness_tx
-                .send_replace(CacheReadiness::Failed {
-                    category: CacheFailureCategory::Corruption,
-                });
+            let (discard, rebuild) = match on_corruption {
+                OnCorruption::Keep => (None, false),
+                OnCorruption::Rebuild(path) => (Some(path.clone()), true),
+                OnCorruption::Discard(path) => (Some(path.clone()), false),
+            };
+            tracing::error!(rebuild, "corpus artifact reported corrupt");
+            if rebuild {
+                *lifecycle = CacheLifecycle::Building { rebuild: true };
+                self.inner
+                    .readiness_tx
+                    .send_replace(CacheReadiness::Building { lines_processed: 0 });
+            } else {
+                *lifecycle = CacheLifecycle::Failed;
+                self.inner
+                    .readiness_tx
+                    .send_replace(CacheReadiness::Failed {
+                        category: CacheFailureCategory::Corruption,
+                    });
+            }
+            (discard, rebuild)
+        };
+        if discard.is_some() || rebuild {
+            // Spawn the blocking deletion and optional rebuild after releasing
+            // `lifecycle` so directory removal neither holds the mutex nor
+            // blocks an async worker thread, while remaining cancel-safe if
+            // the caller drops this future after the state transition.
+            let inner = Arc::clone(&self.inner);
+            let cleanup = tokio::spawn(async move {
+                if let Some(path) = discard {
+                    let removed = tokio::task::spawn_blocking(move || {
+                        if let Err(error) = fs::remove_dir_all(&path) {
+                            tracing::error!(
+                                path = %path.display(),
+                                cause = %error,
+                                "failed to discard corrupt artifact"
+                            );
+                        }
+                    })
+                    .await;
+                    if let Err(error) = removed {
+                        tracing::error!(cause = %error, "corrupt artifact discard task failed");
+                    }
+                }
+                if rebuild {
+                    CorpusRuntime { inner }.spawn_builder();
+                }
+            });
+            let _ = cleanup.await;
         }
         true
     }
@@ -1475,6 +1497,53 @@ mod tests {
         std::fs::rename(&token_path, &moved).unwrap();
 
         assert_eq!(ready.sentence_count().unwrap(), 1);
+    }
+
+    #[tokio::test]
+    async fn invalidate_corrupt_releases_lifecycle_before_blocking_removal() {
+        let directory = tempfile::tempdir().unwrap();
+        let corpus = directory.path().join("corpus.jsonl");
+        std::fs::write(&corpus, "{\"sentences\":[\"猫。\"]}\n").unwrap();
+        let dictionary = lingrep_core::testing::MiniDictionary::new();
+        let context = Arc::new(ServerContext::new(dictionary.path()).unwrap());
+        let runtime = CorpusRuntime::new(context, &corpus).unwrap();
+        runtime.start_or_observe().await;
+        let mut readiness = runtime.readiness();
+        readiness
+            .wait_for(|state| matches!(state, CacheReadiness::Ready { .. }))
+            .await
+            .unwrap();
+        let corrupt = runtime.ready().await.unwrap();
+        let invalidator = runtime.invalidator();
+
+        let mut report = std::pin::pin!(invalidator.invalidate_corrupt(&corrupt));
+        assert!(
+            futures::poll!(report.as_mut()).is_pending(),
+            "directory removal must offload to spawn_blocking rather than completing synchronously under the lifecycle lock"
+        );
+        assert!(
+            runtime.inner.lifecycle.try_lock().is_ok(),
+            "lifecycle lock must be released before blocking removal runs"
+        );
+        assert!(matches!(
+            *runtime.readiness().borrow(),
+            CacheReadiness::Building { .. }
+        ));
+        assert!(report.await);
+
+        tokio::time::timeout(std::time::Duration::from_secs(30), async {
+            loop {
+                readiness.borrow_and_update();
+                if let Some(rebuilt) = runtime.ready().await
+                    && !Arc::ptr_eq(&rebuilt.artifact, &corrupt.artifact)
+                {
+                    return;
+                }
+                readiness.changed().await.unwrap();
+            }
+        })
+        .await
+        .expect("rebuilt corpus should become ready after offloaded deletion");
     }
 }
 
