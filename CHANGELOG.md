@@ -5,6 +5,19 @@ All notable changes to lingrep are recorded in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Added
+
+- The Sample debugger and the Workbench "Test on sample" drawer check a
+  catalog's `examples` and `counterexamples` on every run and list each claim
+  that fails, including a claim that the definition satisfies and result policy
+  does not publish. Selecting a failed claim adds its text to the sample.
+- Sample results name the analyzer and dictionary that tokenized the sample,
+  list each referenced attribute that tokenizer does not supply, and report a
+  pattern that cannot bind to its token schema. The Workbench drawer also
+  reports when the selected corpus was analyzed with a different token schema.
+
 ## [0.9.1] - 2026-11-20
 
 See the [0.9.1 release notes](docs/release-notes/v0.9.1.md) for the Python tokenizer command, Stanza bundle options, Unicode alignment fix, and file-limit fixes.

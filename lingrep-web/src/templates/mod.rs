@@ -4,7 +4,7 @@ use lingrep_core::token_match::TokenAttributeIndex;
 
 use crate::inspection::{CaptureInspection, CompositionItem, TokenInspection};
 use crate::revision_status::RevisionStatus;
-use crate::sample::SampleAnalysis;
+use crate::sample::{ClaimFailureKind, SampleAnalysis, SampleBinding, SampleClaims};
 use crate::snapshot::CompoundCategory;
 
 /// An HTML fragment that has already been rendered by Askama, and therefore
@@ -478,6 +478,7 @@ impl TokenInspectionFragment {
 #[template(path = "sample_results.html")]
 pub struct SampleResults {
     pub analysis: crate::sample::SampleAnalysis,
+    pub run: Option<crate::sample::SampleRun>,
 }
 
 #[derive(Template)]

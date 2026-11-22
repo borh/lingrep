@@ -24,6 +24,7 @@ use axum::{
     response::{Html, IntoResponse, Response},
     routing::{get, post},
 };
+use lingrep_core::analysis::AnalyzerPlan;
 use serde::Deserialize;
 use tokio::sync::Semaphore;
 
@@ -46,6 +47,10 @@ static SAMPLE_SLOTS: LazyLock<Semaphore> = LazyLock::new(|| {
 pub struct SampleForm {
     pub pattern: String,
     pub sample: String,
+    /// The key of the corpus the workbench is searching. When its token schema
+    /// differs from the sample tokenizer's, the result says so.
+    #[serde(default)]
+    pub corpus: Option<String>,
 }
 
 pub fn routes() -> Router<RequestStore> {
@@ -115,6 +120,7 @@ pub async fn run_sample(
     };
     let pattern = form.pattern;
     let sample = form.sample;
+    let corpus = super::pattern_editor::corpus_schema(&store, form.corpus.as_deref()).await;
     // The tokenizer's first-call dictionary load is synchronous I/O; resolve it
     // inside the blocking pool so the async executor never blocks. A load
     // failure returns `Err(TokenizerUnavailable)` (503); a genuine join failure
@@ -122,11 +128,35 @@ pub async fn run_sample(
     let outcome = tokio::task::spawn_blocking(move || {
         let _permit = permit;
         let plan = store.context.plan()?;
-        Ok::<_, TokenizerUnavailable>(analyze_sample(&pattern, &sample, &plan))
+        let analyzer = lingrep_corpus::AnalyzerRecord::from_descriptor(plan.descriptor());
+        let dictionary = store
+            .context
+            .dict_path()
+            .and_then(|path| path.file_name())
+            .map(|name| format!(" · {}", name.to_string_lossy()))
+            .unwrap_or_default();
+        let mut report = analyze_sample(
+            &pattern,
+            &sample,
+            &plan,
+            format!("{} {}{dictionary}", analyzer.family, analyzer.profile),
+        );
+        if let (Some(run), Some((schema, corpus_analyzer))) = (&mut report.run, corpus)
+            && schema != *plan.schema()
+        {
+            run.corpus_analyzer = Some(corpus_analyzer);
+        }
+        Ok::<_, TokenizerUnavailable>(report)
     })
     .await;
     match outcome {
-        Ok(Ok(analysis)) => SampleResults { analysis }.render().map(Html).map_or_else(
+        Ok(Ok(report)) => SampleResults {
+            analysis: report.analysis,
+            run: report.run,
+        }
+        .render()
+        .map(Html)
+        .map_or_else(
             |_| {
                 fragment(
                     StatusCode::INTERNAL_SERVER_ERROR,
@@ -184,6 +214,7 @@ mod tests {
                     Form(SampleForm {
                         pattern: "p := [].".into(),
                         sample: "猫".into(),
+                        corpus: None,
                     }),
                 );
                 tokio::pin!(pending);

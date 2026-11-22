@@ -476,7 +476,8 @@ if (typeof document !== "undefined") {
             if (status) status.textContent = t("sample.running");
             target.setAttribute("aria-busy", "true");
             try {
-                const body = new URLSearchParams({ pattern, sample }).toString();
+                const corpus = document.querySelector("[data-corpus-search] input[name=corpus]")?.value ?? "";
+                const body = new URLSearchParams({ pattern, sample, corpus }).toString();
                 const response = await fetch("api/sample", {
                     method: "POST",
                     headers: { "Content-Type": "application/x-www-form-urlencoded" },

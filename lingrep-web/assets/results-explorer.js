@@ -1758,6 +1758,21 @@ if (typeof document !== "undefined") {
       return;
     }
 
+    // A failing claim's text joins the sample, so the token ribbon and the
+    // candidates below show why it fails.
+    const claimText = event.target.closest("[data-sample-claim-text]");
+    if (claimText) {
+      const input = document.querySelector("[data-inline-sample-text], #sample-text");
+      const text = claimText.textContent.trim();
+      if (!input || !text) return;
+      const lines = input.value.split("\n").map((line) => line.trim());
+      if (!lines.includes(text)) {
+        input.value = [text, ...lines.filter(Boolean)].join("\n");
+        input.dispatchEvent(new Event("input", { bubbles: true }));
+      }
+      return;
+    }
+
     const sampleToken = event.target.closest("[data-sample-token]");
     if (sampleToken) {
       const container = sampleToken.closest(".sample-results");

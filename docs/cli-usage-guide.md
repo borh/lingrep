@@ -80,6 +80,12 @@ counterexamples. Successful example verification confirms consistency with autho
 claims, not linguistic correctness or recall. External adapters are rejected by this
 verification path.
 
+The Sample debugger of `ling serve` and the Workbench "Test on sample" drawer
+check the same claims on every sample run, tokenized with the server's Vibrato
+dictionary, and list each failed claim above the sample's matches. They skip the
+check and name the missing attributes when the catalog references an attribute
+that the dictionary's token schema does not carry.
+
 ### Pattern diagrams
 
 `check --diagram` displays recognition flow instead of the check report. No

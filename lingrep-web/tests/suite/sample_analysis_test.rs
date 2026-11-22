@@ -281,3 +281,74 @@ fn no_gap_is_invented_across_a_line_boundary() {
         );
     }
 }
+
+/// One token per character, tagged 名詞.
+fn characters(text: &str) -> Vec<TokenInfo> {
+    text.chars().map(|c| tok(&c.to_string(), "名詞")).collect()
+}
+
+fn run_of(source: &str) -> lingrep_web::sample::SampleRun {
+    let output =
+        lingrep_web::patterns::compile_web_pattern(source).expect("the test catalog compiles");
+    lingrep_web::sample::sample_run(
+        &output,
+        &lingrep_core::token_match::TokenSchema::unidic_morphology(),
+        "test".into(),
+        &characters,
+    )
+}
+
+#[test]
+fn claims_are_checked_against_the_definition_and_against_what_policy_publishes() {
+    use lingrep_web::sample::{ClaimFailure, ClaimFailureKind, ClaimsReport, SampleClaims};
+    let run = run_of(
+        "examples: [\"甲乙\", \"丙\"] counterexamples: [\"甲\", \"丁\"] pattern a := 甲. \
+         examples: [\"甲乙\"] pattern b := 甲 乙. \
+         policy resolve patterns rank: [longest, start, end, pattern]. end",
+    );
+    let failure = |definition: &str, example: &str, kind| ClaimFailure {
+        definition: definition.into(),
+        example: example.into(),
+        kind,
+    };
+    assert_eq!(
+        run.claims,
+        SampleClaims::Checked(ClaimsReport {
+            checked: 5,
+            failures: vec![
+                failure("a", "丙", ClaimFailureKind::ExpectedMatch),
+                failure("a", "甲", ClaimFailureKind::UnexpectedMatch),
+                failure("a", "甲乙", ClaimFailureKind::ExpectedPublication),
+            ],
+        })
+    );
+    assert_eq!(run_of("pattern a := 甲.").claims, SampleClaims::Undeclared);
+}
+
+#[test]
+fn an_attribute_the_tokenizer_lacks_is_named_and_leaves_claims_unchecked() {
+    use lingrep_web::sample::{SampleBinding, SampleClaims, UnavailableAttribute};
+    let run =
+        run_of("examples: [\"甲\"] pattern a := [dep.rel=nsubj] [dep.rel=obj]. pattern b := 甲.");
+    assert_eq!(
+        run.binding,
+        SampleBinding::Bound {
+            unavailable: vec![UnavailableAttribute {
+                attribute: "dep.rel".into(),
+                definitions: vec!["a".into()],
+            }],
+        }
+    );
+    assert_eq!(run.claims, SampleClaims::Unverifiable);
+}
+
+#[test]
+fn a_dependency_clause_the_tokenizer_cannot_satisfy_is_a_refused_binding() {
+    use lingrep_web::sample::SampleBinding;
+    let run = run_of("pattern a := (?<n> [text=甲]) where (?<v> [text=乙]) -[nsubj]-> $n.");
+    assert!(
+        matches!(&run.binding, SampleBinding::Refused(reason) if reason.contains("dep.")),
+        "{:?}",
+        run.binding
+    );
+}

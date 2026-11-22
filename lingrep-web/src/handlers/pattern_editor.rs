@@ -181,7 +181,7 @@ async fn check(
 /// The token schema of the served corpus `key` and its name as run notices
 /// give it (`family profile`); `None` when no key is given, the key names no
 /// served corpus, or the corpus is not ready.
-async fn corpus_schema(
+pub(super) async fn corpus_schema(
     store: &RequestStore,
     key: Option<&str>,
 ) -> Option<(lingrep_core::token_match::TokenSchema, String)> {

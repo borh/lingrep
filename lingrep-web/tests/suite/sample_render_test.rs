@@ -9,7 +9,12 @@ fn matched_renders_inline_tokens_and_captures_without_fetch_urls() {
     let lines = vec![vec![tok("猫", "名詞"), tok("走る", "動詞")]];
     let analysis = analyze_tokens("pattern v := (?<verb> [upos=動詞]).", &lines);
     assert!(matches!(analysis, SampleAnalysis::Matched { .. }));
-    let html = SampleResults { analysis }.render().expect("renders");
+    let html = SampleResults {
+        analysis,
+        run: None,
+    }
+    .render()
+    .expect("renders");
     assert!(html.contains("走る"), "match surface shown");
     assert!(html.contains("verb"), "named capture shown");
     // The capture-selector buttons target `sample-capture-{render_index}-{ordinal}`
@@ -43,6 +48,7 @@ fn fragments_only_shows_its_distinct_message() {
     let lines = vec![vec![tok("走る", "動詞")]];
     let html = SampleResults {
         analysis: analyze_tokens("fragment F := [upos=動詞].", &lines),
+        run: None,
     }
     .render()
     .unwrap();
@@ -61,6 +67,7 @@ fn failed_shows_the_compile_error_message() {
     let lines = vec![vec![tok("猫", "名詞")]];
     let html = SampleResults {
         analysis: analyze_tokens("pattern broken := [upos=", &lines),
+        run: None,
     }
     .render()
     .unwrap();
@@ -81,7 +88,12 @@ fn sample_render_shows_constellation_states_classes_and_parent_depth() {
             TokenInfo::default().with_orth("あろう").with_lemma("有る"),
         ]],
     );
-    let html = SampleResults { analysis }.render().expect("renders");
+    let html = SampleResults {
+        analysis,
+        run: None,
+    }
+    .render()
+    .expect("renders");
 
     assert!(html.contains("sample-constellation"));
     assert!(html.contains("S2C"));
@@ -103,7 +115,12 @@ fn sample_render_shows_composition_regions_and_a_literal_gap() {
         &lines,
     );
 
-    let html = SampleResults { analysis }.render().expect("renders");
+    let html = SampleResults {
+        analysis,
+        run: None,
+    }
+    .render()
+    .expect("renders");
 
     assert!(html.contains("sample-composition"), "the strip is rendered");
     assert!(
@@ -133,7 +150,12 @@ fn sample_render_labels_a_wide_gap_as_diagnostic() {
         &lines,
     );
 
-    let html = SampleResults { analysis }.render().expect("renders");
+    let html = SampleResults {
+        analysis,
+        run: None,
+    }
+    .render()
+    .expect("renders");
 
     assert!(html.contains("data-gap-tokens=\"3\""));
     assert!(
@@ -157,7 +179,12 @@ fn sample_render_shows_composition_for_the_experimental_catalog() {
         ]],
     );
 
-    let html = SampleResults { analysis }.render().expect("renders");
+    let html = SampleResults {
+        analysis,
+        run: None,
+    }
+    .render()
+    .expect("renders");
 
     assert!(html.contains("sample-composition"));
     assert!(html.contains("S2C"), "the published class still shows");
@@ -193,4 +220,73 @@ fn sample_lines_are_one_document_for_document_lookarounds() {
             ("last".to_owned(), "犬".to_owned()),
         ]
     );
+}
+
+#[test]
+fn a_run_names_its_tokenizer_its_missing_attributes_and_each_failed_claim() {
+    use lingrep_web::sample::{
+        ClaimFailure, ClaimFailureKind, ClaimsReport, SampleBinding, SampleClaims, SampleRun,
+        UnavailableAttribute,
+    };
+    let lines = vec![vec![tok("走る", "動詞")]];
+    let render = |binding, claims| {
+        SampleResults {
+            analysis: analyze_tokens("pattern v := [upos=動詞].", &lines),
+            run: Some(SampleRun {
+                analyzer: "vibrato morphology · unidic.dic".into(),
+                corpus_analyzer: Some("conllu pretokenized".into()),
+                binding,
+                claims,
+            }),
+        }
+        .render()
+        .unwrap()
+    };
+    let html = render(
+        SampleBinding::Bound {
+            unavailable: vec![UnavailableAttribute {
+                attribute: "dep.rel".into(),
+                definitions: vec!["v".into()],
+            }],
+        },
+        SampleClaims::Unverifiable,
+    );
+    assert!(html.contains("<code>vibrato morphology · unidic.dic</code>"));
+    assert!(html.contains("data-sample-corpus-differs"));
+    assert!(html.contains("<code>conllu pretokenized</code>"));
+    assert!(html.contains("data-sample-unavailable"));
+    assert!(html.contains("<code>dep.rel</code>"));
+    assert!(html.contains(r#"data-sample-claims="unverifiable""#));
+
+    let html = render(
+        SampleBinding::Bound {
+            unavailable: Vec::new(),
+        },
+        SampleClaims::Checked(ClaimsReport {
+            checked: 3,
+            failures: vec![ClaimFailure {
+                definition: "v".into(),
+                example: "<猫>".into(),
+                kind: ClaimFailureKind::ExpectedMatch,
+            }],
+        }),
+    );
+    assert!(!html.contains("data-sample-unavailable"));
+    assert!(html.contains(r#"data-sample-claims="violated""#));
+    assert!(html.contains(r#"data-i18n-args='{"failed": 1, "checked": 3}'"#));
+    assert!(html.contains(r#"data-i18n="sample.claim_expected_match""#));
+    assert!(
+        html.contains("data-i18n-title=\"sample.claim_use\">&#60;猫&#62;</button>"),
+        "the claim text is escaped: {html}"
+    );
+
+    let html = render(
+        SampleBinding::Refused("no dep.head".into()),
+        SampleClaims::Checked(ClaimsReport {
+            checked: 2,
+            failures: Vec::new(),
+        }),
+    );
+    assert!(html.contains("data-sample-refused"));
+    assert!(html.contains(r#"data-sample-claims="hold""#));
 }

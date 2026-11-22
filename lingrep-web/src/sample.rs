@@ -15,8 +15,9 @@ use crate::inspection::{
 use crate::patterns::compile_web_pattern;
 use crate::patterns::format_pattern_compile_error;
 use crate::templates::{CaptureInspectionFragment, TokenInspectionFragment, TrustedFragmentHtml};
-use lingrep_core::analysis::VibratoPlan;
-use lingrep_core::token_match::TokenInfo;
+use lingrep_core::analysis::{AnalyzerPlan, VibratoPlan};
+use lingrep_core::fsm::{CompileOutput, ExampleFailure, ExampleFailureKind, ExampleReport};
+use lingrep_core::token_match::{TokenInfo, TokenSchema};
 
 #[derive(Debug, Clone)]
 pub struct TokenView {
@@ -272,15 +273,18 @@ fn whole<'a>(lines: &[&'a [TokenInfo]]) -> Vec<lingrep_core::fsm::ContextSegment
 }
 
 pub fn analyze_tokens(pattern_source: &str, lines: &[Vec<TokenInfo>]) -> SampleAnalysis {
-    let matcher = match compile_web_pattern(pattern_source) {
-        Ok(output) => output.matcher,
-        Err(error) => {
-            return SampleAnalysis::Failed(SampleAnalysisError {
-                message: format_pattern_compile_error(&error),
-            });
-        }
-    };
+    match compile_web_pattern(pattern_source) {
+        Ok(output) => analyze_compiled(&output.matcher, lines),
+        Err(error) => SampleAnalysis::Failed(SampleAnalysisError {
+            message: format_pattern_compile_error(&error),
+        }),
+    }
+}
 
+fn analyze_compiled(
+    matcher: &lingrep_core::fsm::CompiledCatalog,
+    lines: &[Vec<TokenInfo>],
+) -> SampleAnalysis {
     let mut all_tokens: Vec<TokenInfo> = Vec::new();
     let mut all_matches: Vec<MatchView> = Vec::new();
     let mut constellations: Vec<SampleConstellation> = Vec::new();
@@ -301,7 +305,7 @@ pub fn analyze_tokens(pattern_source: &str, lines: &[Vec<TokenInfo>]) -> SampleA
             )]),
         };
         let base_index = all_tokens.len();
-        match build_line_analysis(line, &context, &matcher, base_index, all_matches.len()) {
+        match build_line_analysis(line, &context, matcher, base_index, all_matches.len()) {
             Ok(mut analysis) => {
                 has_candidates |= !analysis.constellation.groups.is_empty();
                 all_matches.append(&mut analysis.matches);
@@ -340,16 +344,204 @@ pub fn analyze_tokens(pattern_source: &str, lines: &[Vec<TokenInfo>]) -> SampleA
     }
 }
 
+/// A referenced attribute the sample's tokenizer does not supply.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct UnavailableAttribute {
+    pub attribute: String,
+    /// The definitions that reference it; empty when only the catalog
+    /// configuration does.
+    pub definitions: Vec<String>,
+}
+
+/// Whether the catalog binds to the sample tokenizer's token schema.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum SampleBinding {
+    /// Tests over an unavailable attribute match nothing on any sample token.
+    Bound {
+        unavailable: Vec<UnavailableAttribute>,
+    },
+    /// The refusal a corpus run over this schema fails with.
+    Refused(String),
+}
+
+/// The catalog's `examples` and `counterexamples` claims, checked with the
+/// sample's tokenizer.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum SampleClaims {
+    Undeclared,
+    /// Declared but not run: a counterexample cannot pass on evidence when a
+    /// referenced attribute is absent from every token.
+    Unverifiable,
+    Checked(ClaimsReport),
+    Failed(String),
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ClaimsReport {
+    pub checked: usize,
+    pub failures: Vec<ClaimFailure>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ClaimFailure {
+    pub definition: String,
+    pub example: String,
+    pub kind: ClaimFailureKind,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ClaimFailureKind {
+    ExpectedMatch,
+    UnexpectedMatch,
+    Malformed,
+    /// The definition matches its example, and result policy publishes no
+    /// record for it.
+    ExpectedPublication,
+    /// The definition does not match its counterexample by itself, and result
+    /// policy publishes a record under its name.
+    UnexpectedPublication,
+}
+
+/// What ran a sample, and what that run cannot show.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SampleRun {
+    /// The analyzer and dictionary that tokenized the sample.
+    pub analyzer: String,
+    /// The selected corpus's analyzer, when its token schema differs from the
+    /// sample tokenizer's.
+    pub corpus_analyzer: Option<String>,
+    pub binding: SampleBinding,
+    pub claims: SampleClaims,
+}
+
+/// Binds `output` to `schema` and, when every referenced attribute is
+/// available, checks the catalog's claims through `tokenize`.
+pub fn sample_run(
+    output: &CompileOutput,
+    schema: &TokenSchema,
+    analyzer: String,
+    tokenize: &dyn Fn(&str) -> Vec<TokenInfo>,
+) -> SampleRun {
+    let binding = match output
+        .matcher
+        .bind_with_projection(schema, output.matcher.execution_attributes())
+    {
+        Ok(bound) => SampleBinding::Bound {
+            unavailable: bound
+                .unavailable_attributes()
+                .iter()
+                .map(|attribute| UnavailableAttribute {
+                    attribute: attribute.as_str().to_owned(),
+                    definitions: output
+                        .analysis
+                        .references_to(attribute)
+                        .map(|site| site.definition.to_string())
+                        .collect::<std::collections::BTreeSet<_>>()
+                        .into_iter()
+                        .collect(),
+                })
+                .collect(),
+        },
+        Err(error) => SampleBinding::Refused(error.to_string()),
+    };
+    let declared = output.matcher.patterns().iter().any(|(_, pattern)| {
+        pattern.metadata.contains_key("examples")
+            || pattern.metadata.contains_key("counterexamples")
+    });
+    let complete =
+        matches!(&binding, SampleBinding::Bound { unavailable } if unavailable.is_empty());
+    let claims = if !declared {
+        SampleClaims::Undeclared
+    } else if !complete {
+        SampleClaims::Unverifiable
+    } else {
+        match lingrep_core::fsm::try_verify_examples(&output.matcher, tokenize) {
+            Ok(report) => SampleClaims::Checked(claims_report(report)),
+            Err(error) => SampleClaims::Failed(error.to_string()),
+        }
+    };
+    SampleRun {
+        analyzer,
+        corpus_analyzer: None,
+        binding,
+        claims,
+    }
+}
+
+/// One failure per claim: a claim the definition already contradicts is not
+/// repeated as a publication failure.
+fn claims_report(report: ExampleReport) -> ClaimsReport {
+    let raw = |failure: ExampleFailure| ClaimFailure {
+        kind: match failure.kind {
+            ExampleFailureKind::ExpectedMatch => ClaimFailureKind::ExpectedMatch,
+            ExampleFailureKind::UnexpectedMatch => ClaimFailureKind::UnexpectedMatch,
+            ExampleFailureKind::Malformed => ClaimFailureKind::Malformed,
+        },
+        definition: failure.definition,
+        example: failure.example,
+    };
+    let mut failures: Vec<ClaimFailure> = report.failures.into_iter().map(raw).collect();
+    let published: Vec<ClaimFailure> = report
+        .post_policy_failures
+        .into_iter()
+        .filter(|failure| {
+            !failures.iter().any(|seen| {
+                seen.definition == failure.definition && seen.example == failure.example
+            })
+        })
+        .map(|failure| ClaimFailure {
+            kind: match failure.kind {
+                ExampleFailureKind::UnexpectedMatch => ClaimFailureKind::UnexpectedPublication,
+                ExampleFailureKind::ExpectedMatch | ExampleFailureKind::Malformed => {
+                    ClaimFailureKind::ExpectedPublication
+                }
+            },
+            definition: failure.definition,
+            example: failure.example,
+        })
+        .collect();
+    failures.extend(published);
+    ClaimsReport {
+        checked: report.checked,
+        failures,
+    }
+}
+
+/// A sample's matches together with the run that produced them; `run` is
+/// `None` when the pattern does not compile.
+#[derive(Debug, Clone)]
+pub struct SampleReport {
+    pub analysis: SampleAnalysis,
+    pub run: Option<SampleRun>,
+}
+
 pub fn analyze_sample(
     pattern_source: &str,
     sample_text: &str,
     plan: &VibratoPlan,
-) -> SampleAnalysis {
+    analyzer: String,
+) -> SampleReport {
+    let output = match compile_web_pattern(pattern_source) {
+        Ok(output) => output,
+        Err(error) => {
+            return SampleReport {
+                analysis: SampleAnalysis::Failed(SampleAnalysisError {
+                    message: format_pattern_compile_error(&error),
+                }),
+                run: None,
+            };
+        }
+    };
     let lines: Vec<Vec<TokenInfo>> = sample_text
         .lines()
         .map(str::trim)
         .filter(|line| !line.is_empty())
         .map(|line| plan.tokenize(line))
         .collect();
-    analyze_tokens(pattern_source, &lines)
+    SampleReport {
+        analysis: analyze_compiled(&output.matcher, &lines),
+        run: Some(sample_run(&output, plan.schema(), analyzer, &|text| {
+            plan.tokenize(text)
+        })),
+    }
 }

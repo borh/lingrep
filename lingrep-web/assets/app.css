@@ -1431,6 +1431,31 @@ form .btn { margin-top: var(--space-3); }
 }
 .sample-actions .btn { margin-top: 0; }
 .sample-summary { font-weight: 600; margin: 0 0 var(--space-3); }
+.sample-run,
+.sample-claims-note { margin: 0 0 var(--space-2); color: var(--text-muted); font-size: .85rem; }
+.sample-run-warnings { list-style: none; margin: 0 0 var(--space-2); padding: 0; }
+.sample-run-warning { color: var(--alert-error-text); font-size: .85rem; }
+.sample-claims {
+  margin: 0 0 var(--space-3);
+  padding: var(--space-2) var(--space-3);
+  border: 1px solid var(--border-light);
+  border-inline-start: 3px solid var(--alert-success-border);
+  border-radius: 3px;
+  font-size: .9rem;
+}
+.sample-claims:not([data-sample-claims="hold"]) { border-inline-start-color: var(--alert-error-border); }
+.sample-claims-summary { margin: 0 0 var(--space-1); font-weight: 600; }
+.sample-claim-failures { list-style: none; margin: 0 0 var(--space-2); padding: 0; display: grid; gap: var(--space-1); }
+.sample-claim-text {
+  padding: 0 var(--space-1);
+  border: 1px solid var(--border-light);
+  border-radius: 3px;
+  background: var(--token-bg);
+  color: var(--text);
+  font: inherit;
+  font-family: var(--font-serif-cjk);
+  cursor: pointer;
+}
 .sample-match-list {
   list-style: none;
   margin: var(--space-3) 0 0;
