@@ -239,6 +239,40 @@ fn span_annotations_filter_candidates_before_longest_selection() {
             "{spaced}"
         );
     }
+    let nested: Vec<_> = [
+        span(0, 1, Some(1), "NP"),
+        span(0, 2, Some(2), "Inner"),
+        span(0, 2, Some(3), "Outer"),
+        span(0, 3, None, "S"),
+        span(2, 3, Some(3), "Sibling"),
+    ]
+    .into_iter()
+    .map(|mut annotation| {
+        annotation.kind = "phrase".into();
+        annotation
+    })
+    .collect();
+    let coextensive = r#"
+        inner := ^ (?<phrase> []{2}) where span(phrase, $phrase.whole@Inner).
+        outer := ^ (?<phrase> []{2}) where span(phrase, $phrase.whole@Outer)."#;
+    assert_eq!(
+        run(coextensive, nested.clone()),
+        [
+            matched("inner", 0, 2, &[("phrase", 0, 2)]),
+            matched("outer", 0, 2, &[("phrase", 0, 2)]),
+        ]
+    );
+
+    let direct = r#"edge := ^ (?<child> []) [] (?<last> []) $
+        where span(phrase, $last.inside@S -> $child.whole@NP)."#;
+    assert!(run(direct, nested.clone()).is_empty());
+    let mut direct_governor = nested;
+    direct_governor[0].governor = Some(3);
+    assert_eq!(
+        run(direct, direct_governor),
+        [matched("edge", 0, 3, &[("child", 0, 1), ("last", 2, 3)])]
+    );
+
     let inherited = r#"defaults
             within_span: {kind: "bunsetsu", label: "NP"}
         end

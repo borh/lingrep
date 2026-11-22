@@ -490,6 +490,55 @@ To compare one query across two annotations of the same sentences, such as a UD
 treebank and its SUD conversion, see
 [paired-treebank-comparison.md](paired-treebank-comparison.md).
 
+### Joining annotated relations across sentences
+
+Use one `ling matches` scan to collect sentence-local matches. In the JSONL
+`match.data`, `source_name` gives the source label and
+`document_ordinal` identifies the document within the input. Use
+`document_sentence_ordinal` for a sentence within that document or
+`corpus_sentence_ordinal` for a sentence across the input. Within a sentence,
+`span.start` is the zero-based token offset. Build the relation annotations
+against the same corpus realization and token coordinates as the match run.
+
+This CoNLL-U example has two sentences in one document. Save the following as
+`mentions.conllu`.
+
+```conllu
+# newdoc id = demo
+# text = 花子
+1	花子	花子	PROPN	_	_	0	root	_	_
+
+# text = 彼女
+1	彼女	彼女	PRON	_	_	0	root	_	_
+```
+
+```bash
+ling --json matches --input-format conllu \
+  --pattern 'mention := [upos in {PROPN, PRON}].' mentions.conllu > mentions.jsonl
+```
+
+In DuckDB, use the annotated relation in `links` to find both endpoints. The
+example annotation connects token 0 of sentence 1 to token 0 of sentence 0
+in document 0.
+
+```sql
+WITH hits AS (
+    SELECT data.document_ordinal AS doc, data.document_sentence_ordinal AS sent,
+           data.span.start AS token, data.surface AS surface
+    FROM read_json_auto('mentions.jsonl') WHERE type = 'match'
+),
+links(doc, antecedent_sent, antecedent_token, mention_sent, mention_token) AS (
+    VALUES (0, 0, 0, 1, 0)
+)
+SELECT a.surface AS antecedent, m.surface AS mention
+FROM links l
+JOIN hits a ON (a.doc, a.sent, a.token) = (l.doc, l.antecedent_sent, l.antecedent_token)
+JOIN hits m ON (m.doc, m.sent, m.token) = (l.doc, l.mention_sent, l.mention_token);
+```
+
+The result is `花子` → `彼女`. The annotation supplies the coreference relation
+and the match records supply its endpoint evidence.
+
 ### Declared result policy in published records
 
 A catalog's metadata and its `policy … end` block declare what it publishes,

@@ -1852,6 +1852,22 @@ fn graph_where_clause_rejects_ambiguous_or_unanchored_bindings() {
 }
 
 #[test]
+fn an_empty_node_as_the_only_binding_requires_a_surface_anchor() {
+    let source = "p := [] where (?<node> [node.kind=empty]) -[enhanced dep]-> $node.";
+    let error = compile_catalog(
+        PatternSource::named("empty-node.lx", source),
+        CompileLimits::default(),
+    )
+    .err()
+    .expect("an empty node cannot anchor an enhanced component");
+    assert!(error.diagnostics.iter().any(|diagnostic| {
+        diagnostic.code() == DiagnosticCode::EnhancedGraphComponentUnanchored
+            && diagnostic.message.contains("`$node`")
+            && diagnostic.message.contains("no surface capture anchor")
+    }));
+}
+
+#[test]
 fn enhanced_where_clause_preserves_named_parallel_edges_and_projects_graph_keys() {
     let source = "1\truns\trun\tVERB\t_\t_\t0\troot\t0:root\t_\n\
                   1.1\tpro\tpro\tPRON\t_\t_\t_\t_\t1:obj|1:obj:agent\t_\n";

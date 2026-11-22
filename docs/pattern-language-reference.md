@@ -28,6 +28,11 @@ lingrep patterns documents contain declarations, not standalone expressions.
 References are resolved across the whole document and may point forward;
 duplicate definitions, undefined references, and cycles are compile errors.
 
+Each match belongs to one sentence. Surface expressions, anchors, lookaround,
+and graph and span constraints use that sentence's analysis. Join matches in
+other sentences through an explicit relation annotation, as in the
+[CLI example](cli-usage-guide.md#joining-annotated-relations-across-sentences).
+
 ## Reserved names
 
 `pattern`, `fragment`, `lexicon`, `set`, `test`, `group`, `defaults`, `schema`,
@@ -410,6 +415,12 @@ whitespace around the layer, `$`, `.`, `@` and `->`, as the native form does.
 Its label is the text after `@` without surrounding whitespace; write a label
 that begins or ends with a space as a quoted label in the native form.
 
+Span layers retain intervals and any recorded governor links. Each step in a
+span path requires one recorded link. Nested and coextensive intervals can
+satisfy interval and label selectors independently. Use external analysis
+for immediate dominance, sisterhood, phrase precedence, c-command, unary
+chains, and variable-length governor paths.
+
 ## Dependency constraints
 
 An emitting pattern may close with a `where` clause of comma-separated
@@ -699,8 +710,11 @@ pattern propagated_argument := (?<argument> [upos=NOUN])
 
 A graph-node binder is contextual `(?<name> [TOKEN_TEST])`; it is exactly one
 graph node wide but has no surface span. At least one exact-width-one surface
-capture anchors every connected enhanced component. A bound node is a tagged
-sentence-local word or decimal empty-node identity; root is not bindable.
+capture anchors every connected enhanced component through positive edges.
+For a component with no such anchor, the compiler reports
+`EnhancedGraphComponentUnanchored` and names a binding in that component.
+A bound node has a tagged sentence-local word or decimal empty-node identity.
+Decimal empty nodes occur in the enhanced graph only. The root is unbindable.
 
 `basic_head($dependent)` is a derived endpoint: it denotes the non-root word
 selected by an exact-one-token surface capture's scalar `dep.head`. It is not a
