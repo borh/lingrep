@@ -81,6 +81,31 @@ counterexamples. Successful example verification confirms consistency with autho
 claims, not linguistic correctness or recall. External adapters are rejected by this
 verification path.
 
+`check` also reports two findings that hold for every token sequence and need
+no corpus. A token test that no token satisfies, such as
+`[upos=VERB & upos=NOUN]`, is `warning[unsatisfiable_test]`, and a definition
+whose body requires one is `warning[unsatisfiable_definition]`. A regex test is
+not analysed, so a contradiction between two regexes is not reported.
+
+`--containment` compares every pair of emitting definitions and lists the pairs
+in which one publishes only spans the other also publishes:
+
+```text
+containment: 5 pair(s), 1 definition(s) not compared
+  ことも publishes only spans of こと
+  そうだ not compared: its body has a lookaround
+```
+
+A definition publishes its longest match from each start, so `[text=a]` is not
+contained in `[text=a] [text=b]?`: on `a b` the second publishes two tokens.
+The comparison covers token tests, sequences, alternatives, repetition,
+captures, `&` and references. A definition with a lookaround, a position
+assertion, an any-order group, `same_as` or a `where` clause is listed as not
+compared, and a pair whose tests use a regex is omitted. Spans are compared,
+not records: captures, keys and the result policy are outside the comparison.
+Under a `resolve` that ranks the containing definition first, the contained
+one is never published.
+
 The Sample debugger of `ling serve` and the Workbench "Test on sample" drawer
 use the server's Vibrato dictionary to tokenize each example and counterexample
 independently of the sample text. They check these claims when the catalog binds

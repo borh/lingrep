@@ -189,6 +189,34 @@ pub struct CheckData {
     /// Additive under the rule above.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub binding: Option<BindingData>,
+    /// The `--containment` comparison, present only when one was requested.
+    /// Additive under the rule above.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub containment: Option<ContainmentData>,
+}
+
+/// Pairs of emitting definitions of which one publishes only spans the other
+/// also publishes, on every token sequence.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
+pub struct ContainmentData {
+    pub pairs: Vec<ContainedPairData>,
+    /// Definitions left out of the comparison.
+    pub not_decided: Vec<ContainmentNotDecided>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
+pub struct ContainedPairData {
+    pub contained: String,
+    pub containing: String,
+    /// Each publishes exactly the spans of the other. Listed once.
+    pub equivalent: bool,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
+pub struct ContainmentNotDecided {
+    pub definition: String,
+    /// The form in the definition's body that the comparison does not model.
+    pub construct: String,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]

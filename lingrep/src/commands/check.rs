@@ -20,8 +20,9 @@ use crate::error::CliError;
 use crate::presentation::OutputMode;
 use crate::protocol::check::{
     BindingData, BindingSiteData, CheckData, CheckEnvelope, CheckEvent, CompileStats,
-    CompileWarning, DefinitionDescriptor, DriftBodyData, DriftCarrierData, DriftData,
-    SourceLocation, UnavailableAttributeData,
+    CompileWarning, ContainedPairData, ContainmentData, ContainmentNotDecided,
+    DefinitionDescriptor, DriftBodyData, DriftCarrierData, DriftData, SourceLocation,
+    UnavailableAttributeData,
 };
 use crate::protocol::query::SourceSpan;
 use crate::protocol::write_jsonl;
@@ -84,7 +85,7 @@ pub fn run(
         .as_ref()
         .is_some_and(|r| !r.failures.is_empty() || !r.post_policy_failures.is_empty());
     let stats = catalog.output.stats;
-    let warnings = catalog
+    let mut warnings: Vec<CompileWarning> = catalog
         .output
         .diagnostics
         .iter()
@@ -104,6 +105,36 @@ pub fn run(
             }
         })
         .collect();
+    warnings.extend(
+        catalog
+            .output
+            .no_match
+            .unsatisfiable()
+            .into_iter()
+            .map(unsatisfiable_warning),
+    );
+    let containment = args.containment.then(|| {
+        let report = catalog.output.no_match.containments();
+        ContainmentData {
+            pairs: report
+                .pairs
+                .into_iter()
+                .map(|pair| ContainedPairData {
+                    contained: pair.contained,
+                    containing: pair.containing,
+                    equivalent: pair.equivalent,
+                })
+                .collect(),
+            not_decided: report
+                .not_decided
+                .into_iter()
+                .map(|(definition, construct)| ContainmentNotDecided {
+                    definition,
+                    construct: construct.to_owned(),
+                })
+                .collect(),
+        }
+    });
     let (drift, comparison) =
         compare_catalogs(&catalog.source, &args.compare_with, table.as_ref())?;
     let drift_found = !drift.is_empty();
@@ -141,6 +172,7 @@ pub fn run(
         warnings,
         drift,
         binding,
+        containment,
     }));
 
     let stdout = io::stdout();
@@ -217,6 +249,30 @@ fn assess_binding(
     }
 }
 
+fn unsatisfiable_warning(finding: lingrep_core::fsm::Unsatisfiable) -> CompileWarning {
+    let (code, message) = match finding.kind {
+        lingrep_core::fsm::UnsatisfiableKind::TokenTest { test } => (
+            "unsatisfiable_test",
+            format!("`{}`: no token satisfies {test}", finding.definition),
+        ),
+        lingrep_core::fsm::UnsatisfiableKind::Definition => (
+            "unsatisfiable_definition",
+            format!("`{}` matches no token sequence", finding.definition),
+        ),
+    };
+    CompileWarning {
+        code: code.to_owned(),
+        message,
+        location: Some(SourceLocation {
+            source_file: finding.location.source.to_string(),
+            source_span: SourceSpan {
+                start: finding.location.byte_range.start as u64,
+                end: finding.location.byte_range.end as u64,
+            },
+        }),
+    }
+}
+
 fn publish_check<W: Write>(
     writer: &mut W,
     output: OutputMode,
@@ -239,6 +295,51 @@ fn publish_check<W: Write>(
                 data.warnings.len()
             )
             .map_err(crate::protocol::OutputError::from)?;
+            for warning in data
+                .warnings
+                .iter()
+                .filter(|warning| warning.code.starts_with("unsatisfiable_"))
+            {
+                writeln!(
+                    writer,
+                    "warning[{}]: {}",
+                    warning.code,
+                    SafeText::from_untrusted(&warning.message)
+                )
+                .map_err(crate::protocol::OutputError::from)?;
+            }
+            if let Some(containment) = &data.containment {
+                writeln!(
+                    writer,
+                    "containment: {} pair(s), {} definition(s) not compared",
+                    containment.pairs.len(),
+                    containment.not_decided.len()
+                )
+                .map_err(crate::protocol::OutputError::from)?;
+                for pair in &containment.pairs {
+                    let relation = if pair.equivalent {
+                        "publishes the same spans as"
+                    } else {
+                        "publishes only spans of"
+                    };
+                    writeln!(
+                        writer,
+                        "  {} {relation} {}",
+                        SafeText::from_untrusted(&pair.contained),
+                        SafeText::from_untrusted(&pair.containing)
+                    )
+                    .map_err(crate::protocol::OutputError::from)?;
+                }
+                for skipped in &containment.not_decided {
+                    writeln!(
+                        writer,
+                        "  {} not compared: its body has {}",
+                        SafeText::from_untrusted(&skipped.definition),
+                        SafeText::from_untrusted(&skipped.construct)
+                    )
+                    .map_err(crate::protocol::OutputError::from)?;
+                }
+            }
             if let Some(examples) = &data.examples {
                 writeln!(
                     writer,
@@ -957,6 +1058,7 @@ mod tests {
                 transitions: 0,
             },
             warnings: Vec::new(),
+            containment: None,
             drift: Vec::new(),
             binding: None,
         }))

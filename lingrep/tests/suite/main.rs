@@ -7,6 +7,7 @@ mod artifact_fingerprint_golden;
 mod attributes;
 mod catalog_input;
 mod catalog_labels;
+mod check_static;
 mod cli;
 mod cli_shape;
 mod compare_occurrences_example;

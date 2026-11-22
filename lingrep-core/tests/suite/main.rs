@@ -103,6 +103,7 @@ mod simple_matching_test;
 mod skip_test;
 mod span_equality_test;
 mod spill_counts;
+mod static_checks_test;
 mod sudachi_contract;
 mod testing_api_tests;
 mod text_key_literals;

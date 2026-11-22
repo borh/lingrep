@@ -187,7 +187,11 @@ impl NoMatchExplainer {
         report(outcome, starts_tried, run.truncated)
     }
 
-    fn location(&self, span: SourceSpan) -> ElementLocation {
+    pub(super) fn program(&self) -> &BoundProgram {
+        &self.program
+    }
+
+    pub(super) fn location(&self, span: SourceSpan) -> ElementLocation {
         let (line, column) = self.program.sources.line_column(span);
         let range = span.byte_range();
         ElementLocation {
@@ -697,7 +701,7 @@ fn attribute_test<S: TokenSequence + ?Sized>(
     }
 }
 
-fn value_test(expected: &AttrValueType, actual: AttributeValueRef<'_>) -> bool {
+pub(super) fn value_test(expected: &AttrValueType, actual: AttributeValueRef<'_>) -> bool {
     use AttributeValueRef::{Scalar, StringSet};
     match (expected, actual) {
         (AttrValueType::Single(expected), Scalar(actual)) => actual == expected,
@@ -739,7 +743,7 @@ fn value_test(expected: &AttrValueType, actual: AttributeValueRef<'_>) -> bool {
     }
 }
 
-fn render_test(value: &AttrValueType) -> String {
+pub(super) fn render_test(value: &AttrValueType) -> String {
     let set = |values: &[compact_str::CompactString]| format!("{{{}}}", values.join(", "));
     match value {
         AttrValueType::Single(value) => format!("={value}"),

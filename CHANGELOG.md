@@ -9,6 +9,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- `ling check` warns about a token test that no token satisfies
+  (`unsatisfiable_test`) and a definition whose body requires one
+  (`unsatisfiable_definition`). `ling check --containment` lists the pairs of
+  definitions in which one publishes only spans the other also publishes, on
+  every token sequence and without a corpus.
 - The Sample debugger and the Workbench "Test on sample" drawer verify a
   catalog's `examples` and `counterexamples` when the sample token schema
   supports the catalog. They report invalid entries, unexpected match results,
