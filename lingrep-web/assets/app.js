@@ -2,7 +2,21 @@
 // keeping it out of the template lets the CSP forbid inline scripts and lets
 // the static-asset handler cache/revalidate it like every other asset.
 
-import { localize, t } from "./i18n.js";
+import { localize, onLocaleChange, t } from "./i18n.js";
+
+/**
+ * The run options a closed "Run options" disclosure states: the hits kept,
+ * then each option that changes what the run counts or publishes.
+ */
+export function runOptionsSummary({ retained, deriveCompounds, documentReach, overlaps }, translate) {
+    return [
+        translate("editor.run_options_retained", { n: retained }),
+        deriveCompounds && translate("editor.derive_compounds"),
+        documentReach && translate("editor.document_reach"),
+        overlaps === "keep" && translate("editor.overlaps_keep"),
+        overlaps === "longest" && translate("editor.overlaps_longest"),
+    ].filter(Boolean).join(" · ");
+}
 
 /**
  * Whether a queued rerun should fire now.
@@ -476,7 +490,8 @@ if (typeof document !== "undefined") {
             if (status) status.textContent = t("sample.running");
             target.setAttribute("aria-busy", "true");
             try {
-                const body = new URLSearchParams({ pattern, sample }).toString();
+                const corpus = document.querySelector("[data-corpus-search] input[name=corpus]")?.value ?? "";
+                const body = new URLSearchParams({ pattern, sample, corpus }).toString();
                 const response = await fetch("api/sample", {
                     method: "POST",
                     headers: { "Content-Type": "application/x-www-form-urlencoded" },
@@ -530,6 +545,28 @@ if (typeof document !== "undefined") {
                 void runInlineSample();
             }
         });
+    })();
+
+    (function () {
+        const render = () => {
+            const control = document.querySelector("[data-run-options]");
+            const form = control?.closest("form");
+            if (!form) return;
+            control.querySelector("[data-run-options-summary]").textContent = runOptionsSummary({
+                retained: form.querySelector("select[name=retained]").value,
+                deriveCompounds: form.querySelector("input[name=derive_compounds]").checked,
+                documentReach: form.querySelector("input[name=document_reach]").checked,
+                overlaps: form.querySelector("select[name=overlaps]").value,
+            }, t);
+        };
+        document.addEventListener("change", (event) => {
+            if (event.target.closest?.("[data-run-options]")) render();
+        });
+        // A restored query or a submit can set these controls without a change event.
+        document.addEventListener("lingrep-web:query-restored", render);
+        document.addEventListener("htmx:beforeRequest", render);
+        onLocaleChange(render);
+        render();
     })();
 
     // Editor fold: the query workspace collapses to a one-line bar once a search

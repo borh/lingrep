@@ -1,6 +1,6 @@
 {% import "macros.html" as macros -%}
 {% if status.terminal %}
-<div class="revision-status" role="status" aria-live="polite" aria-busy="false">
+<div class="revision-status{% if status.kind == RevisionStatusKind::Error %} revision-status-error{% endif %}" role="status" aria-live="polite" aria-busy="false">
 {% else %}
 <div class="revision-status progress" aria-live="off" aria-busy="{{ status.busy }}">
 {% endif %}

@@ -28,6 +28,7 @@ import {
   symbolAtPosition,
   utf8RangeToUtf16,
   diagnosticExcerpt,
+  localSyntaxMessage,
   focusEditor,
   shouldSelectDiagnostic,
 } from "../assets/editor/pattern-editor.js";
@@ -660,4 +661,19 @@ test("a check names the corpus only when one is selected", () => {
   assert.deepEqual(checkRequest("p := [].", "natsume"), { source: "p := [].", corpus: "natsume" });
   assert.deepEqual(checkRequest("p := [].", null), { source: "p := []." });
   assert.deepEqual(checkRequest("p := [].", ""), { source: "p := []." });
+});
+
+test("a local syntax error names an unprefixed attribute outside the portable set", () => {
+  const portable = "text, surface, lemma, norm, upos, xpos";
+  assert.deepEqual(localSyntaxMessage("orth=猫"), {
+    key: "editor.diag_unknown_attribute_written",
+    args: { name: "orth", portable },
+  });
+  assert.deepEqual(localSyntaxMessage(" & pos1 not in {名詞}"), {
+    key: "editor.diag_unknown_attribute",
+    args: { name: "pos1", portable },
+  });
+  for (const text of ["lemma=", " := [upos=", "unidic.cform~連用形", "猫"]) {
+    assert.deepEqual(localSyntaxMessage(text), { key: "editor.diag_syntax_local", args: null }, text);
+  }
 });

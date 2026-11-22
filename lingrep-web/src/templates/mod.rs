@@ -3,8 +3,8 @@ use lingrep_core::fsm::policy_program::Overlaps;
 use lingrep_core::token_match::TokenAttributeIndex;
 
 use crate::inspection::{CaptureInspection, CompositionItem, TokenInspection};
-use crate::revision_status::RevisionStatus;
-use crate::sample::SampleAnalysis;
+use crate::revision_status::{RevisionStatus, RevisionStatusKind};
+use crate::sample::{ClaimFailureKind, SampleAnalysis, SampleBinding, SampleClaims};
 use crate::snapshot::CompoundCategory;
 
 /// An HTML fragment that has already been rendered by Askama, and therefore
@@ -478,6 +478,7 @@ impl TokenInspectionFragment {
 #[template(path = "sample_results.html")]
 pub struct SampleResults {
     pub analysis: crate::sample::SampleAnalysis,
+    pub run: Option<crate::sample::SampleRun>,
 }
 
 #[derive(Template)]
@@ -886,7 +887,10 @@ mod tests {
         }
         .render()
         .unwrap();
-        assert!(failure_html.contains("role=\"status\""));
+        assert!(
+            failure_html
+                .contains("class=\"revision-status revision-status-error\" role=\"status\"")
+        );
         assert!(failure_html.contains(
             "<span data-i18n=\"status.failed_compile\">The pattern did not compile:</span> \
              <span lang=\"en\">Unexpected &#60;script&#62;"

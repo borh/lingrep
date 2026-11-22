@@ -88,10 +88,23 @@ async fn real_dictionary_returns_a_rendered_match() {
         detail_limits: DetailLimits { max_kwic: 10 },
     });
     let app = lingrep_web::handlers::sample::routes().with_state(store);
-    let text = encode_form("v := [upos=VERB].", "猫が走る");
+    let text = encode_form(
+        "examples: [\"猫が走る\"] counterexamples: [\"走る\"] v := [upos=VERB].",
+        "猫が走る",
+    );
     let res = post(&app, text).await;
     assert_eq!(res.status(), StatusCode::OK);
     let body = res.into_body().collect().await.unwrap().to_bytes();
     let html = String::from_utf8(body.to_vec()).unwrap();
     assert!(html.contains("走る"), "{html}");
+    assert!(
+        html.contains(r#"data-i18n-args='{"failed": 1, "checked": 2}'"#),
+        "the counterexample is tokenized and matched: {html}"
+    );
+    let dictionary = std::path::PathBuf::from(lingrep_core::testing::dictionary_path());
+    let name = dictionary.file_name().unwrap().to_string_lossy();
+    assert!(
+        html.contains(&format!("<code>vibrato morphology · {name}</code>")),
+        "{html}"
+    );
 }
