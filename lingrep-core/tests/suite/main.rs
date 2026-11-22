@@ -81,6 +81,7 @@ mod policy_group_test;
 mod policy_helpers;
 mod policy_partition_test;
 mod policy_program_test;
+mod policy_property_tests;
 mod policy_sink_test;
 mod policy_trace_test;
 mod policy_transform_test;
