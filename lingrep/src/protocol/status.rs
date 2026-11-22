@@ -20,22 +20,11 @@ pub(crate) fn contract() -> super::discovery::ContractSpec {
     )
 }
 
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
-pub struct StatusEnvelope {
-    pub schema: String,
-    #[serde(flatten)]
-    pub event: StatusEvent,
-}
-
-impl StatusEnvelope {
-    #[must_use]
-    pub fn new(data: StatusData) -> Self {
-        Self {
-            schema: SCHEMA.into(),
-            event: StatusEvent::Status(data),
-        }
-    }
-}
+define_protocol_envelope!(
+    pub struct StatusEnvelope(StatusEvent::Status(StatusData)),
+    schema = SCHEMA,
+    extra_derives = [Eq],
+);
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(tag = "type", content = "data", rename_all = "snake_case")]

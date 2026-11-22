@@ -26,22 +26,11 @@ pub(crate) fn contract() -> super::discovery::ContractSpec {
     )
 }
 
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
-pub struct InvocationEnvelope {
-    pub schema: String,
-    #[serde(flatten)]
-    pub event: InvocationEvent,
-}
-
-impl InvocationEnvelope {
-    #[must_use]
-    pub fn new(data: InvocationData) -> Self {
-        Self {
-            schema: SCHEMA.into(),
-            event: InvocationEvent::Invocation(data),
-        }
-    }
-}
+define_protocol_envelope!(
+    pub struct InvocationEnvelope(InvocationEvent::Invocation(InvocationData)),
+    schema = SCHEMA,
+    extra_derives = [Eq],
+);
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(tag = "type", content = "data", rename_all = "snake_case")]

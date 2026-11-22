@@ -20,22 +20,11 @@ pub(crate) fn contract() -> super::discovery::ContractSpec {
     )
 }
 
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
-pub struct CompletionEnvelope {
-    pub schema: String,
-    #[serde(flatten)]
-    pub event: CompletionEvent,
-}
-
-impl CompletionEnvelope {
-    #[must_use]
-    pub fn new(data: CompletionData) -> Self {
-        Self {
-            schema: SCHEMA.into(),
-            event: CompletionEvent::Completion(data),
-        }
-    }
-}
+define_protocol_envelope!(
+    pub struct CompletionEnvelope(CompletionEvent::Completion(CompletionData)),
+    schema = SCHEMA,
+    extra_derives = [Eq],
+);
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(tag = "type", content = "data", rename_all = "snake_case")]

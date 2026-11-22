@@ -2263,35 +2263,6 @@ impl From<NormalizationArg> for lingrep_core::analysis::NormalizationPolicy {
     }
 }
 
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, ValueEnum)]
-pub enum CheckFormat {
-    #[default]
-    Json,
-    Human,
-}
-
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, ValueEnum)]
-pub enum MachineFormat {
-    #[default]
-    Jsonl,
-    Tsv,
-}
-
-/// The v1 tokenization protocol has one canonical machine projection.
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, ValueEnum)]
-pub enum TokenizeFormat {
-    #[default]
-    Jsonl,
-}
-
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, ValueEnum)]
-pub enum MatchFormat {
-    #[default]
-    Jsonl,
-    Tsv,
-    Human,
-}
-
 #[derive(Clone, Debug)]
 pub struct ExecutionCliConfig {
     pub traversal: TraversalLimits,

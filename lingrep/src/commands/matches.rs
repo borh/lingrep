@@ -21,7 +21,7 @@ use super::query_support::{
     random_id, write_vectors_notice,
 };
 use crate::catalog_input::load_and_compile_with_vectors;
-use crate::cli::{ExecutionCliConfig, MatchFormat, MatchesArgs, ProgressMode};
+use crate::cli::{ExecutionCliConfig, MatchesArgs, ProgressMode};
 use crate::direct_source::OversizedSentenceOmissionSummary;
 use crate::direct_source::{matched_orth_tokens, matched_surface};
 use crate::error::{CliError, FailureCode};
@@ -147,11 +147,6 @@ pub fn run(
     output: OutputMode,
     color_mode: ColorMode,
 ) -> Result<CommandOutcome, CliError> {
-    let format = match output {
-        OutputMode::Human => MatchFormat::Human,
-        OutputMode::Jsonl => MatchFormat::Jsonl,
-        OutputMode::Tsv => MatchFormat::Tsv,
-    };
     if args.retain.is_some() && output != OutputMode::Jsonl {
         return Err(CliError::InvalidArgs("--retain requires --json".into()));
     }
@@ -176,10 +171,10 @@ pub fn run(
             path.display()
         )));
     }
-    let sink_output = match format {
-        MatchFormat::Jsonl => MatchSinkOutput::Jsonl,
-        MatchFormat::Tsv => MatchSinkOutput::Tsv,
-        MatchFormat::Human => {
+    let sink_output = match output {
+        OutputMode::Jsonl => MatchSinkOutput::Jsonl,
+        OutputMode::Tsv => MatchSinkOutput::Tsv,
+        OutputMode::Human => {
             let no_color = std::env::var_os("NO_COLOR").is_some_and(|value| !value.is_empty());
             let color = ColorPolicy::resolve(color_mode, no_color, io::stdout().is_terminal());
             let colorfgbg = std::env::var("COLORFGBG").ok();
@@ -401,7 +396,7 @@ pub fn run(
     let post_run = (|| -> Result<CommandOutcome, CliError> {
         let stdout = io::stdout();
         let mut writer = io::BufWriter::with_capacity(256 * 1024, stdout.lock());
-        if format == MatchFormat::Jsonl {
+        if output == OutputMode::Jsonl {
             publish_query_jsonl(&mut writer, &run)?;
             for descriptor in &descriptors {
                 publish_query_jsonl(
@@ -588,7 +583,7 @@ pub fn run(
             ValidatedCompletion::Publish(completed) => completed,
         };
         let ending_corpus = complete_corpus.clone();
-        if format == MatchFormat::Jsonl {
+        if output == OutputMode::Jsonl {
             let sentences_proven_absent = run_facts.filter_stats.as_ref().map_or(
                 0,
                 lingrep_corpus::PreparedFilterStats::sentences_proven_absent,

@@ -1,6 +1,6 @@
 //! The `lingrep.prune/v1` contract: what `corpus prune` deletes, or would.
 
-use serde::{Deserialize, Deserializer, Serialize, de::Error as _};
+use serde::{Deserialize, Serialize};
 
 use super::disk::{DiskSource, PruneKeep};
 use super::variants::VariantDifference;
@@ -56,32 +56,12 @@ pub(crate) fn contract() -> super::discovery::ContractSpec {
     )
 }
 
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
-pub struct PruneEnvelope {
-    #[serde(deserialize_with = "deserialize_schema")]
-    pub schema: String,
-    #[serde(flatten)]
-    pub event: PruneEvent,
-}
-
-fn deserialize_schema<'de, D: Deserializer<'de>>(deserializer: D) -> Result<String, D::Error> {
-    let schema = String::deserialize(deserializer)?;
-    if schema == SCHEMA {
-        Ok(schema)
-    } else {
-        Err(D::Error::custom("expected the lingrep.prune/v1 schema"))
-    }
-}
-
-impl PruneEnvelope {
-    #[must_use]
-    pub fn new(event: PruneEvent) -> Self {
-        Self {
-            schema: SCHEMA.into(),
-            event,
-        }
-    }
-}
+define_protocol_envelope!(
+    pub struct PruneEnvelope(PruneEvent),
+    schema = SCHEMA,
+    error = "expected the lingrep.prune/v1 schema",
+    extra_derives = [Eq],
+);
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(tag = "type", content = "data", rename_all = "snake_case")]

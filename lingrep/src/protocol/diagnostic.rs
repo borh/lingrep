@@ -1,4 +1,4 @@
-use serde::{Deserialize, Deserializer, Serialize, de::Error as _};
+use serde::{Deserialize, Serialize};
 
 use super::query::SourceSpan;
 
@@ -22,29 +22,12 @@ pub(crate) fn contract() -> super::discovery::ContractSpec {
     )
 }
 
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
-pub struct DiagnosticEnvelope {
-    #[serde(deserialize_with = "deserialize_schema")]
-    pub schema: String,
-    #[serde(flatten)]
-    pub event: DiagnosticEvent,
-}
-fn deserialize_schema<'de, D: Deserializer<'de>>(deserializer: D) -> Result<String, D::Error> {
-    let schema = String::deserialize(deserializer)?;
-    if schema == SCHEMA {
-        Ok(schema)
-    } else {
-        Err(D::Error::custom("wrong diagnostic schema"))
-    }
-}
-impl DiagnosticEnvelope {
-    pub fn new(event: DiagnosticEvent) -> Self {
-        Self {
-            schema: SCHEMA.into(),
-            event,
-        }
-    }
-}
+define_protocol_envelope!(
+    pub struct DiagnosticEnvelope(DiagnosticEvent),
+    schema = SCHEMA,
+    error = "wrong diagnostic schema",
+    extra_derives = [Eq],
+);
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(tag = "type", content = "data", rename_all = "snake_case")]

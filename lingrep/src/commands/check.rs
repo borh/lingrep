@@ -15,7 +15,7 @@ use lingrep_core::fsm::{
 #[cfg(test)]
 use crate::catalog_input::catalog_fingerprint;
 use crate::catalog_input::{CatalogInput, CatalogSource, compile, load, vectors_path};
-use crate::cli::{CheckArgs, CheckFormat};
+use crate::cli::CheckArgs;
 use crate::error::CliError;
 use crate::presentation::OutputMode;
 use crate::protocol::check::{
@@ -145,12 +145,7 @@ pub fn run(
 
     let stdout = io::stdout();
     let mut writer = stdout.lock();
-    let format = if output == OutputMode::Human {
-        CheckFormat::Human
-    } else {
-        CheckFormat::Json
-    };
-    let outcome = publish_check(&mut writer, format, &check, terminal)?;
+    let outcome = publish_check(&mut writer, output, &check, terminal)?;
     let failed = (args.fail_on_drift && drift_found) || binding_refused || examples_failed;
     if failed && outcome == CommandOutcome::Success {
         Ok(CommandOutcome::Failure)
@@ -224,16 +219,18 @@ fn assess_binding(
 
 fn publish_check<W: Write>(
     writer: &mut W,
-    format: CheckFormat,
+    output: OutputMode,
     check: &CheckEnvelope,
     terminal: &TerminalArbiter,
 ) -> Result<CommandOutcome, CliError> {
     if !terminal.try_claim_completion() {
         return Ok(CommandOutcome::Cancelled);
     }
-    match format {
-        CheckFormat::Json => write_jsonl(writer, check).map_err(CliError::from)?,
-        CheckFormat::Human => {
+    match output {
+        OutputMode::Jsonl | OutputMode::Tsv => {
+            write_jsonl(writer, check).map_err(CliError::from)?
+        }
+        OutputMode::Human => {
             let CheckEvent::Check(data) = &check.event;
             writeln!(
                 writer,
@@ -972,7 +969,7 @@ mod tests {
         let mut output = Vec::new();
 
         let outcome =
-            publish_check(&mut output, CheckFormat::Json, &check_fixture(), &terminal).unwrap();
+            publish_check(&mut output, OutputMode::Jsonl, &check_fixture(), &terminal).unwrap();
 
         assert_eq!(outcome, CommandOutcome::Cancelled);
         assert!(output.is_empty());
@@ -984,7 +981,7 @@ mod tests {
         let mut output = Vec::new();
 
         let outcome =
-            publish_check(&mut output, CheckFormat::Human, &check_fixture(), &terminal).unwrap();
+            publish_check(&mut output, OutputMode::Human, &check_fixture(), &terminal).unwrap();
 
         assert_eq!(outcome, CommandOutcome::Success);
         assert!(!output.is_empty());
@@ -997,7 +994,7 @@ mod tests {
 
         let error = publish_check(
             &mut BrokenWriter,
-            CheckFormat::Json,
+            OutputMode::Jsonl,
             &check_fixture(),
             &terminal,
         )

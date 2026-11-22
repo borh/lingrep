@@ -5,6 +5,130 @@ use std::io::{self, Write};
 use serde::Serialize;
 use thiserror::Error;
 
+pub(crate) fn deserialize_expected_schema<'de, D: serde::Deserializer<'de>>(
+    expected: &str,
+    message: &str,
+    deserializer: D,
+) -> Result<String, D::Error> {
+    use serde::{Deserialize as _, de::Error as _};
+    let schema = String::deserialize(deserializer)?;
+    if schema == expected {
+        Ok(schema)
+    } else {
+        Err(D::Error::custom(message))
+    }
+}
+
+macro_rules! define_protocol_envelope {
+    (
+        $(#[$meta:meta])*
+        pub struct $name:ident($event:ty),
+        schema = $schema:expr,
+        error = $error:literal
+        $(, extra_derives = [$($extra:path),* $(,)?])?
+        $(,)?
+    ) => {
+        $(#[$meta])*
+        #[derive(
+            Clone,
+            Debug,
+            PartialEq,
+            $($($extra,)*)?
+            serde::Serialize,
+            serde::Deserialize,
+            schemars::JsonSchema,
+        )]
+        pub struct $name {
+            #[serde(deserialize_with = "deserialize_schema")]
+            pub schema: String,
+            #[serde(flatten)]
+            pub event: $event,
+        }
+
+        fn deserialize_schema<'de, D: serde::Deserializer<'de>>(
+            deserializer: D,
+        ) -> Result<String, D::Error> {
+            super::deserialize_expected_schema($schema, $error, deserializer)
+        }
+
+        impl $name {
+            #[must_use]
+            pub fn new(event: $event) -> Self {
+                Self {
+                    schema: $schema.into(),
+                    event,
+                }
+            }
+        }
+    };
+    (
+        $(#[$meta:meta])*
+        pub struct $name:ident($event:ident :: $variant:ident($data:ty)),
+        schema = $schema:expr
+        $(, extra_derives = [$($extra:path),* $(,)?])?
+        $(,)?
+    ) => {
+        $(#[$meta])*
+        #[derive(
+            Clone,
+            Debug,
+            PartialEq,
+            $($($extra,)*)?
+            serde::Serialize,
+            serde::Deserialize,
+            schemars::JsonSchema,
+        )]
+        pub struct $name {
+            pub schema: String,
+            #[serde(flatten)]
+            pub event: $event,
+        }
+
+        impl $name {
+            #[must_use]
+            pub fn new(data: $data) -> Self {
+                Self {
+                    schema: $schema.into(),
+                    event: $event::$variant(data),
+                }
+            }
+        }
+    };
+    (
+        $(#[$meta:meta])*
+        pub struct $name:ident($event:ty),
+        schema = $schema:expr
+        $(, extra_derives = [$($extra:path),* $(,)?])?
+        $(,)?
+    ) => {
+        $(#[$meta])*
+        #[derive(
+            Clone,
+            Debug,
+            PartialEq,
+            $($($extra,)*)?
+            serde::Serialize,
+            serde::Deserialize,
+            schemars::JsonSchema,
+        )]
+        pub struct $name {
+            pub schema: String,
+            #[serde(flatten)]
+            pub event: $event,
+        }
+
+        impl $name {
+            #[must_use]
+            pub fn new(event: $event) -> Self {
+                Self {
+                    schema: $schema.into(),
+                    event,
+                }
+            }
+        }
+    };
+}
+
 pub mod attributes;
 pub mod capabilities;
 pub mod check;

@@ -1,7 +1,7 @@
 //! The `lingrep.disk/v1` contract: disk use of prepared artifacts in one
 //! directory.
 
-use serde::{Deserialize, Deserializer, Serialize, de::Error as _};
+use serde::{Deserialize, Serialize};
 
 use super::variants::VariantDifference;
 
@@ -68,32 +68,12 @@ pub(crate) fn contract() -> super::discovery::ContractSpec {
     )
 }
 
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
-pub struct DiskEnvelope {
-    #[serde(deserialize_with = "deserialize_schema")]
-    pub schema: String,
-    #[serde(flatten)]
-    pub event: DiskEvent,
-}
-
-fn deserialize_schema<'de, D: Deserializer<'de>>(deserializer: D) -> Result<String, D::Error> {
-    let schema = String::deserialize(deserializer)?;
-    if schema == SCHEMA {
-        Ok(schema)
-    } else {
-        Err(D::Error::custom("expected the lingrep.disk/v1 schema"))
-    }
-}
-
-impl DiskEnvelope {
-    #[must_use]
-    pub fn new(event: DiskEvent) -> Self {
-        Self {
-            schema: SCHEMA.into(),
-            event,
-        }
-    }
-}
+define_protocol_envelope!(
+    pub struct DiskEnvelope(DiskEvent),
+    schema = SCHEMA,
+    error = "expected the lingrep.disk/v1 schema",
+    extra_derives = [Eq],
+);
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(tag = "type", content = "data", rename_all = "snake_case")]

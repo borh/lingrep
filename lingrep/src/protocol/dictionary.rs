@@ -23,21 +23,11 @@ pub(crate) fn contract() -> super::discovery::ContractSpec {
     )
 }
 
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
-pub struct DictionaryEnvelope {
-    pub schema: String,
-    #[serde(flatten)]
-    pub event: DictionaryEvent,
-}
-
-impl DictionaryEnvelope {
-    pub fn new(data: InstalledData) -> Self {
-        Self {
-            schema: SCHEMA.into(),
-            event: DictionaryEvent::Installed(data),
-        }
-    }
-}
+define_protocol_envelope!(
+    pub struct DictionaryEnvelope(DictionaryEvent::Installed(InstalledData)),
+    schema = SCHEMA,
+    extra_derives = [Eq],
+);
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(tag = "type", content = "data", rename_all = "snake_case")]

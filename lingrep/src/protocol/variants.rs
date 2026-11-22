@@ -7,7 +7,7 @@
 //! target's own source in an earlier format is `prunable`, and `--prune`
 //! deletes exactly those.
 
-use serde::{Deserialize, Deserializer, Serialize, de::Error as _};
+use serde::{Deserialize, Serialize};
 
 pub const SCHEMA: &str = super::ContractId::Variants.as_str();
 
@@ -48,32 +48,12 @@ pub(crate) fn contract() -> super::discovery::ContractSpec {
     )
 }
 
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
-pub struct VariantsEnvelope {
-    #[serde(deserialize_with = "deserialize_schema")]
-    pub schema: String,
-    #[serde(flatten)]
-    pub event: VariantsEvent,
-}
-
-fn deserialize_schema<'de, D: Deserializer<'de>>(deserializer: D) -> Result<String, D::Error> {
-    let schema = String::deserialize(deserializer)?;
-    if schema == SCHEMA {
-        Ok(schema)
-    } else {
-        Err(D::Error::custom("wrong variants schema"))
-    }
-}
-
-impl VariantsEnvelope {
-    #[must_use]
-    pub fn new(event: VariantsEvent) -> Self {
-        Self {
-            schema: SCHEMA.into(),
-            event,
-        }
-    }
-}
+define_protocol_envelope!(
+    pub struct VariantsEnvelope(VariantsEvent),
+    schema = SCHEMA,
+    error = "wrong variants schema",
+    extra_derives = [Eq],
+);
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(tag = "type", content = "data", rename_all = "snake_case")]

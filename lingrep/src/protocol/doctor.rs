@@ -23,22 +23,11 @@ pub(crate) fn contract() -> super::discovery::ContractSpec {
     )
 }
 
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
-pub struct DoctorEnvelope {
-    pub schema: String,
-    #[serde(flatten)]
-    pub event: DoctorEvent,
-}
-
-impl DoctorEnvelope {
-    #[must_use]
-    pub fn new(data: DoctorData) -> Self {
-        Self {
-            schema: SCHEMA.into(),
-            event: DoctorEvent::Doctor(data),
-        }
-    }
-}
+define_protocol_envelope!(
+    pub struct DoctorEnvelope(DoctorEvent::Doctor(DoctorData)),
+    schema = SCHEMA,
+    extra_derives = [Eq],
+);
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(tag = "type", content = "data", rename_all = "snake_case")]

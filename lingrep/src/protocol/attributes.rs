@@ -76,26 +76,16 @@ pub struct ProjectionData {
     pub status: String,
 }
 
-/// The wire envelope. **Must** be a struct with a `schema` field:
-/// [`super::discovery::envelope_schema`] rewrites `/properties/schema` and
-/// returns `MissingSchemaProperty` when it is absent, so an alias for
-/// [`AttributesEvent`] fails at contract construction. Mirrors
-/// [`super::tokenize::TokenizeEnvelope`].
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
-pub struct AttributesEnvelope {
-    pub schema: String,
-    #[serde(flatten)]
-    pub event: AttributesEvent,
-}
-
-impl AttributesEnvelope {
-    pub fn new(event: AttributesEvent) -> Self {
-        Self {
-            schema: SCHEMA.into(),
-            event,
-        }
-    }
-}
+define_protocol_envelope!(
+    /// The wire envelope. **Must** be a struct with a `schema` field:
+    /// [`super::discovery::envelope_schema`] rewrites `/properties/schema` and
+    /// returns `MissingSchemaProperty` when it is absent, so an alias for
+    /// [`AttributesEvent`] fails at contract construction. Mirrors
+    /// [`super::tokenize::TokenizeEnvelope`].
+    pub struct AttributesEnvelope(AttributesEvent),
+    schema = SCHEMA,
+    extra_derives = [Eq],
+);
 
 pub(crate) fn contract() -> super::discovery::ContractSpec {
     use super::discovery::{Channel, StreamPhase, StreamShape, json_contract};

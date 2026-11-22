@@ -4,8 +4,6 @@ use std::time::Duration;
 
 use clap::ValueEnum;
 
-use crate::cli::{CheckFormat, MachineFormat, MatchFormat, TokenizeFormat};
-
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum OutputMode {
     Human,
@@ -162,40 +160,6 @@ pub fn resolve_summary_top(output: OutputMode, top: Option<ExplicitLimit<u64>>) 
         },
         ExplicitLimit::resolve,
     )
-}
-
-impl From<MatchFormat> for OutputMode {
-    fn from(value: MatchFormat) -> Self {
-        match value {
-            MatchFormat::Jsonl => Self::Jsonl,
-            MatchFormat::Tsv => Self::Tsv,
-            MatchFormat::Human => Self::Human,
-        }
-    }
-}
-
-impl From<MachineFormat> for OutputMode {
-    fn from(value: MachineFormat) -> Self {
-        match value {
-            MachineFormat::Jsonl => Self::Jsonl,
-            MachineFormat::Tsv => Self::Tsv,
-        }
-    }
-}
-
-impl From<CheckFormat> for OutputMode {
-    fn from(value: CheckFormat) -> Self {
-        match value {
-            CheckFormat::Json => Self::Jsonl,
-            CheckFormat::Human => Self::Human,
-        }
-    }
-}
-
-impl From<TokenizeFormat> for OutputMode {
-    fn from(_: TokenizeFormat) -> Self {
-        Self::Jsonl
-    }
 }
 
 #[cfg(test)]

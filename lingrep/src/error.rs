@@ -135,16 +135,6 @@ pub enum CliError {
     #[error("{0}")]
     Output(#[from] crate::protocol::OutputError),
 
-    #[error("Tokenized JSON record before sentence {ordinal} exceeds encoded byte limit {limit}")]
-    TokenizedRecordTooLarge { ordinal: usize, limit: usize },
-
-    #[error("Tokenized JSON record before sentence {ordinal} is malformed: {source}")]
-    TokenizedRecordMalformed {
-        ordinal: usize,
-        #[source]
-        source: Box<dyn std::error::Error + Send + Sync>,
-    },
-
     #[error("Parse error: {0}")]
     Parse(String),
 
@@ -308,18 +298,6 @@ impl CliError {
                 crate::protocol::OutputError::Io(error) => io_classification(error, Output),
                 _ => ErrorClassification::failure("output", Output, AfterChange),
             },
-            Self::TokenizedRecordTooLarge { ordinal, .. } => ErrorClassification::failure(
-                "tokenized_record_too_large",
-                Input,
-                AfterChange,
-            )
-            .at(None, Some(*ordinal as u64), None),
-            Self::TokenizedRecordMalformed { ordinal, .. } => ErrorClassification::failure(
-                "tokenized_record_malformed",
-                Input,
-                AfterChange,
-            )
-            .at(None, Some(*ordinal as u64), None),
             Self::Parse(_) => ErrorClassification::failure("parse", Input, AfterChange),
             Self::Io(error) => io_classification(error, Output),
             Self::InputIo { path, source } => {
@@ -392,7 +370,6 @@ impl CliError {
             Self::Execution(ExecutionError::InputRecordTooLarge { actual_at_least, .. }) => raise("--max-record-bytes", *actual_at_least),
             Self::Execution(ExecutionError::TokenizedSentenceTooLarge { actual, .. }
                 | ExecutionError::LookaroundWindowTooLarge { actual, .. }) => raise("--max-tokenized-bytes", *actual),
-            Self::TokenizedRecordTooLarge { limit, .. } => raise("--max-record-bytes", limit.saturating_add(1)),
             Self::OversizedSentencesSkipped { first_actual, .. } => raise("--max-sentence-bytes", *first_actual),
             Self::CatalogCompile { error, .. } if error.diagnostics.iter().any(|diagnostic| diagnostic.code() == lingrep_core::fsm::DiagnosticCode::LimitExceeded) => vec![
                 "Reduce the catalog size or expression and reference expansion. Compiler safety limits cannot be raised with CLI options.".into()

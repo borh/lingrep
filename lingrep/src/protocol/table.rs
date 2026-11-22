@@ -1,7 +1,7 @@
 //! The `lingrep.table/v1` contract: per-pattern counts read from a count
 //! table written by `ling summarize --write-table`.
 
-use serde::{Deserialize, Deserializer, Serialize, de::Error as _};
+use serde::{Deserialize, Serialize};
 
 use super::query::{DocumentData, SummaryGroupData};
 
@@ -80,32 +80,11 @@ pub(crate) fn contract() -> super::discovery::ContractSpec {
     )
 }
 
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
-pub struct TableEnvelope {
-    #[serde(deserialize_with = "deserialize_schema")]
-    pub schema: String,
-    #[serde(flatten)]
-    pub event: TableEvent,
-}
-
-fn deserialize_schema<'de, D: Deserializer<'de>>(deserializer: D) -> Result<String, D::Error> {
-    let schema = String::deserialize(deserializer)?;
-    if schema == SCHEMA {
-        Ok(schema)
-    } else {
-        Err(D::Error::custom("wrong table schema"))
-    }
-}
-
-impl TableEnvelope {
-    #[must_use]
-    pub fn new(event: TableEvent) -> Self {
-        Self {
-            schema: SCHEMA.into(),
-            event,
-        }
-    }
-}
+define_protocol_envelope!(
+    pub struct TableEnvelope(TableEvent),
+    schema = SCHEMA,
+    error = "wrong table schema",
+);
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(tag = "type", content = "data", rename_all = "snake_case")]
