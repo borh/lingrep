@@ -19,9 +19,9 @@ use lingrep_core::{
 };
 
 use crate::{
-    AnalysisIdentity, AnalysisInputs, CorpusError, PreparedSentenceSource, ProvenanceView,
-    RichSentenceMetadata, SentenceId, SentenceLocation, SourceIdentity, SourceObservation,
-    TokenSchemaIdentity, derive_analysis_identity,
+    AnalysisIdentity, AnalysisInputs, CorpusError, PreparedSentenceSource, PreparedTokenReader,
+    ProvenanceView, RichSentenceMetadata, SentenceId, SentenceLocation, SourceIdentity,
+    SourceObservation, TokenSchemaIdentity, derive_analysis_identity,
     enhanced::{ENHANCED_NAME, EnhancedReader, EnhancedWriter},
     identity::derive_analysis_identity_from_source,
     locations::{LocationDocument, LocationWriter, MappedLocations},
@@ -1633,6 +1633,22 @@ impl CorpusArtifact {
             )));
         }
         Ok(())
+    }
+
+    /// Opens an immutable random-access reader over this artifact's compressed token blocks.
+    pub fn token_reader(&self) -> Result<PreparedTokenReader, CorpusError> {
+        self.require_complete_sentences()?;
+        let reader = TokenReader::open(
+            &self.root.join(TOKENS_NAME),
+            &self.analysis_identity,
+            &self.physical_token_schema,
+        )?;
+        if reader.sentence_count() != self.locations.sentence_count() {
+            return Err(CorpusError::SentenceCountMismatch {
+                component: TOKENS_NAME,
+            });
+        }
+        Ok(PreparedTokenReader::new(reader))
     }
 
     pub fn sentence_source(&self) -> Result<PreparedSentenceSource, CorpusError> {

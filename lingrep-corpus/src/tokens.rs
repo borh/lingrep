@@ -861,6 +861,157 @@ impl TokenReader {
     }
 }
 
+/// Immutable random-access reader over a prepared artifact's compressed V1 token blocks.
+pub struct PreparedTokenReader {
+    reader: TokenReader,
+}
+
+impl PreparedTokenReader {
+    pub(crate) fn new(reader: TokenReader) -> Self {
+        Self { reader }
+    }
+
+    pub fn sentence_count(&self) -> u64 {
+        self.reader.sentence_count()
+    }
+
+    pub fn token_count(&self) -> u64 {
+        self.reader.token_count()
+    }
+
+    pub fn decoded_block_count(&self) -> usize {
+        self.reader.decoded_block_count()
+    }
+
+    pub fn decoded_sentence_count(&self) -> usize {
+        self.reader.decoded_sentence_count()
+    }
+
+    pub fn verified_block_count(&self) -> usize {
+        self.reader.verified_block_count()
+    }
+
+    pub fn decode_sentences_with_attributes(
+        &self,
+        _pool: &rayon::ThreadPool,
+        sentence_indices: &[u64],
+        attributes: &[TokenAttributeIndex],
+    ) -> Result<Vec<Option<TokenInfoSentence>>, CorpusError> {
+        self.reader
+            .decode_sentences_with_attributes(sentence_indices, attributes)
+    }
+
+    pub fn decode_sentences(
+        &self,
+        pool: &rayon::ThreadPool,
+        sentence_indices: &[u64],
+    ) -> Result<Vec<Option<TokenInfoSentence>>, CorpusError> {
+        let attributes = TokenAttributeIndex::ALL
+            .into_iter()
+            .filter(|attribute| self.reader.schema.keys().contains(&(*attribute).into()))
+            .collect::<Vec<_>>();
+        self.decode_sentences_with_attributes(pool, sentence_indices, &attributes)
+    }
+
+    /// Reads one complete schema projection, returning `None` before decoding
+    /// when the recorded sentence residency exceeds `limit`.
+    pub fn sentence_attributes_bounded(
+        &self,
+        ordinal: u64,
+        limit: usize,
+    ) -> Result<Option<BoundTokenSentence>, CorpusError> {
+        self.reader.sentence_attributes_bounded(ordinal, limit)
+    }
+
+    pub fn sentence_projection_bounded(
+        &self,
+        ordinal: u64,
+        attributes: &[lingrep_core::token_match::AttributeKey],
+        limit: usize,
+    ) -> Result<Option<BoundTokenSentence>, CorpusError> {
+        let projection = self
+            .reader
+            .schema
+            .bind_projection(attributes.iter().cloned())
+            .map_err(|error| invalid(error.to_string()))?;
+        let (_, entry) = self.reader.block_for_sentence(ordinal)?;
+        let local = usize::try_from(ordinal - entry.first_sentence)
+            .map_err(|_| invalid("block-local sentence ordinal exceeds usize"))?;
+        let raw = self.reader.load_block(entry)?;
+        let sentence = decode_block(
+            &raw,
+            entry,
+            &self.reader.schema,
+            &projection,
+            &[local],
+            true,
+            Some(limit),
+        )?
+        .pop();
+        match sentence {
+            Some(sentence)
+                if sentence
+                    .resident_bytes()
+                    .map_err(|error| invalid(error.to_string()))?
+                    <= limit =>
+            {
+                Ok(Some(sentence))
+            }
+            _ => Ok(None),
+        }
+    }
+
+    /// Reads a sentence's words as text that joins into the sentence: each
+    /// token's `surface` where it has one, else its `text`, preceded by a
+    /// space where [`lingrep_core::token_match::display_space_before`] reports
+    /// one. Returns `None` before token projection
+    /// when recorded residency exceeds `limit`, or when the joined text exceeds
+    /// it, or when written forms are unavailable. Token-block decompression
+    /// retains its existing fixed scratch bound.
+    pub fn sentence_words_bounded(
+        &self,
+        ordinal: u64,
+        limit: usize,
+    ) -> Result<Option<Vec<String>>, CorpusError> {
+        if self.reader.resident_size(ordinal)? > limit {
+            return Ok(None);
+        }
+        let keys = lingrep_core::token_match::display_surface_attributes(&self.reader.schema);
+        if keys.is_empty() {
+            return Ok(None);
+        }
+        let projection = self
+            .reader
+            .schema
+            .bind_projection(keys)
+            .map_err(|error| invalid(error.to_string()))?;
+        let sentences = self
+            .reader
+            .decode_bound_ordinals(&[ordinal], &projection, true)?;
+        let Some(sentence) = sentences.first() else {
+            return Err(invalid("sentence is missing"));
+        };
+        let mut bytes = 0usize;
+        let mut words = Vec::with_capacity(sentence.len());
+        for index in 0..sentence.len() {
+            let Some(text) = lingrep_core::token_match::display_surface(sentence, index) else {
+                return Ok(None);
+            };
+            let space = lingrep_core::token_match::display_space_before(sentence, index);
+            bytes = bytes.saturating_add(text.len() + usize::from(space));
+            if bytes > limit {
+                return Ok(None);
+            }
+            words.push(if space {
+                format!(" {text}")
+            } else {
+                text.to_owned()
+            });
+        }
+        Ok(Some(words))
+    }
+}
+
 enum SourceProjection {
     Physical(BoundProjection),
     Bound {
@@ -883,7 +1034,7 @@ impl PreparedDocumentStats {
 }
 
 pub struct PreparedSentenceSource {
-    reader: Arc<TokenReader>,
+    reader: TokenReader,
     enhanced: Option<Arc<EnhancedReader>>,
     locations: MappedLocations,
     projection: SourceProjection,
@@ -987,7 +1138,7 @@ impl PreparedSentenceSource {
         }
         let end_ordinal = reader.sentence_count();
         Ok(Self {
-            reader: Arc::new(reader),
+            reader,
             enhanced,
             locations,
             projection,
@@ -1146,126 +1297,6 @@ impl PreparedSentenceSource {
     }
     pub fn sentence_count(&self) -> u64 {
         self.reader.sentence_count()
-    }
-
-    pub fn decode_sentences_with_attributes(
-        &self,
-        _pool: &rayon::ThreadPool,
-        sentence_indices: &[u64],
-        attributes: &[TokenAttributeIndex],
-    ) -> Result<Vec<Option<TokenInfoSentence>>, CorpusError> {
-        self.reader
-            .decode_sentences_with_attributes(sentence_indices, attributes)
-    }
-
-    pub fn decode_sentences(
-        &self,
-        pool: &rayon::ThreadPool,
-        sentence_indices: &[u64],
-    ) -> Result<Vec<Option<TokenInfoSentence>>, CorpusError> {
-        let attributes = TokenAttributeIndex::ALL
-            .into_iter()
-            .filter(|attribute| self.reader.schema.keys().contains(&(*attribute).into()))
-            .collect::<Vec<_>>();
-        self.decode_sentences_with_attributes(pool, sentence_indices, &attributes)
-    }
-
-    /// Reads one complete schema projection, returning `None` before decoding
-    /// when the recorded sentence residency exceeds `limit`.
-    pub fn sentence_attributes_bounded(
-        &self,
-        ordinal: u64,
-        limit: usize,
-    ) -> Result<Option<BoundTokenSentence>, CorpusError> {
-        self.reader.sentence_attributes_bounded(ordinal, limit)
-    }
-
-    pub fn sentence_projection_bounded(
-        &self,
-        ordinal: u64,
-        attributes: &[lingrep_core::token_match::AttributeKey],
-        limit: usize,
-    ) -> Result<Option<BoundTokenSentence>, CorpusError> {
-        let projection = self
-            .reader
-            .schema
-            .bind_projection(attributes.iter().cloned())
-            .map_err(|error| invalid(error.to_string()))?;
-        let (_, entry) = self.reader.block_for_sentence(ordinal)?;
-        let local = usize::try_from(ordinal - entry.first_sentence)
-            .map_err(|_| invalid("block-local sentence ordinal exceeds usize"))?;
-        let raw = self.reader.load_block(entry)?;
-        let sentence = decode_block(
-            &raw,
-            entry,
-            &self.reader.schema,
-            &projection,
-            &[local],
-            true,
-            Some(limit),
-        )?
-        .pop();
-        match sentence {
-            Some(sentence)
-                if sentence
-                    .resident_bytes()
-                    .map_err(|error| invalid(error.to_string()))?
-                    <= limit =>
-            {
-                Ok(Some(sentence))
-            }
-            _ => Ok(None),
-        }
-    }
-
-    /// Reads a sentence's words as text that joins into the sentence: each
-    /// token's `surface` where it has one, else its `text`, preceded by a
-    /// space where [`lingrep_core::token_match::display_space_before`] reports
-    /// one. Returns `None` before token projection
-    /// when recorded residency exceeds `limit`, or when the joined text exceeds
-    /// it, or when written forms are unavailable. Token-block decompression
-    /// retains its existing fixed scratch bound.
-    pub fn sentence_words_bounded(
-        &self,
-        ordinal: u64,
-        limit: usize,
-    ) -> Result<Option<Vec<String>>, CorpusError> {
-        if self.reader.resident_size(ordinal)? > limit {
-            return Ok(None);
-        }
-        let keys = lingrep_core::token_match::display_surface_attributes(&self.reader.schema);
-        if keys.is_empty() {
-            return Ok(None);
-        }
-        let projection = self
-            .reader
-            .schema
-            .bind_projection(keys)
-            .map_err(|error| invalid(error.to_string()))?;
-        let sentences = self
-            .reader
-            .decode_bound_ordinals(&[ordinal], &projection, true)?;
-        let Some(sentence) = sentences.first() else {
-            return Err(invalid("sentence is missing"));
-        };
-        let mut bytes = 0usize;
-        let mut words = Vec::with_capacity(sentence.len());
-        for index in 0..sentence.len() {
-            let Some(text) = lingrep_core::token_match::display_surface(sentence, index) else {
-                return Ok(None);
-            };
-            let space = lingrep_core::token_match::display_space_before(sentence, index);
-            bytes = bytes.saturating_add(text.len() + usize::from(space));
-            if bytes > limit {
-                return Ok(None);
-            }
-            words.push(if space {
-                format!(" {text}")
-            } else {
-                text.to_owned()
-            });
-        }
-        Ok(Some(words))
     }
 
     fn admitted(&self, ordinal: u64) -> Result<bool, CorpusError> {

@@ -23,7 +23,7 @@ use lingrep_core::{
 use lingrep_corpus::{
     AdmissionIdentity, AnalysisIdentity, AnalysisInputs, BuildConfig, CorpusArtifact,
     CorpusBuilder, CorpusError, DictionaryFingerprint, IdentityError, ObservedSources,
-    PreparedSentenceSource, ProvenanceView, ReaderIdentity, SourceObservation, TrustClass,
+    PreparedTokenReader, ProvenanceView, ReaderIdentity, SourceObservation, TrustClass,
     canonical_artifact_path, derive_analysis_identity, format_identity,
 };
 use rayon::ThreadPool;
@@ -137,7 +137,7 @@ enum CacheLifecycle {
         identity: CorpusIdentity,
         artifact: Arc<CorpusArtifact>,
         on_corruption: OnCorruption,
-        random_source: Arc<PreparedSentenceSource>,
+        tokens: Arc<PreparedTokenReader>,
     },
     Failed,
 }
@@ -172,7 +172,7 @@ pub struct ReadyCorpus {
     pub identity: CorpusIdentity,
     pub artifact: Arc<CorpusArtifact>,
     pub pool: Arc<ThreadPool>,
-    random_source: Arc<PreparedSentenceSource>,
+    tokens: Arc<PreparedTokenReader>,
     provenance: Arc<ProvenanceCache>,
 }
 
@@ -192,18 +192,18 @@ impl ReadyCorpus {
         artifact: CorpusArtifact,
         pool: Arc<ThreadPool>,
     ) -> Result<Self, CorpusError> {
-        let random_source = Arc::new(artifact.sentence_source()?);
+        let tokens = Arc::new(artifact.token_reader()?);
         Ok(Self {
             identity,
             artifact: Arc::new(artifact),
             pool,
-            random_source,
+            tokens,
             provenance: Arc::new(ProvenanceCache::default()),
         })
     }
 
     pub fn sentence_count(&self) -> Result<u64, CorpusError> {
-        Ok(self.random_source.sentence_count())
+        Ok(self.tokens.sentence_count())
     }
 
     /// This corpus's provenance view, opened once and shared thereafter.
@@ -218,13 +218,13 @@ impl ReadyCorpus {
     pub fn reader(&self) -> Result<CorpusReader, CorpusReadError> {
         Ok(CorpusReader {
             identity: self.identity.clone(),
-            source: Arc::clone(&self.random_source),
+            tokens: Arc::clone(&self.tokens),
             pool: Arc::clone(&self.pool),
         })
     }
 
     pub fn decoded_block_count(&self) -> usize {
-        self.random_source.decoded_block_count()
+        self.tokens.decoded_block_count()
     }
 }
 
@@ -237,13 +237,13 @@ pub enum CorpusReadError {
 #[derive(Clone)]
 pub struct CorpusReader {
     identity: CorpusIdentity,
-    source: Arc<PreparedSentenceSource>,
+    tokens: Arc<PreparedTokenReader>,
     pool: Arc<ThreadPool>,
 }
 
 #[derive(Clone)]
 pub struct BoundCorpusReader {
-    source: Arc<PreparedSentenceSource>,
+    tokens: Arc<PreparedTokenReader>,
     pool: Arc<ThreadPool>,
 }
 
@@ -254,13 +254,13 @@ impl CorpusReader {
 
     pub fn bind(&self, identity: &CorpusIdentity) -> Option<BoundCorpusReader> {
         (identity == &self.identity).then(|| BoundCorpusReader {
-            source: Arc::clone(&self.source),
+            tokens: Arc::clone(&self.tokens),
             pool: Arc::clone(&self.pool),
         })
     }
 
     pub fn decoded_block_count(&self) -> usize {
-        self.source.decoded_block_count()
+        self.tokens.decoded_block_count()
     }
 }
 
@@ -270,7 +270,7 @@ impl BoundCorpusReader {
         index: u64,
         limit: usize,
     ) -> Result<Option<lingrep_core::token_match::BoundTokenSentence>, CorpusReadError> {
-        self.source
+        self.tokens
             .sentence_attributes_bounded(index, limit)
             .map_err(CorpusReadError::Corruption)
     }
@@ -281,7 +281,7 @@ impl BoundCorpusReader {
         attributes: &[lingrep_core::token_match::AttributeKey],
         limit: usize,
     ) -> Result<Option<lingrep_core::token_match::BoundTokenSentence>, CorpusReadError> {
-        self.source
+        self.tokens
             .sentence_projection_bounded(index, attributes, limit)
             .map_err(CorpusReadError::Corruption)
     }
@@ -291,7 +291,7 @@ impl BoundCorpusReader {
         index: u64,
         limit: usize,
     ) -> Result<Option<Vec<String>>, CorpusReadError> {
-        self.source
+        self.tokens
             .sentence_words_bounded(index, limit)
             .map_err(CorpusReadError::Corruption)
     }
@@ -304,7 +304,7 @@ impl BoundCorpusReader {
         &self,
         indices: &[u64],
     ) -> Result<Vec<Option<TokenInfoSentence>>, CorpusReadError> {
-        self.source
+        self.tokens
             .decode_sentences(&self.pool, indices)
             .map_err(CorpusReadError::Corruption)
     }
@@ -314,13 +314,13 @@ impl BoundCorpusReader {
         indices: &[u64],
         attributes: &[TokenAttributeIndex],
     ) -> Result<Vec<Option<TokenInfoSentence>>, CorpusReadError> {
-        self.source
+        self.tokens
             .decode_sentences_with_attributes(&self.pool, indices, attributes)
             .map_err(CorpusReadError::Corruption)
     }
 
     pub fn decoded_block_count(&self) -> usize {
-        self.source.decoded_block_count()
+        self.tokens.decoded_block_count()
     }
 }
 
@@ -363,7 +363,7 @@ impl CorpusRuntime {
         let artifact_path = path.as_ref().to_path_buf();
         let artifact = Arc::new(CorpusArtifact::open(&artifact_path)?);
         let _provenance = artifact.provenance_view().await?;
-        let random_source = Arc::new(artifact.sentence_source()?);
+        let tokens = Arc::new(artifact.token_reader()?);
         let identity =
             CorpusIdentity::new(format_identity(artifact.analysis_identity().as_bytes()));
         let (readiness_tx, _) = watch::channel(CacheReadiness::Ready {
@@ -380,7 +380,7 @@ impl CorpusRuntime {
                     identity,
                     artifact,
                     on_corruption: OnCorruption::Keep,
-                    random_source,
+                    tokens,
                 }),
                 readiness_tx,
                 provenance: Arc::new(ProvenanceCache::default()),
@@ -393,10 +393,10 @@ impl CorpusRuntime {
         artifact: CorpusArtifact,
         context: Arc<ServerContext>,
     ) -> Self {
-        let random_source = Arc::new(
+        let tokens = Arc::new(
             artifact
-                .sentence_source()
-                .expect("from_ready requires a valid V1 sentence source"),
+                .token_reader()
+                .expect("from_ready requires a valid V1 token reader"),
         );
         let (readiness_tx, _) = watch::channel(CacheReadiness::Ready {
             identity: identity.clone(),
@@ -412,7 +412,7 @@ impl CorpusRuntime {
                     identity,
                     artifact: Arc::new(artifact),
                     on_corruption: OnCorruption::Keep,
-                    random_source,
+                    tokens,
                 }),
                 readiness_tx,
                 provenance: Arc::new(ProvenanceCache::default()),
@@ -491,12 +491,12 @@ impl CorpusRuntime {
                 identity,
                 artifact,
                 on_corruption: _,
-                random_source,
+                tokens,
             } => Some(ReadyCorpus {
                 identity: identity.clone(),
                 artifact: Arc::clone(artifact),
                 pool: self.inner.context.pool(),
-                random_source: Arc::clone(random_source),
+                tokens: Arc::clone(tokens),
                 provenance: Arc::clone(&self.inner.provenance),
             }),
             _ => None,
@@ -526,8 +526,8 @@ impl CorpusRuntime {
             let mut lifecycle = inner.lifecycle.lock().await;
             match result {
                 Ok((identity, artifact, artifact_path)) => {
-                    let random_source = if let Ok(source) = artifact.sentence_source() {
-                        Arc::new(source)
+                    let tokens = if let Ok(reader) = artifact.token_reader() {
+                        Arc::new(reader)
                     } else {
                         *lifecycle = CacheLifecycle::Failed;
                         inner.readiness_tx.send_replace(CacheReadiness::Failed {
@@ -544,7 +544,7 @@ impl CorpusRuntime {
                             Some(path) if rebuild => OnCorruption::Discard(path),
                             Some(path) => OnCorruption::Rebuild(path),
                         },
-                        random_source,
+                        tokens,
                     };
                     inner
                         .readiness_tx

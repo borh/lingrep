@@ -100,5 +100,5 @@ pub use siblings::{
     finish_prune_leftover, foreign_entries, is_newer_format, is_older_format, prune_leftovers,
     recorded_source_identity, remove_older_format, remove_realization,
 };
-pub use tokens::{PreparedDocumentStats, PreparedSentenceSource};
+pub use tokens::{PreparedDocumentStats, PreparedSentenceSource, PreparedTokenReader};
 pub use verify::{ComponentVerification, VerificationReport};

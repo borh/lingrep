@@ -42,12 +42,12 @@ async fn written_word_fallback_checks_residency_before_loading_a_token_block() {
     let directory = tempfile::tempdir().unwrap();
     let root = build_two_document_artifact(directory.path()).await;
     let artifact = CorpusArtifact::open(&root).unwrap();
-    let source = artifact.sentence_source().unwrap();
-    assert_eq!(source.sentence_words_bounded(0, 0).unwrap(), None);
-    assert_eq!(source.decoded_block_count(), 0);
+    let reader = artifact.token_reader().unwrap();
+    assert_eq!(reader.sentence_words_bounded(0, 0).unwrap(), None);
+    assert_eq!(reader.decoded_block_count(), 0);
     assert_eq!(
-        source.sentence_words_bounded(0, 128 * 1024).unwrap(),
+        reader.sentence_words_bounded(0, 128 * 1024).unwrap(),
         Some(vec!["token-0".into()])
     );
-    assert!(source.sentence_words_bounded(u64::MAX, usize::MAX).is_err());
+    assert!(reader.sentence_words_bounded(u64::MAX, usize::MAX).is_err());
 }
