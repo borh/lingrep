@@ -449,13 +449,9 @@ pub fn source_space_before<S: TokenSequence + ?Sized>(tokens: &S, index: usize) 
 /// Whether displayed text has a space between token `index` and the token
 /// before it.
 ///
-/// Whitespace between tokens is not a token, so joining
-/// [`display_surface`] values alone drops it. When both tokens carry a
-/// [`CharSpan`], the answer is whether the source has anything between them,
-/// which is exact for every analyzer and for CoNLL-U `SpaceAfter=No`; the
-/// words of one multiword token share a span and so are never separated.
-/// Without spans the answer is a guess from the two texts' scripts: a space
-/// between two letters of a script that separates words.
+/// Use the gap between adjacent character spans when both are available.
+/// Words that share a multiword-token span have no gap. If either span is
+/// missing, infer spacing from the writing systems at the token boundary.
 ///
 /// The first token of a sentence, and an index past its end, have no space
 /// before them.
@@ -478,11 +474,9 @@ pub fn display_space_before<S: TokenSequence + ?Sized>(tokens: &S, index: usize)
 /// token's [`display_surface`], with one U+0020 wherever
 /// [`display_space_before`] reports a space between two tokens of the span.
 ///
-/// The space stands for whatever the source has between the two tokens, so a
-/// tab or a run of spaces is displayed as one space. A token without a
-/// displayable text contributes nothing. No space precedes the span's first
-/// token; a caller joining adjacent spans asks [`display_space_before`] for
-/// the boundary.
+/// The first token receives no leading space. Use [`display_space_before`] to
+/// insert a separator when joining adjacent spans. Tokens without displayable
+/// text contribute no characters of their own.
 pub fn push_display_text<S: TokenSequence + ?Sized>(
     text: &mut String,
     tokens: &S,
@@ -936,8 +930,6 @@ mod tests {
         assert!(!super::display_space_before(&english, 0));
         assert!(!super::display_space_before(&english, 4));
 
-        // UniDic splits a half-width Latin word into letters; only the source
-        // says which of them a space separates.
         let mixed = placed(
             "昨日 NHK news を見た。",
             &[

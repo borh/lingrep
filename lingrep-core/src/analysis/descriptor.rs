@@ -30,38 +30,11 @@ pub enum SegmentationMode {
     Analyzer = 1,
 }
 
-/// The token schema this build produces for `family` under `profile`, or
-/// `None` when it cannot say.
+/// Returns the built-in schema for `family` and `profile` when one is defined.
 ///
-/// The authoritative answer: [`VibratoPlan`](super::VibratoPlan) and
-/// [`SudachiConfig`](super::SudachiConfig) read it rather than each carrying
-/// their own copy of the same `match`, so there is one place a schema is
-/// defined and no way for two of them to drift.
-///
-/// It exists because a *reader* has the question too. A prepared artifact
-/// records the schema its tokens were built under, and deciding whether this
-/// build would still produce those tokens means comparing against what this
-/// build makes of that artifact's analyzer — not against a single global
-/// constant. That constant was `TokenSchema::unidic_morphology()`, so every
-/// Sudachi artifact was reported as built under a changed token schema
-/// and told to rebuild, which would have produced the identical artifact.
-///
-/// `None` for the adapter-hosted families: a spaCy, Stanza or external
-/// analyzer declares its schema at handshake time, so nothing here can name
-/// it without running one, and a comparison against a guess is worse than no
-/// comparison. A caller that gets `None` must make no claim.
-///
-/// # The Vibrato-morphology arm carries a precondition
-///
-/// A schema is a function of `(family, profile)` for every arm here except
-/// one. `Tokenize` is `text` and `surface` whatever the resource says, and
-/// Sudachi's morphology layout is fixed by the Sudachi library. But Vibrato is a tokenizer, not a tagset: it reads whatever
-/// feature columns its `.dic` carries, and `(Vibrato, Morphology)` answers with
-/// [`TokenSchema::unidic_morphology`] — a **UniDic** layout, read positionally.
-/// The arm is correct because every dictionary this workspace packages is
-/// UniDic 202512, not because the analyzer determines it. A non-UniDic `.dic`
-/// would be answered for here and mis-columned in `featurize`, so admitting
-/// one is a change to this function and not only to the loader.
+/// Adapter-hosted analyzers declare their schema during the handshake, so this
+/// function returns `None` for them. Vibrato morphology assumes UniDic 202512
+/// because `featurize` reads the dictionary's features by column position.
 #[must_use]
 pub fn declared_token_schema(
     family: AnalyzerFamily,

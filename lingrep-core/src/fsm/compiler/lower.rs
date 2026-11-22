@@ -235,7 +235,6 @@ struct Lowerer<'a, 'src> {
     literal_key: LiteralKey,
 }
 
-/// What a literal is compared with, which decides how it is normalized.
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum LiteralKey {
     /// `text`: the folded key.

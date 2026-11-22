@@ -116,7 +116,7 @@ d := x.
 }
 
 #[test]
-fn annotation_bundle_refusals_name_the_authored_conflict() {
+fn invalid_annotation_bundles_report_the_conflicting_fields() {
     let header = "bundle family\n  role: \"shared\"\nend\n";
     for (body, message) in [
         ("use @family\nrole: \"local\"\np := x.", "override role:"),

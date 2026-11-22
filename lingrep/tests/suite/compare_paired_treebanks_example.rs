@@ -250,14 +250,14 @@ fn paired_comparison_rejects_unaligned_files_and_unusable_runs() {
     rejects(
         "token.conllu",
         &sud("かも"),
-        "1 sentences differ in word ID, FORM or UPOS, first via",
+        "Word ID, FORM or UPOS sequences differ. First differing sent_id is via (1 affected).",
     );
     let one_fewer = sud("か");
     let (_, without_oblique) = one_fewer.split_once("\n\n").unwrap();
     rejects(
         "missing.conllu",
         without_oblique,
-        "1 sent_id values are in only one file, first oblique",
+        "Sentence IDs differ. First unmatched sent_id is oblique (1 unmatched).",
     );
     rejects(
         "duplicate.conllu",
