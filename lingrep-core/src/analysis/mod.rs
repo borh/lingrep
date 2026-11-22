@@ -21,7 +21,7 @@ pub use descriptor::{
     AnalyzerDescriptor, AnalyzerFamily, ExecutionProvenance, ExtractionProfile, SegmentationMode,
     SemanticAnalysisIdentity, declared_token_schema,
 };
-pub(crate) use external::{ExternalBatchBounds, ResponseRecordKind, response_record_kind};
+pub(crate) use external::{ExternalBatchAssembler, ExternalBatchBounds};
 pub use external::{
     ExternalComponent, ExternalProtocolError, ExternalProtocolLimits, ExternalRunConfig,
     ExternalTranscript, ExternalValidatedBatch, ExternalWarning, external_component_closure_digest,

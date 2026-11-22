@@ -19,11 +19,11 @@ use std::os::unix::process::CommandExt;
 
 use super::ExecutionLimits;
 use crate::analysis::{
-    AnalyzerDescriptor, ExecutionProvenance, ExternalComponent, ExternalProtocolError,
-    ExternalRunConfig, ExternalTranscript, ExternalValidatedBatch, ResponseRecordKind,
-    SegmentationMode, TextUnit, TextUnitKind, response_record_kind,
+    AnalyzerDescriptor, ExecutionProvenance, ExternalBatchAssembler, ExternalBatchBounds,
+    ExternalComponent, ExternalProtocolError, ExternalRunConfig, ExternalValidatedBatch,
+    SegmentationMode, TextUnit, TextUnitKind,
 };
-use crate::token_match::TokenSchema;
+use crate::token_match::{BoundProjection, TokenSchema};
 
 const TERMINATION_GRACE: Duration = Duration::from_secs(5);
 
@@ -886,17 +886,9 @@ impl From<ExternalProtocolError> for ExternalProcessError {
     }
 }
 
-pub struct ExternalAdapterProcess {
+struct SpawnedProcess {
     child: Option<Child>,
     process_group: i32,
-    config: ExternalRunConfig,
-    descriptor: Option<AnalyzerDescriptor>,
-    execution: Option<ExecutionProvenance>,
-    schema: Option<TokenSchema>,
-    header_bytes: Vec<u8>,
-    ready_bytes: Vec<u8>,
-    next_batch_id: u64,
-    last_input_id: Option<u64>,
     writer: Option<SyncSender<Vec<Vec<u8>>>>,
     stdout: Receiver<Result<Vec<u8>, std::io::Error>>,
     writer_worker: Option<JoinHandle<Result<(), std::io::Error>>>,
@@ -909,53 +901,14 @@ pub struct ExternalAdapterProcess {
     cleaned: bool,
 }
 
-impl fmt::Debug for ExternalAdapterProcess {
-    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
-        formatter
-            .debug_struct("ExternalAdapterProcess")
-            .field("process_group", &self.process_group)
-            .field("next_batch_id", &self.next_batch_id)
-            .field("cleaned", &self.cleaned)
-            .finish_non_exhaustive()
-    }
-}
-
-impl ExternalAdapterProcess {
-    pub fn launch(
-        command: ExternalAdapterCommand,
-        manifest: VerifiedAdapterManifest,
-        config: ExternalRunConfig,
-        diagnostic: DiagnosticCallback,
-    ) -> Result<Self, ExternalProcessError> {
-        Self::launch_with_cancellation(
-            command,
-            manifest,
-            config,
-            diagnostic,
-            ExternalAdapterCancellation::new(),
-        )
-    }
-
-    pub fn launch_with_cancellation(
-        command: ExternalAdapterCommand,
-        manifest: VerifiedAdapterManifest,
-        config: ExternalRunConfig,
+impl SpawnedProcess {
+    fn spawn(
+        command: &ExternalAdapterCommand,
+        manifest: &VerifiedAdapterManifest,
+        config: &ExternalRunConfig,
         diagnostic: DiagnosticCallback,
         cancellation: ExternalAdapterCancellation,
     ) -> Result<Self, ExternalProcessError> {
-        manifest.verify()?;
-        manifest.verify_command(&command)?;
-        if !config.admits_verified_manifest(
-            manifest.implementation_digest(),
-            manifest.resource_manifest_digest(),
-            manifest.components(),
-        ) {
-            return Err(ExternalProcessError::Manifest(
-                "verified manifests do not exactly match the run identity and component closure"
-                    .to_owned(),
-            ));
-        }
-        let header_bytes = config.header_bytes()?;
         let entrypoint = manifest.root.join(&command.entrypoint);
         let executable = command
             .interpreter
@@ -1017,17 +970,9 @@ impl ExternalAdapterProcess {
             Arc::clone(&diagnostic_failure),
         )?;
 
-        let mut process = Self {
+        Ok(Self {
             child: Some(spawn_guard.take()),
             process_group,
-            config,
-            descriptor: None,
-            execution: None,
-            schema: None,
-            header_bytes: header_bytes.clone(),
-            ready_bytes: Vec::new(),
-            next_batch_id: 0,
-            last_input_id: None,
             writer: Some(writer),
             stdout: stdout_rx,
             writer_worker: Some(writer_worker),
@@ -1038,310 +983,7 @@ impl ExternalAdapterProcess {
             cancellation,
             unexpected_stdout: None,
             cleaned: false,
-        };
-        let handshake = (|| {
-            process.send(vec![header_bytes])?;
-            let ready = process.receive()?;
-            let mut transcript = process.header_bytes.clone();
-            transcript.extend_from_slice(&ready);
-            let transcript = ExternalTranscript::open(
-                BufReader::new(std::io::Cursor::new(transcript)),
-                process.config.limits(),
-            )?;
-            process.descriptor = Some(transcript.descriptor().clone());
-            process.execution = Some(transcript.execution_provenance().clone());
-            process.schema = Some(transcript.schema().clone());
-            process.ready_bytes = ready;
-            Ok(())
-        })();
-        if let Err(error) = handshake {
-            process.abort();
-            return Err(error);
-        }
-        Ok(process)
-    }
-
-    pub fn exchange_batch(
-        &mut self,
-        inputs: Vec<TextUnit>,
-        limits: &ExecutionLimits,
-    ) -> Result<ExternalValidatedBatch, ExternalProcessError> {
-        let result = self.exchange_batch_inner(&inputs, limits);
-        if result.is_err() {
-            self.abort();
-        }
-        result
-    }
-
-    #[must_use]
-    pub const fn process_group_id(&self) -> i32 {
-        self.process_group
-    }
-
-    #[must_use]
-    pub fn descriptor(&self) -> &AnalyzerDescriptor {
-        self.descriptor
-            .as_ref()
-            .expect("successful process launch validates a descriptor")
-    }
-
-    #[must_use]
-    pub fn execution_provenance(&self) -> &ExecutionProvenance {
-        self.execution
-            .as_ref()
-            .expect("successful process launch validates execution provenance")
-    }
-
-    #[must_use]
-    pub fn schema(&self) -> &TokenSchema {
-        self.schema
-            .as_ref()
-            .expect("successful process launch validates a produced schema")
-    }
-
-    #[must_use]
-    pub fn cancellation_handle(&self) -> ExternalAdapterCancellation {
-        self.cancellation.clone()
-    }
-
-    #[must_use]
-    pub fn retained_stderr_bytes(&self) -> usize {
-        self.stderr_tail
-            .lock()
-            .expect("stderr tail mutex poisoned")
-            .len()
-    }
-
-    fn exchange_batch_inner(
-        &mut self,
-        inputs: &[TextUnit],
-        limits: &ExecutionLimits,
-    ) -> Result<ExternalValidatedBatch, ExternalProcessError> {
-        if self.cleaned {
-            return Err(ExternalProcessError::Worker(
-                "adapter process is already closed".to_owned(),
-            ));
-        }
-        let batch_id = self.next_batch_id;
-        limits.validate().map_err(|error| {
-            ExternalProcessError::Protocol(ExternalProtocolError::new_for_execution(
-                "limit",
-                error.to_string(),
-                Some(batch_id),
-            ))
-        })?;
-        if inputs.is_empty() {
-            return Err(ExternalProcessError::Protocol(
-                crate::analysis::ExternalProtocolError::new_for_execution(
-                    "state",
-                    "live external batches must be nonempty",
-                    Some(batch_id),
-                ),
-            ));
-        }
-        if inputs.len() > limits.max_stage_sentences {
-            return Err(ExternalProtocolError::new_for_execution(
-                "limit",
-                "live document count exceeds max_stage_sentences",
-                Some(batch_id),
-            )
-            .into());
-        }
-        let mut stage_input_bytes = 0_usize;
-        for input in inputs {
-            let expected_kind = match self.config.segmentation() {
-                SegmentationMode::Input => TextUnitKind::Sentence,
-                SegmentationMode::Analyzer => TextUnitKind::Segment,
-            };
-            if input.kind() != expected_kind {
-                return Err(ExternalProtocolError::new_for_execution(
-                    "document",
-                    "live input kind differs from configured segmentation",
-                    Some(batch_id),
-                )
-                .into());
-            }
-            if input.kind() == TextUnitKind::Sentence && input.len() > limits.max_sentence_bytes {
-                return Err(ExternalProtocolError::new_for_execution(
-                    "limit",
-                    "live input exceeds max_sentence_bytes",
-                    Some(batch_id),
-                )
-                .into());
-            }
-            stage_input_bytes = stage_input_bytes.checked_add(input.len()).ok_or_else(|| {
-                ExternalProcessError::Protocol(ExternalProtocolError::new_for_execution(
-                    "limit",
-                    "live stage input byte count overflow",
-                    Some(batch_id),
-                ))
-            })?;
-        }
-        if inputs.len() > 1 && stage_input_bytes > limits.max_stage_input_bytes {
-            return Err(ExternalProtocolError::new_for_execution(
-                "limit",
-                "live inputs exceed max_stage_input_bytes",
-                Some(batch_id),
-            )
-            .into());
-        }
-        let mut prior = self.last_input_id;
-        for input in inputs {
-            if prior.is_some_and(|prior| input.id().get() <= prior) {
-                return Err(ExternalProcessError::Protocol(
-                    crate::analysis::ExternalProtocolError::new_for_execution(
-                        "order",
-                        "live input identities must be globally increasing",
-                        Some(batch_id),
-                    ),
-                ));
-            }
-            prior = Some(input.id().get());
-        }
-        let request =
-            self.config
-                .batch_request_bytes(batch_id, inputs, limits.max_input_record_bytes)?;
-        let mut logical = self.header_bytes.clone();
-        logical.extend_from_slice(&self.ready_bytes);
-        for record in &request {
-            logical.extend_from_slice(record);
-        }
-        self.send(request)?;
-        let mut response_sentence_counts = vec![0_u64; inputs.len()];
-        let mut last_response_document = None;
-        let mut total_response_sentences = 0_usize;
-        let mut response_bytes = 0_usize;
-        loop {
-            let record = self.receive()?;
-            response_bytes = response_bytes
-                .checked_add(record.len())
-                .ok_or_else(|| ExternalProcessError::Worker("response byte overflow".to_owned()))?;
-            if response_bytes > self.config.limits().max_response_batch_bytes {
-                return Err(ExternalProtocolError::new_for_execution(
-                    "limit",
-                    "response batch exceeds max_response_batch_bytes",
-                    Some(batch_id),
-                )
-                .into());
-            }
-            let kind = response_record_kind(&record, self.config.limits())?;
-            let response_batch_id = match kind {
-                ResponseRecordKind::Sentence { batch_id, .. }
-                | ResponseRecordKind::BatchComplete { batch_id } => batch_id,
-            };
-            if response_batch_id != batch_id {
-                return Err(ExternalProtocolError::new_for_execution(
-                    "order",
-                    "adapter response batch identity mismatch",
-                    Some(batch_id),
-                )
-                .into());
-            }
-            if let ResponseRecordKind::Sentence {
-                document_ordinal,
-                input_id,
-                sentence_ordinal,
-                ..
-            } = kind
-            {
-                let document_index = usize::try_from(document_ordinal).map_err(|_| {
-                    ExternalProcessError::Protocol(ExternalProtocolError::new_for_execution(
-                        "order",
-                        "adapter response document ordinal exceeds usize",
-                        Some(batch_id),
-                    ))
-                })?;
-                let input = inputs.get(document_index).ok_or_else(|| {
-                    ExternalProcessError::Protocol(ExternalProtocolError::new_for_execution(
-                        "order",
-                        "adapter response document ordinal is outside the request",
-                        Some(batch_id),
-                    ))
-                })?;
-                if last_response_document.is_some_and(|prior| document_index < prior) {
-                    return Err(ExternalProtocolError::new_for_execution(
-                        "order",
-                        "adapter response document ordinals must be nondecreasing",
-                        Some(batch_id),
-                    )
-                    .into());
-                }
-                if input.id().get() != input_id
-                    || response_sentence_counts[document_index] != sentence_ordinal
-                {
-                    return Err(ExternalProtocolError::new_for_execution(
-                        "order",
-                        "adapter response input or sentence identity mismatch",
-                        Some(batch_id),
-                    )
-                    .into());
-                }
-                response_sentence_counts[document_index] = response_sentence_counts[document_index]
-                    .checked_add(1)
-                    .ok_or_else(|| {
-                        ExternalProcessError::Protocol(ExternalProtocolError::new_for_execution(
-                            "limit",
-                            "adapter sentence count overflow",
-                            Some(batch_id),
-                        ))
-                    })?;
-                last_response_document = Some(document_index);
-                total_response_sentences =
-                    total_response_sentences.checked_add(1).ok_or_else(|| {
-                        ExternalProcessError::Protocol(ExternalProtocolError::new_for_execution(
-                            "limit",
-                            "adapter sentence count overflow",
-                            Some(batch_id),
-                        ))
-                    })?;
-                if total_response_sentences > limits.max_stage_sentences {
-                    return Err(ExternalProtocolError::new_for_execution(
-                        "limit",
-                        "adapter response exceeds max_stage_sentences",
-                        Some(batch_id),
-                    )
-                    .into());
-                }
-            }
-            logical.extend_from_slice(&record);
-            if matches!(kind, ResponseRecordKind::BatchComplete { .. }) {
-                break;
-            }
-        }
-        let mut transcript = ExternalTranscript::open_at(
-            BufReader::new(std::io::Cursor::new(logical)),
-            self.config.limits(),
-            batch_id,
-        )?;
-        let bounds = crate::analysis::ExternalBatchBounds {
-            max_stage_input_bytes: limits.max_stage_input_bytes,
-            max_stage_sentences: limits.max_stage_sentences,
-            max_sentence_bytes: limits.max_sentence_bytes,
-            max_tokenized_bytes: limits.max_tokenized_bytes,
-        };
-        let batch = transcript
-            .next_validated_batch_with_bounds(bounds)?
-            .ok_or_else(|| {
-                ExternalProcessError::Worker("adapter returned no committed batch".to_owned())
-            })?;
-        if transcript
-            .next_validated_batch_with_bounds(bounds)?
-            .is_some()
-        {
-            return Err(ExternalProcessError::Worker(
-                "adapter returned more than one batch".to_owned(),
-            ));
-        }
-        self.next_batch_id = self
-            .next_batch_id
-            .checked_add(1)
-            .ok_or_else(|| ExternalProcessError::Worker("batch identity overflow".to_owned()))?;
-        self.last_input_id = prior;
-        Ok(batch)
-    }
-
-    pub fn finish(mut self) -> Result<(), ExternalProcessError> {
-        self.finish_inner()
+        })
     }
 
     fn send(&self, records: Vec<Vec<u8>>) -> Result<(), ExternalProcessError> {
@@ -1565,6 +1207,259 @@ impl ExternalAdapterProcess {
     }
 }
 
+impl Drop for SpawnedProcess {
+    fn drop(&mut self) {
+        self.abort();
+    }
+}
+
+pub struct ExternalAdapterProcess {
+    runtime: SpawnedProcess,
+    config: ExternalRunConfig,
+    descriptor: AnalyzerDescriptor,
+    execution: ExecutionProvenance,
+    schema: TokenSchema,
+    projection: BoundProjection,
+    next_batch_id: u64,
+    last_input_id: Option<u64>,
+}
+
+impl fmt::Debug for ExternalAdapterProcess {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_struct("ExternalAdapterProcess")
+            .field("process_group", &self.runtime.process_group)
+            .field("next_batch_id", &self.next_batch_id)
+            .field("cleaned", &self.runtime.cleaned)
+            .finish_non_exhaustive()
+    }
+}
+
+impl ExternalAdapterProcess {
+    pub fn launch(
+        command: ExternalAdapterCommand,
+        manifest: VerifiedAdapterManifest,
+        config: ExternalRunConfig,
+        diagnostic: DiagnosticCallback,
+    ) -> Result<Self, ExternalProcessError> {
+        Self::launch_with_cancellation(
+            command,
+            manifest,
+            config,
+            diagnostic,
+            ExternalAdapterCancellation::new(),
+        )
+    }
+
+    pub fn launch_with_cancellation(
+        command: ExternalAdapterCommand,
+        manifest: VerifiedAdapterManifest,
+        config: ExternalRunConfig,
+        diagnostic: DiagnosticCallback,
+        cancellation: ExternalAdapterCancellation,
+    ) -> Result<Self, ExternalProcessError> {
+        // Re-verify immediately before spawn so files mutated between manifest
+        // admission (e.g. `VerifiedAdapterManifest::new` or session creation)
+        // and actual process launch are rejected before execution.
+        manifest.verify()?;
+        manifest.verify_command(&command)?;
+        if !config.admits_verified_manifest(
+            manifest.implementation_digest(),
+            manifest.resource_manifest_digest(),
+            manifest.components(),
+        ) {
+            return Err(ExternalProcessError::Manifest(
+                "verified manifests do not exactly match the run identity and component closure"
+                    .to_owned(),
+            ));
+        }
+        let header_bytes = config.header_bytes()?;
+        let mut runtime =
+            SpawnedProcess::spawn(&command, &manifest, &config, diagnostic, cancellation)?;
+        runtime.send(vec![header_bytes])?;
+        let ready = runtime.receive()?;
+        let (descriptor, execution, schema, projection) = config.validate_ready_record(&ready)?;
+        Ok(Self {
+            runtime,
+            config,
+            descriptor,
+            execution,
+            schema,
+            projection,
+            next_batch_id: 0,
+            last_input_id: None,
+        })
+    }
+
+    pub fn exchange_batch(
+        &mut self,
+        inputs: Vec<TextUnit>,
+        limits: &ExecutionLimits,
+    ) -> Result<ExternalValidatedBatch, ExternalProcessError> {
+        let result = self.exchange_batch_inner(inputs, limits);
+        if result.is_err() {
+            self.runtime.abort();
+        }
+        result
+    }
+
+    #[must_use]
+    pub const fn process_group_id(&self) -> i32 {
+        self.runtime.process_group
+    }
+
+    #[must_use]
+    pub const fn descriptor(&self) -> &AnalyzerDescriptor {
+        &self.descriptor
+    }
+
+    #[must_use]
+    pub const fn execution_provenance(&self) -> &ExecutionProvenance {
+        &self.execution
+    }
+
+    #[must_use]
+    pub const fn schema(&self) -> &TokenSchema {
+        &self.schema
+    }
+
+    #[must_use]
+    pub fn cancellation_handle(&self) -> ExternalAdapterCancellation {
+        self.runtime.cancellation.clone()
+    }
+
+    #[must_use]
+    pub fn retained_stderr_bytes(&self) -> usize {
+        self.runtime
+            .stderr_tail
+            .lock()
+            .expect("stderr tail mutex poisoned")
+            .len()
+    }
+
+    fn exchange_batch_inner(
+        &mut self,
+        inputs: Vec<TextUnit>,
+        limits: &ExecutionLimits,
+    ) -> Result<ExternalValidatedBatch, ExternalProcessError> {
+        if self.runtime.cleaned {
+            return Err(ExternalProcessError::Worker(
+                "adapter process is already closed".to_owned(),
+            ));
+        }
+        let batch_id = self.next_batch_id;
+        limits.validate().map_err(|error| {
+            ExternalProcessError::Protocol(ExternalProtocolError::new_for_execution(
+                "limit",
+                error.to_string(),
+                Some(batch_id),
+            ))
+        })?;
+        if inputs.is_empty() {
+            return Err(ExternalProcessError::Protocol(
+                ExternalProtocolError::new_for_execution(
+                    "state",
+                    "live external batches must be nonempty",
+                    Some(batch_id),
+                ),
+            ));
+        }
+        if inputs.len() > limits.max_stage_sentences {
+            return Err(ExternalProtocolError::new_for_execution(
+                "limit",
+                "live document count exceeds max_stage_sentences",
+                Some(batch_id),
+            )
+            .into());
+        }
+        let mut stage_input_bytes = 0_usize;
+        for input in &inputs {
+            let expected_kind = match self.config.segmentation() {
+                SegmentationMode::Input => TextUnitKind::Sentence,
+                SegmentationMode::Analyzer => TextUnitKind::Segment,
+            };
+            if input.kind() != expected_kind {
+                return Err(ExternalProtocolError::new_for_execution(
+                    "document",
+                    "live input kind differs from configured segmentation",
+                    Some(batch_id),
+                )
+                .into());
+            }
+            if input.kind() == TextUnitKind::Sentence && input.len() > limits.max_sentence_bytes {
+                return Err(ExternalProtocolError::new_for_execution(
+                    "limit",
+                    "live input exceeds max_sentence_bytes",
+                    Some(batch_id),
+                )
+                .into());
+            }
+            stage_input_bytes = stage_input_bytes.checked_add(input.len()).ok_or_else(|| {
+                ExternalProcessError::Protocol(ExternalProtocolError::new_for_execution(
+                    "limit",
+                    "live stage input byte count overflow",
+                    Some(batch_id),
+                ))
+            })?;
+        }
+        if inputs.len() > 1 && stage_input_bytes > limits.max_stage_input_bytes {
+            return Err(ExternalProtocolError::new_for_execution(
+                "limit",
+                "live inputs exceed max_stage_input_bytes",
+                Some(batch_id),
+            )
+            .into());
+        }
+        let mut prior = self.last_input_id;
+        for input in &inputs {
+            if prior.is_some_and(|prior| input.id().get() <= prior) {
+                return Err(ExternalProcessError::Protocol(
+                    ExternalProtocolError::new_for_execution(
+                        "order",
+                        "live input identities must be globally increasing",
+                        Some(batch_id),
+                    ),
+                ));
+            }
+            prior = Some(input.id().get());
+        }
+        let request =
+            self.config
+                .batch_request_bytes(batch_id, &inputs, limits.max_input_record_bytes)?;
+        self.runtime.send(request)?;
+        let bounds = ExternalBatchBounds {
+            max_stage_input_bytes: limits.max_stage_input_bytes,
+            max_stage_sentences: limits.max_stage_sentences,
+            max_sentence_bytes: limits.max_sentence_bytes,
+            max_tokenized_bytes: limits.max_tokenized_bytes,
+        };
+        let mut assembler = ExternalBatchAssembler::new(
+            batch_id,
+            inputs,
+            self.config.segmentation(),
+            &self.projection,
+            self.config.limits(),
+            bounds,
+        );
+        let batch = loop {
+            let record = self.runtime.receive()?;
+            if let Some(batch) = assembler.push_record_bytes(&record)? {
+                break batch;
+            }
+        };
+        self.next_batch_id = self
+            .next_batch_id
+            .checked_add(1)
+            .ok_or_else(|| ExternalProcessError::Worker("batch identity overflow".to_owned()))?;
+        self.last_input_id = prior;
+        Ok(batch)
+    }
+
+    pub fn finish(mut self) -> Result<(), ExternalProcessError> {
+        self.runtime.finish_inner()
+    }
+}
+
 struct SpawnGuard {
     child: Option<Child>,
     process_group: i32,
@@ -1619,12 +1514,6 @@ impl Drop for SpawnGuard {
                 let _ = child.wait();
             }
         }
-    }
-}
-
-impl Drop for ExternalAdapterProcess {
-    fn drop(&mut self) {
-        self.abort();
     }
 }
 

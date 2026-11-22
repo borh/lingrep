@@ -286,6 +286,28 @@ impl ExternalRunConfig {
         )
     }
 
+    pub(crate) fn validate_ready_record(
+        &self,
+        bytes: &[u8],
+    ) -> Result<
+        (
+            AnalyzerDescriptor,
+            ExecutionProvenance,
+            TokenSchema,
+            BoundProjection,
+        ),
+        ExternalProtocolError,
+    > {
+        let record = parse_framed_record(bytes, self.limits.max_record_bytes)?;
+        let ExternalRecord::RunReady(ready) = record else {
+            return Err(ExternalProtocolError::new(
+                "state",
+                "run_header must be followed by run_ready",
+            ));
+        };
+        validate_ready(&self.header, &ready, self.limits)
+    }
+
     pub(crate) fn admits_verified_manifest(
         &self,
         implementation_digest: [u8; 32],
@@ -477,8 +499,86 @@ impl ExternalValidatedBatch {
 }
 
 #[derive(Debug)]
-pub struct ExternalTranscript<R> {
+struct RecordCursor<R> {
     reader: R,
+    max_record_bytes: usize,
+}
+
+impl<R: BufRead> RecordCursor<R> {
+    const fn new(reader: R, max_record_bytes: usize) -> Self {
+        Self {
+            reader,
+            max_record_bytes,
+        }
+    }
+
+    fn required_record(
+        &mut self,
+        expected: &str,
+        batch_id: u64,
+    ) -> Result<(ExternalRecord, usize), ExternalProtocolError> {
+        self.read_record()?.ok_or_else(|| {
+            ExternalProtocolError::new("truncated", format!("missing {expected}")).batch(batch_id)
+        })
+    }
+
+    fn read_record(&mut self) -> Result<Option<(ExternalRecord, usize)>, ExternalProtocolError> {
+        let mut bytes = Vec::new();
+        let read_limit = self
+            .max_record_bytes
+            .checked_add(1)
+            .ok_or_else(|| ExternalProtocolError::new("limit", "record bound overflow"))?;
+        let read = self
+            .reader
+            .by_ref()
+            .take(read_limit as u64)
+            .read_until(b'\n', &mut bytes)
+            .map_err(|error| ExternalProtocolError::new("io", error.to_string()))?;
+        if read == 0 {
+            return Ok(None);
+        }
+        let record = parse_framed_record(&bytes, self.max_record_bytes)?;
+        Ok(Some((record, read)))
+    }
+}
+
+fn parse_framed_record(
+    bytes: &[u8],
+    max_record_bytes: usize,
+) -> Result<ExternalRecord, ExternalProtocolError> {
+    if bytes.len() > max_record_bytes {
+        return Err(ExternalProtocolError::new(
+            "limit",
+            "protocol record exceeds max_record_bytes",
+        ));
+    }
+    let Some(payload) = bytes.strip_suffix(b"\n") else {
+        return Err(ExternalProtocolError::new(
+            "framing",
+            "protocol record is missing its final LF",
+        ));
+    };
+    if payload.ends_with(b"\r") {
+        return Err(ExternalProtocolError::new(
+            "framing",
+            "CRLF records are not admitted",
+        ));
+    }
+    if payload.is_empty() {
+        return Err(ExternalProtocolError::new(
+            "framing",
+            "blank protocol records are not admitted",
+        ));
+    }
+    std::str::from_utf8(payload)
+        .map_err(|error| ExternalProtocolError::new("utf8", error.to_string()))?;
+    let value = decode_unique_json(payload)?;
+    decode_record(value)
+}
+
+#[derive(Debug)]
+pub struct ExternalTranscript<R> {
+    cursor: RecordCursor<R>,
     limits: ExternalProtocolLimits,
     header: RunHeader,
     descriptor: AnalyzerDescriptor,
@@ -492,57 +592,9 @@ pub struct ExternalTranscript<R> {
 
 impl<R: BufRead> ExternalTranscript<R> {
     pub fn open(reader: R, limits: ExternalProtocolLimits) -> Result<Self, ExternalProtocolError> {
-        Self::open_at(reader, limits, 0)
-    }
-
-    pub(crate) fn open_at(
-        reader: R,
-        limits: ExternalProtocolLimits,
-        next_batch_id: u64,
-    ) -> Result<Self, ExternalProtocolError> {
         validate_limits(limits)?;
-        let mut transcript = Self {
-            reader,
-            limits,
-            header: RunHeader::placeholder(),
-            descriptor: AnalyzerDescriptor::new(
-                AnalyzerFamily::External,
-                ExtractionProfile::Morphology,
-                SegmentationMode::Input,
-                NormalizationPolicy::None,
-                "pending",
-                "pending",
-                [0; 32],
-                [0; 32],
-                [0; 32],
-                [0; 32],
-                [0; 32],
-                [0; 32],
-                TokenSchema::from_keys(["external.pending"])
-                    .expect("placeholder schema is valid")
-                    .digest(),
-            )
-            .expect("placeholder descriptor is valid"),
-            execution: ExecutionProvenance {
-                backend: "pending".into(),
-                runtime: "pending".into(),
-                lock_digest: [0; 32],
-                workers: 0,
-                batch_size: 0,
-            },
-            schema: TokenSchema::from_keys(["external.pending"])
-                .expect("placeholder schema is valid"),
-            projection: TokenSchema::from_keys(["external.pending"])
-                .expect("placeholder schema is valid")
-                .bind_projection([
-                    AttributeKey::new("external.pending").expect("placeholder key is valid")
-                ])
-                .expect("placeholder projection is valid"),
-            next_batch_id,
-            last_input_id: None,
-            clean_eof: false,
-        };
-        let (record, _) = transcript
+        let mut cursor = RecordCursor::new(reader, limits.max_record_bytes);
+        let (record, _) = cursor
             .read_record()?
             .ok_or_else(|| ExternalProtocolError::new("truncated", "missing run_header"))?;
         let ExternalRecord::RunHeader(header) = record else {
@@ -553,7 +605,7 @@ impl<R: BufRead> ExternalTranscript<R> {
         };
         validate_header(&header, limits)?;
 
-        let (record, _) = transcript
+        let (record, _) = cursor
             .read_record()?
             .ok_or_else(|| ExternalProtocolError::new("truncated", "missing run_ready"))?;
         let ExternalRecord::RunReady(ready) = record else {
@@ -563,12 +615,18 @@ impl<R: BufRead> ExternalTranscript<R> {
             ));
         };
         let (descriptor, execution, schema, projection) = validate_ready(&header, &ready, limits)?;
-        transcript.header = header;
-        transcript.descriptor = descriptor;
-        transcript.execution = execution;
-        transcript.schema = schema;
-        transcript.projection = projection;
-        Ok(transcript)
+        Ok(Self {
+            cursor,
+            limits,
+            header,
+            descriptor,
+            execution,
+            schema,
+            projection,
+            next_batch_id: 0,
+            last_input_id: None,
+            clean_eof: false,
+        })
     }
 
     #[must_use]
@@ -602,14 +660,14 @@ impl<R: BufRead> ExternalTranscript<R> {
         })
     }
 
-    pub(crate) fn next_validated_batch_with_bounds(
+    fn next_validated_batch_with_bounds(
         &mut self,
         bounds: ExternalBatchBounds,
     ) -> Result<Option<ExternalValidatedBatch>, ExternalProtocolError> {
         if self.clean_eof {
             return Ok(None);
         }
-        let Some((record, begin_bytes)) = self.read_record()? else {
+        let Some((record, begin_bytes)) = self.cursor.read_record()? else {
             self.clean_eof = true;
             return Ok(None);
         };
@@ -644,7 +702,7 @@ impl<R: BufRead> ExternalTranscript<R> {
         let mut request_bytes = begin_bytes;
         let mut input_bytes = 0_usize;
         for expected in 0..document_count {
-            let (record, record_bytes) = self.required_record("document", batch_id)?;
+            let (record, record_bytes) = self.cursor.required_record("document", batch_id)?;
             let ExternalRecord::Document(document) = record else {
                 return Err(state_error("expected document", batch_id));
             };
@@ -676,7 +734,7 @@ impl<R: BufRead> ExternalTranscript<R> {
             }
             documents.push(admit_document(document, &self.header, batch_id)?);
         }
-        let (record, end_bytes) = self.required_record("batch_end", batch_id)?;
+        let (record, end_bytes) = self.cursor.required_record("batch_end", batch_id)?;
         let ExternalRecord::BatchEnd(end) = record else {
             return Err(state_error("expected batch_end", batch_id));
         };
@@ -688,184 +746,380 @@ impl<R: BufRead> ExternalTranscript<R> {
             return Err(limit_error("request batch bytes", batch_id));
         }
 
-        let mut sentences: Vec<Vec<AnalyzedSentence>> =
-            (0..document_count).map(|_| Vec::new()).collect();
-        let mut warnings = Vec::new();
-        let mut response_bytes = 0_usize;
-        let mut sentence_count = 0_usize;
-        let mut tokenized_bytes = 0_usize;
-        let mut last_response_document = None;
-        loop {
-            let (record, bytes) = self.required_record("sentence or batch_complete", batch_id)?;
-            response_bytes = response_bytes
-                .checked_add(bytes)
-                .ok_or_else(|| limit_error("response batch bytes", batch_id))?;
-            if response_bytes > self.limits.max_response_batch_bytes {
-                return Err(limit_error("response batch bytes", batch_id));
+        let mut assembler = ExternalBatchAssembler::new(
+            batch_id,
+            documents,
+            self.header.segmentation.into(),
+            &self.projection,
+            self.limits,
+            bounds,
+        );
+        let batch = loop {
+            let (record, bytes) = self
+                .cursor
+                .required_record("sentence or batch_complete", batch_id)?;
+            if let Some(batch) = assembler.push_record(record, bytes)? {
+                break batch;
             }
-            match record {
-                ExternalRecord::Sentence(sentence) => {
-                    sentence_count = sentence_count
-                        .checked_add(1)
-                        .ok_or_else(|| limit_error("sentence count", batch_id))?;
-                    if sentence_count > bounds.max_stage_sentences {
-                        return Err(limit_error("sentence count", batch_id));
-                    }
-                    if last_response_document.is_some_and(|prior| sentence.document_ordinal < prior)
-                    {
-                        return Err(order_error("response document order", batch_id)
-                            .input(sentence.input_id));
-                    }
-                    last_response_document = Some(sentence.document_ordinal);
-                    validate_sentence(
-                        sentence,
-                        batch_id,
-                        &documents,
-                        &mut sentences,
-                        &mut warnings,
-                        &self.projection,
-                        self.limits,
-                        bounds,
-                        &mut tokenized_bytes,
-                    )?;
-                }
-                ExternalRecord::BatchComplete(complete) => {
-                    validate_batch_id(complete.batch_id, batch_id)?;
-                    if complete.sentence_counts.len() != document_count {
-                        return Err(state_error("sentence count shape mismatch", batch_id));
-                    }
-                    for (actual, declared) in sentences.iter().zip(complete.sentence_counts) {
-                        if actual.len() as u64 != declared {
-                            return Err(state_error("sentence count mismatch", batch_id));
-                        }
-                    }
-                    break;
-                }
-                _ => return Err(state_error("unexpected record in batch response", batch_id)),
-            }
-        }
-
-        let mut analyzed_inputs = Vec::with_capacity(document_count);
-        for (input, sentences) in documents.into_iter().zip(sentences) {
-            analyzed_inputs.push(
-                AnalyzedInput::new(input, sentences, self.header.segmentation.into())
-                    .map_err(|error| analysis_error(error, batch_id))?,
-            );
-        }
-        let analysis = ValidatedAnalysisBatch::new(analyzed_inputs)
-            .map_err(|error| analysis_error(error, batch_id))?;
+        };
         self.next_batch_id = self
             .next_batch_id
             .checked_add(1)
             .ok_or_else(|| limit_error("batch identity", batch_id))?;
-        Ok(Some(ExternalValidatedBatch {
-            batch_id,
-            analysis,
-            warnings: warnings.into_boxed_slice(),
-        }))
-    }
-
-    fn required_record(
-        &mut self,
-        expected: &str,
-        batch_id: u64,
-    ) -> Result<(ExternalRecord, usize), ExternalProtocolError> {
-        self.read_record()?.ok_or_else(|| {
-            ExternalProtocolError::new("truncated", format!("missing {expected}")).batch(batch_id)
-        })
-    }
-
-    fn read_record(&mut self) -> Result<Option<(ExternalRecord, usize)>, ExternalProtocolError> {
-        let mut bytes = Vec::new();
-        let admitted_limit = self.limits.max_record_bytes;
-        let read_limit = admitted_limit
-            .checked_add(1)
-            .ok_or_else(|| ExternalProtocolError::new("limit", "record bound overflow"))?;
-        let read = self
-            .reader
-            .by_ref()
-            .take(read_limit as u64)
-            .read_until(b'\n', &mut bytes)
-            .map_err(|error| ExternalProtocolError::new("io", error.to_string()))?;
-        if read == 0 {
-            return Ok(None);
-        }
-        if bytes.len() > admitted_limit {
-            return Err(ExternalProtocolError::new(
-                "limit",
-                "protocol record exceeds max_record_bytes",
-            ));
-        }
-        if bytes.last() != Some(&b'\n') {
-            return Err(ExternalProtocolError::new(
-                "framing",
-                "protocol record is missing its final LF",
-            ));
-        }
-        bytes.pop();
-        if bytes.last() == Some(&b'\r') {
-            return Err(ExternalProtocolError::new(
-                "framing",
-                "CRLF records are not admitted",
-            ));
-        }
-        if bytes.is_empty() {
-            return Err(ExternalProtocolError::new(
-                "framing",
-                "blank protocol records are not admitted",
-            ));
-        }
-        std::str::from_utf8(&bytes)
-            .map_err(|error| ExternalProtocolError::new("utf8", error.to_string()))?;
-        let value = decode_unique_json(&bytes)?;
-        Ok(Some((decode_record(value)?, read)))
+        Ok(Some(batch))
     }
 }
 
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub(crate) enum ResponseRecordKind {
-    Sentence {
-        batch_id: u64,
-        document_ordinal: u64,
-        input_id: u64,
-        sentence_ordinal: u64,
-    },
-    BatchComplete {
-        batch_id: u64,
-    },
-}
-
-pub(crate) fn response_record_kind(
-    bytes: &[u8],
+pub(crate) struct ExternalBatchAssembler<'a> {
+    batch_id: u64,
+    segmentation: SegmentationMode,
+    projection: &'a BoundProjection,
     limits: ExternalProtocolLimits,
-) -> Result<ResponseRecordKind, ExternalProtocolError> {
-    if bytes.len() > limits.max_record_bytes || bytes.last() != Some(&b'\n') {
-        return Err(ExternalProtocolError::new(
-            "framing",
-            "adapter response is not one bounded LF record",
-        ));
+    bounds: ExternalBatchBounds,
+    documents: Vec<TextUnit>,
+    sentences: Vec<Vec<AnalyzedSentence>>,
+    warnings: Vec<ExternalWarning>,
+    response_bytes: usize,
+    sentence_count: usize,
+    tokenized_bytes: usize,
+    last_response_document: Option<u64>,
+}
+
+impl<'a> ExternalBatchAssembler<'a> {
+    pub(crate) fn new(
+        batch_id: u64,
+        documents: Vec<TextUnit>,
+        segmentation: SegmentationMode,
+        projection: &'a BoundProjection,
+        limits: ExternalProtocolLimits,
+        bounds: ExternalBatchBounds,
+    ) -> Self {
+        let sentences = (0..documents.len()).map(|_| Vec::new()).collect();
+        Self {
+            batch_id,
+            segmentation,
+            projection,
+            limits,
+            bounds,
+            documents,
+            sentences,
+            warnings: Vec::new(),
+            response_bytes: 0,
+            sentence_count: 0,
+            tokenized_bytes: 0,
+            last_response_document: None,
+        }
     }
-    if bytes.get(bytes.len().saturating_sub(2)) == Some(&b'\r') {
-        return Err(ExternalProtocolError::new(
-            "framing",
-            "CRLF records are not admitted",
-        ));
+
+    pub(crate) fn push_record_bytes(
+        &mut self,
+        bytes: &[u8],
+    ) -> Result<Option<ExternalValidatedBatch>, ExternalProtocolError> {
+        self.admit_response_bytes(bytes.len())?;
+        let record = parse_framed_record(bytes, self.limits.max_record_bytes)?;
+        self.push_parsed_record(record)
     }
-    let value = decode_unique_json(&bytes[..bytes.len() - 1])?;
-    match decode_record(value)? {
-        ExternalRecord::Sentence(sentence) => Ok(ResponseRecordKind::Sentence {
-            batch_id: sentence.batch_id,
-            document_ordinal: sentence.document_ordinal,
-            input_id: sentence.input_id,
-            sentence_ordinal: sentence.sentence_ordinal,
-        }),
-        ExternalRecord::BatchComplete(complete) => Ok(ResponseRecordKind::BatchComplete {
-            batch_id: complete.batch_id,
-        }),
-        _ => Err(ExternalProtocolError::new(
-            "state",
-            "unexpected adapter response record",
-        )),
+
+    fn push_record(
+        &mut self,
+        record: ExternalRecord,
+        bytes: usize,
+    ) -> Result<Option<ExternalValidatedBatch>, ExternalProtocolError> {
+        self.admit_response_bytes(bytes)?;
+        self.push_parsed_record(record)
+    }
+
+    fn admit_response_bytes(&mut self, bytes: usize) -> Result<(), ExternalProtocolError> {
+        self.response_bytes = self
+            .response_bytes
+            .checked_add(bytes)
+            .ok_or_else(|| limit_error("response batch bytes", self.batch_id))?;
+        if self.response_bytes > self.limits.max_response_batch_bytes {
+            return Err(limit_error("response batch bytes", self.batch_id));
+        }
+        Ok(())
+    }
+
+    fn push_parsed_record(
+        &mut self,
+        record: ExternalRecord,
+    ) -> Result<Option<ExternalValidatedBatch>, ExternalProtocolError> {
+        match record {
+            ExternalRecord::Sentence(sentence) => {
+                validate_batch_id(sentence.batch_id, self.batch_id)?;
+                self.sentence_count = self
+                    .sentence_count
+                    .checked_add(1)
+                    .ok_or_else(|| limit_error("sentence count", self.batch_id))?;
+                if self.sentence_count > self.bounds.max_stage_sentences {
+                    return Err(limit_error("sentence count", self.batch_id));
+                }
+                if self
+                    .last_response_document
+                    .is_some_and(|prior| sentence.document_ordinal < prior)
+                {
+                    return Err(order_error("response document order", self.batch_id)
+                        .input(sentence.input_id));
+                }
+                self.last_response_document = Some(sentence.document_ordinal);
+                self.validate_sentence(sentence)?;
+                Ok(None)
+            }
+            ExternalRecord::BatchComplete(complete) => {
+                validate_batch_id(complete.batch_id, self.batch_id)?;
+                if complete.sentence_counts.len() != self.documents.len() {
+                    return Err(state_error("sentence count shape mismatch", self.batch_id));
+                }
+                for (actual, declared) in self.sentences.iter().zip(complete.sentence_counts) {
+                    if actual.len() as u64 != declared {
+                        return Err(state_error("sentence count mismatch", self.batch_id));
+                    }
+                }
+                let documents = std::mem::take(&mut self.documents);
+                let sentences = std::mem::take(&mut self.sentences);
+                let warnings = std::mem::take(&mut self.warnings);
+                let mut analyzed_inputs = Vec::with_capacity(documents.len());
+                for (input, sentences) in documents.into_iter().zip(sentences) {
+                    analyzed_inputs.push(
+                        AnalyzedInput::new(input, sentences, self.segmentation)
+                            .map_err(|error| analysis_error(error, self.batch_id))?,
+                    );
+                }
+                let analysis = ValidatedAnalysisBatch::new(analyzed_inputs)
+                    .map_err(|error| analysis_error(error, self.batch_id))?;
+                Ok(Some(ExternalValidatedBatch {
+                    batch_id: self.batch_id,
+                    analysis,
+                    warnings: warnings.into_boxed_slice(),
+                }))
+            }
+            _ => Err(state_error(
+                "unexpected record in batch response",
+                self.batch_id,
+            )),
+        }
+    }
+
+    fn validate_sentence(&mut self, sentence: Sentence) -> Result<(), ExternalProtocolError> {
+        let batch_id = self.batch_id;
+        let document_index = usize::try_from(sentence.document_ordinal)
+            .map_err(|_| order_error("document ordinal", batch_id))?;
+        let input = self
+            .documents
+            .get(document_index)
+            .ok_or_else(|| order_error("document ordinal", batch_id).input(sentence.input_id))?;
+        if input.id().get() != sentence.input_id {
+            return Err(order_error("input identity", batch_id).input(sentence.input_id));
+        }
+        if sentence.sentence_ordinal
+            != u64::try_from(self.sentences[document_index].len())
+                .map_err(|_| limit_error("sentence ordinal", batch_id))?
+        {
+            return Err(order_error("sentence ordinal", batch_id).input(sentence.input_id));
+        }
+        if sentence.warnings.len() > self.limits.max_warnings_per_sentence {
+            return Err(limit_error("warning count", batch_id).input(sentence.input_id));
+        }
+        for warning in &sentence.warnings {
+            if warning.message.len() > self.limits.max_warning_message_bytes {
+                return Err(limit_error("warning message bytes", batch_id).input(sentence.input_id));
+            }
+            if warning.input_id != sentence.input_id
+                || warning.code.is_empty()
+                || !warning.code.contains('.')
+            {
+                return Err(ExternalProtocolError::new(
+                    "warning",
+                    "warning identity or provider-namespaced code is invalid",
+                )
+                .batch(batch_id)
+                .input(sentence.input_id));
+            }
+        }
+        let word_count = usize::try_from(sentence.word_count)
+            .map_err(|_| limit_error("word count", batch_id).input(sentence.input_id))?;
+        let expected_values = word_count
+            .checked_mul(self.projection.len())
+            .ok_or_else(|| {
+                limit_error("returned value count", batch_id).input(sentence.input_id)
+            })?;
+        if sentence.values.len() != expected_values {
+            return Err(ExternalProtocolError::new(
+                "alignment",
+                "returned value count does not equal word_count times projection width",
+            )
+            .batch(batch_id)
+            .input(sentence.input_id));
+        }
+        let values = sentence
+            .values
+            .into_iter()
+            .enumerate()
+            .map(|(index, value)| {
+                let ordinal = crate::token_match::AttributeOrdinal::new(
+                    (index % self.projection.len()) as u8,
+                );
+                let kind = self
+                    .projection
+                    .kind(ordinal)
+                    .ok_or_else(|| limit_error("returned value ordinal", batch_id))?;
+                match (kind, value) {
+                    (AttributeKind::Scalar, Some(WireAttributeValue::Scalar(value))) => {
+                        Ok(ProjectedAttributeValue::scalar(value))
+                    }
+                    (AttributeKind::Scalar, None) => Ok(ProjectedAttributeValue::missing_scalar()),
+                    (AttributeKind::StringSet, Some(WireAttributeValue::StringSet(values))) => {
+                        validate_canonical_set(&values, batch_id, sentence.input_id)?;
+                        Ok(ProjectedAttributeValue::StringSet(
+                            values.into_iter().map(CompactString::from).collect(),
+                        ))
+                    }
+                    (AttributeKind::StringSet, None) => {
+                        Ok(ProjectedAttributeValue::StringSet(Vec::new()))
+                    }
+                    _ => Err(ExternalProtocolError::new(
+                        "schema",
+                        "returned cell kind differs from its projection kind",
+                    )
+                    .batch(batch_id)
+                    .input(sentence.input_id)),
+                }
+            })
+            .collect::<Result<Vec<_>, ExternalProtocolError>>()?;
+        let source_start = usize::try_from(sentence.source_range[0]).map_err(|_| {
+            range_error(
+                "source range start exceeds usize",
+                batch_id,
+                sentence.input_id,
+            )
+        })?;
+        let source_end = usize::try_from(sentence.source_range[1]).map_err(|_| {
+            range_error(
+                "source range end exceeds usize",
+                batch_id,
+                sentence.input_id,
+            )
+        })?;
+        let source_range = input
+            .source_range(source_start, source_end)
+            .map_err(|error| range_error(error, batch_id, sentence.input_id))?;
+        if source_range.as_usize().len() > self.bounds.max_sentence_bytes {
+            return Err(limit_error("sentence bytes", batch_id).input(sentence.input_id));
+        }
+        let identity_alignment = matches!(&sentence.alignment, WireAlignment::Identity);
+        let word_ranges: Vec<[u64; 2]> = match sentence.alignment {
+            WireAlignment::Identity => {
+                if sentence.surface_ranges.len() != word_count {
+                    return Err(alignment_error(batch_id, sentence.input_id));
+                }
+                (0..word_count)
+                    .map(|index| {
+                        let start = u64::try_from(index)
+                            .map_err(|_| alignment_error(batch_id, sentence.input_id))?;
+                        let end = start
+                            .checked_add(1)
+                            .ok_or_else(|| alignment_error(batch_id, sentence.input_id))?;
+                        Ok([start, end])
+                    })
+                    .collect::<Result<Vec<_>, ExternalProtocolError>>()?
+            }
+            WireAlignment::Expanded { word_ranges } => {
+                if word_ranges.len() != sentence.surface_ranges.len() {
+                    return Err(alignment_error(batch_id, sentence.input_id));
+                }
+                word_ranges
+            }
+        };
+        let mut surfaces = Vec::with_capacity(sentence.surface_ranges.len());
+        for (range, words) in sentence.surface_ranges.into_iter().zip(word_ranges) {
+            let start = usize::try_from(range[0]).map_err(|_| {
+                range_error(
+                    "surface range start exceeds usize",
+                    batch_id,
+                    sentence.input_id,
+                )
+            })?;
+            let end = usize::try_from(range[1]).map_err(|_| {
+                range_error(
+                    "surface range end exceeds usize",
+                    batch_id,
+                    sentence.input_id,
+                )
+            })?;
+            let range = input
+                .source_range(start, end)
+                .map_err(|error| range_error(error, batch_id, sentence.input_id))?;
+            surfaces.push(SurfaceToken::new(
+                range,
+                u32::try_from(words[0])
+                    .map_err(|_| alignment_error(batch_id, sentence.input_id))?,
+                u32::try_from(words[1])
+                    .map_err(|_| alignment_error(batch_id, sentence.input_id))?,
+            ));
+        }
+        if identity_alignment {
+            let text = self
+                .projection
+                .keys()
+                .iter()
+                .position(|key| key.as_str() == "text")
+                .ok_or_else(|| alignment_error(batch_id, sentence.input_id))?;
+            for (word, surface) in surfaces.iter().enumerate() {
+                let value_index = word
+                    .checked_mul(self.projection.len())
+                    .and_then(|index| index.checked_add(text))
+                    .ok_or_else(|| limit_error("returned value index", batch_id))?;
+                let returned = match &values[value_index] {
+                    ProjectedAttributeValue::Scalar(Some(value)) => value.as_str(),
+                    _ => return Err(alignment_error(batch_id, sentence.input_id)),
+                };
+                let source = input
+                    .slice(surface.source_range())
+                    .map_err(|error| range_error(error, batch_id, sentence.input_id))?;
+                if returned != source {
+                    return Err(alignment_error(batch_id, sentence.input_id));
+                }
+            }
+        }
+        let words = BoundTokenSentence::from_projected_attribute_values(
+            self.projection,
+            word_count,
+            values,
+        )
+        .map_err(|error| analysis_error(error, batch_id).input(sentence.input_id))?;
+        let resident_charge = words
+            .resident_bytes()
+            .map_err(|error| analysis_error(error, batch_id).input(sentence.input_id))?;
+        if resident_charge > self.bounds.max_tokenized_bytes {
+            return Err(limit_error("tokenized sentence bytes", batch_id).input(sentence.input_id));
+        }
+        self.tokenized_bytes = self
+            .tokenized_bytes
+            .checked_add(resident_charge)
+            .ok_or_else(|| limit_error("tokenized batch bytes", batch_id))?;
+        if self.tokenized_bytes > self.bounds.max_tokenized_bytes {
+            return Err(limit_error("tokenized batch bytes", batch_id));
+        }
+        let analyzed = AnalyzedSentence::new(
+            u32::try_from(sentence.sentence_ordinal)
+                .map_err(|_| alignment_error(batch_id, sentence.input_id))?,
+            source_range,
+            surfaces.into_boxed_slice(),
+            words,
+        )
+        .map_err(|error| analysis_error(error, batch_id).input(sentence.input_id))?;
+        self.sentences[document_index].push(analyzed);
+        self.warnings.extend(
+            sentence
+                .warnings
+                .into_iter()
+                .map(|warning| ExternalWarning {
+                    code: warning.code.into_boxed_str(),
+                    input_id: InputUnitId::new(warning.input_id),
+                    message: warning.message.into_boxed_str(),
+                }),
+        );
+        Ok(())
     }
 }
 
@@ -1166,226 +1420,6 @@ fn admit_document(
     Ok(input)
 }
 
-#[allow(clippy::too_many_arguments)]
-fn validate_sentence(
-    sentence: Sentence,
-    batch_id: u64,
-    documents: &[TextUnit],
-    sentences: &mut [Vec<AnalyzedSentence>],
-    warnings: &mut Vec<ExternalWarning>,
-    projection: &BoundProjection,
-    limits: ExternalProtocolLimits,
-    bounds: ExternalBatchBounds,
-    tokenized_bytes: &mut usize,
-) -> Result<(), ExternalProtocolError> {
-    validate_batch_id(sentence.batch_id, batch_id)?;
-    let document_index = usize::try_from(sentence.document_ordinal)
-        .map_err(|_| order_error("document ordinal", batch_id))?;
-    let input = documents
-        .get(document_index)
-        .ok_or_else(|| order_error("document ordinal", batch_id).input(sentence.input_id))?;
-    if input.id().get() != sentence.input_id {
-        return Err(order_error("input identity", batch_id).input(sentence.input_id));
-    }
-    if sentence.sentence_ordinal
-        != u64::try_from(sentences[document_index].len())
-            .map_err(|_| limit_error("sentence ordinal", batch_id))?
-    {
-        return Err(order_error("sentence ordinal", batch_id).input(sentence.input_id));
-    }
-    if sentence.warnings.len() > limits.max_warnings_per_sentence {
-        return Err(limit_error("warning count", batch_id).input(sentence.input_id));
-    }
-    for warning in &sentence.warnings {
-        if warning.message.len() > limits.max_warning_message_bytes {
-            return Err(limit_error("warning message bytes", batch_id).input(sentence.input_id));
-        }
-        if warning.input_id != sentence.input_id
-            || warning.code.is_empty()
-            || !warning.code.contains('.')
-        {
-            return Err(ExternalProtocolError::new(
-                "warning",
-                "warning identity or provider-namespaced code is invalid",
-            )
-            .batch(batch_id)
-            .input(sentence.input_id));
-        }
-    }
-    let word_count = usize::try_from(sentence.word_count)
-        .map_err(|_| limit_error("word count", batch_id).input(sentence.input_id))?;
-    let expected_values = word_count
-        .checked_mul(projection.len())
-        .ok_or_else(|| limit_error("returned value count", batch_id).input(sentence.input_id))?;
-    if sentence.values.len() != expected_values {
-        return Err(ExternalProtocolError::new(
-            "alignment",
-            "returned value count does not equal word_count times projection width",
-        )
-        .batch(batch_id)
-        .input(sentence.input_id));
-    }
-    let values = sentence
-        .values
-        .into_iter()
-        .enumerate()
-        .map(|(index, value)| {
-            let ordinal =
-                crate::token_match::AttributeOrdinal::new((index % projection.len()) as u8);
-            let kind = projection
-                .kind(ordinal)
-                .ok_or_else(|| limit_error("returned value ordinal", batch_id))?;
-            match (kind, value) {
-                (AttributeKind::Scalar, Some(WireAttributeValue::Scalar(value))) => {
-                    Ok(ProjectedAttributeValue::scalar(value))
-                }
-                (AttributeKind::Scalar, None) => Ok(ProjectedAttributeValue::missing_scalar()),
-                (AttributeKind::StringSet, Some(WireAttributeValue::StringSet(values))) => {
-                    validate_canonical_set(&values, batch_id, sentence.input_id)?;
-                    Ok(ProjectedAttributeValue::StringSet(
-                        values.into_iter().map(CompactString::from).collect(),
-                    ))
-                }
-                (AttributeKind::StringSet, None) => {
-                    Ok(ProjectedAttributeValue::StringSet(Vec::new()))
-                }
-                _ => Err(ExternalProtocolError::new(
-                    "schema",
-                    "returned cell kind differs from its projection kind",
-                )
-                .batch(batch_id)
-                .input(sentence.input_id)),
-            }
-        })
-        .collect::<Result<Vec<_>, ExternalProtocolError>>()?;
-    let source_start = usize::try_from(sentence.source_range[0]).map_err(|_| {
-        range_error(
-            "source range start exceeds usize",
-            batch_id,
-            sentence.input_id,
-        )
-    })?;
-    let source_end = usize::try_from(sentence.source_range[1]).map_err(|_| {
-        range_error(
-            "source range end exceeds usize",
-            batch_id,
-            sentence.input_id,
-        )
-    })?;
-    let source_range = input
-        .source_range(source_start, source_end)
-        .map_err(|error| range_error(error, batch_id, sentence.input_id))?;
-    if source_range.as_usize().len() > bounds.max_sentence_bytes {
-        return Err(limit_error("sentence bytes", batch_id).input(sentence.input_id));
-    }
-    let identity_alignment = matches!(&sentence.alignment, WireAlignment::Identity);
-    let word_ranges: Vec<[u64; 2]> = match sentence.alignment {
-        WireAlignment::Identity => {
-            if sentence.surface_ranges.len() != word_count {
-                return Err(alignment_error(batch_id, sentence.input_id));
-            }
-            (0..word_count)
-                .map(|index| {
-                    let start = u64::try_from(index)
-                        .map_err(|_| alignment_error(batch_id, sentence.input_id))?;
-                    let end = start
-                        .checked_add(1)
-                        .ok_or_else(|| alignment_error(batch_id, sentence.input_id))?;
-                    Ok([start, end])
-                })
-                .collect::<Result<Vec<_>, ExternalProtocolError>>()?
-        }
-        WireAlignment::Expanded { word_ranges } => {
-            if word_ranges.len() != sentence.surface_ranges.len() {
-                return Err(alignment_error(batch_id, sentence.input_id));
-            }
-            word_ranges
-        }
-    };
-    let mut surfaces = Vec::with_capacity(sentence.surface_ranges.len());
-    for (range, words) in sentence.surface_ranges.into_iter().zip(word_ranges) {
-        let start = usize::try_from(range[0]).map_err(|_| {
-            range_error(
-                "surface range start exceeds usize",
-                batch_id,
-                sentence.input_id,
-            )
-        })?;
-        let end = usize::try_from(range[1]).map_err(|_| {
-            range_error(
-                "surface range end exceeds usize",
-                batch_id,
-                sentence.input_id,
-            )
-        })?;
-        let range = input
-            .source_range(start, end)
-            .map_err(|error| range_error(error, batch_id, sentence.input_id))?;
-        surfaces.push(SurfaceToken::new(
-            range,
-            u32::try_from(words[0]).map_err(|_| alignment_error(batch_id, sentence.input_id))?,
-            u32::try_from(words[1]).map_err(|_| alignment_error(batch_id, sentence.input_id))?,
-        ));
-    }
-    if identity_alignment {
-        let text = projection
-            .keys()
-            .iter()
-            .position(|key| key.as_str() == "text")
-            .ok_or_else(|| alignment_error(batch_id, sentence.input_id))?;
-        for (word, surface) in surfaces.iter().enumerate() {
-            let value_index = word
-                .checked_mul(projection.len())
-                .and_then(|index| index.checked_add(text))
-                .ok_or_else(|| limit_error("returned value index", batch_id))?;
-            let returned = match &values[value_index] {
-                ProjectedAttributeValue::Scalar(Some(value)) => value.as_str(),
-                _ => return Err(alignment_error(batch_id, sentence.input_id)),
-            };
-            let source = input
-                .slice(surface.source_range())
-                .map_err(|error| range_error(error, batch_id, sentence.input_id))?;
-            if returned != source {
-                return Err(alignment_error(batch_id, sentence.input_id));
-            }
-        }
-    }
-    let words = BoundTokenSentence::from_projected_attribute_values(projection, word_count, values)
-        .map_err(|error| analysis_error(error, batch_id).input(sentence.input_id))?;
-    let resident_charge = words
-        .resident_bytes()
-        .map_err(|error| analysis_error(error, batch_id).input(sentence.input_id))?;
-    if resident_charge > bounds.max_tokenized_bytes {
-        return Err(limit_error("tokenized sentence bytes", batch_id).input(sentence.input_id));
-    }
-    *tokenized_bytes = tokenized_bytes
-        .checked_add(resident_charge)
-        .ok_or_else(|| limit_error("tokenized batch bytes", batch_id))?;
-    if *tokenized_bytes > bounds.max_tokenized_bytes {
-        return Err(limit_error("tokenized batch bytes", batch_id));
-    }
-    let analyzed = AnalyzedSentence::new(
-        u32::try_from(sentence.sentence_ordinal)
-            .map_err(|_| alignment_error(batch_id, sentence.input_id))?,
-        source_range,
-        surfaces.into_boxed_slice(),
-        words,
-    )
-    .map_err(|error| analysis_error(error, batch_id).input(sentence.input_id))?;
-    sentences[document_index].push(analyzed);
-    warnings.extend(
-        sentence
-            .warnings
-            .into_iter()
-            .map(|warning| ExternalWarning {
-                code: warning.code.into_boxed_str(),
-                input_id: InputUnitId::new(warning.input_id),
-                message: warning.message.into_boxed_str(),
-            }),
-    );
-    Ok(())
-}
-
 fn validate_batch_id(actual: u64, expected: u64) -> Result<(), ExternalProtocolError> {
     if actual == expected {
         Ok(())
@@ -1634,30 +1668,6 @@ struct RunHeader {
     output_config_digest: Digest,
     component_closure: Vec<WireComponent>,
     protocol_limits: ExternalProtocolLimits,
-}
-
-impl RunHeader {
-    fn placeholder() -> Self {
-        Self {
-            record: RunHeaderTag::RunHeader,
-            protocol: String::new(),
-            run_id: String::new(),
-            family: WireFamily::External,
-            profile: WireProfile::Morphology,
-            segmentation: WireSegmentation::Input,
-            normalization: WireNormalization::None,
-            language_policy: String::new(),
-            boundary_policy: String::new(),
-            projection: Vec::new(),
-            implementation_digest: Digest([0; 32]),
-            resource_manifest_digest: Digest([0; 32]),
-            projection_policy_digest: Digest([0; 32]),
-            alignment_policy_digest: Digest([0; 32]),
-            output_config_digest: Digest([0; 32]),
-            component_closure: Vec::new(),
-            protocol_limits: ExternalProtocolLimits::default(),
-        }
-    }
 }
 
 macro_rules! record_tag {
