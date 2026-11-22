@@ -54,39 +54,47 @@
         <button type="button" class="btn btn-secondary sample-drawer-toggle"
                 data-sample-drawer-toggle aria-expanded="false"
                 aria-controls="inline-sample-drawer"><span data-i18n="editor.test_sample">Test on sample</span></button>
-        <label class="retained-control"><span data-i18n="editor.retained">Hits kept</span>
-            <select name="retained" data-retained-select>
-            {% for option in retained_options %}<option value="{{ option }}"{% if self.is_default_retention(option) %} selected{% endif %}>{{ option }}</option>{% endfor %}
-            </select>
-        </label>
-        <span class="compound-control-group" title="Creates an independent derived pattern for every chain of adjacent matches." data-i18n-title="editor.derive_compounds_help">
-            <label class="retained-control"><input type="checkbox" name="derive_compounds" value="true"{% if run_options.derive_compounds %} checked{% endif %}>
-                <span data-i18n="editor.derive_compounds">Derive compounds</span>
-            </label>
-            <small class="compound-help" data-i18n="editor.derive_compounds_help">Creates an independent derived pattern for every chain of adjacent matches.</small>
-            <label class="retained-control compound-category-control"><span data-i18n="editor.compound_category">Category</span>
-                <select name="compound_category">
-                    <option value="compound" data-i18n="editor.compound_category_item">Compound item</option>
-                    <option value="source"{% if run_options.compound_category == CompoundCategory::SourceCategories %} selected{% endif %} data-i18n="editor.compound_category_source">Source categories</option>
+        <details class="run-options" data-run-options>
+            <summary><span data-i18n="editor.run_options">Run options</span>: <span data-run-options-summary></span></summary>
+            <div class="run-options-panel">
+            <span class="compound-control-group">
+            <label class="retained-control"><span data-i18n="editor.retained">Hits kept</span>
+                <select name="retained" data-retained-select>
+                {% for option in retained_options %}<option value="{{ option }}"{% if self.is_default_retention(option) %} selected{% endif %}>{{ option }}</option>{% endfor %}
                 </select>
             </label>
-        </span>
-        <span class="compound-control-group" title="Counts, per pattern, how many documents it occurs in and how much its largest documents contribute." data-i18n-title="editor.document_reach_help">
-            <label class="retained-control"><input type="checkbox" name="document_reach" value="true"{% if run_options.document_reach %} checked{% endif %}>
-                <span data-i18n="editor.document_reach">Count documents reached</span>
-            </label>
-            <small class="compound-help" data-i18n="editor.document_reach_help">Counts, per pattern, how many documents it occurs in and how much its largest documents contribute.</small>
-        </span>
-        <span class="compound-control-group" title="“Keep overlaps” skips resolve statements; other policy statements still apply. “Longest only” adds longest-match resolution only when the catalog has no resolve statements." data-i18n-title="editor.overlaps_help">
-            <label class="retained-control"><span data-i18n="editor.overlaps">Overlapping matches</span>
-                <select name="overlaps">
-                    <option value="catalog" data-i18n="editor.overlaps_catalog">Catalog policy</option>
-                    <option value="keep"{% if run_options.overlaps == Overlaps::Keep %} selected{% endif %} data-i18n="editor.overlaps_keep">Keep overlaps</option>
-                    <option value="longest"{% if run_options.overlaps == Overlaps::Longest %} selected{% endif %} data-i18n="editor.overlaps_longest">Longest only</option>
-                </select>
-            </label>
-            <small class="compound-help" data-i18n="editor.overlaps_help">“Keep overlaps” skips resolve statements; other policy statements still apply. “Longest only” adds longest-match resolution only when the catalog has no resolve statements.</small>
-        </span>
+            <small class="compound-help" data-i18n="editor.retained_help">Concordance lines kept for each pattern. Counts stay exact; when a pattern has more hits, the lines kept are a random sample.</small>
+            </span>
+            <span class="compound-control-group" title="Creates an independent derived pattern for every chain of adjacent matches." data-i18n-title="editor.derive_compounds_help">
+                <label class="retained-control"><input type="checkbox" name="derive_compounds" value="true"{% if run_options.derive_compounds %} checked{% endif %}>
+                    <span data-i18n="editor.derive_compounds">Derive compounds</span>
+                </label>
+                <small class="compound-help" data-i18n="editor.derive_compounds_help">Creates an independent derived pattern for every chain of adjacent matches.</small>
+                <label class="retained-control compound-category-control"><span data-i18n="editor.compound_category">Category</span>
+                    <select name="compound_category">
+                        <option value="compound" data-i18n="editor.compound_category_item">Compound item</option>
+                        <option value="source"{% if run_options.compound_category == CompoundCategory::SourceCategories %} selected{% endif %} data-i18n="editor.compound_category_source">Source categories</option>
+                    </select>
+                </label>
+            </span>
+            <span class="compound-control-group" title="Counts, per pattern, how many documents it occurs in and how much its largest documents contribute." data-i18n-title="editor.document_reach_help">
+                <label class="retained-control"><input type="checkbox" name="document_reach" value="true"{% if run_options.document_reach %} checked{% endif %}>
+                    <span data-i18n="editor.document_reach">Count documents reached</span>
+                </label>
+                <small class="compound-help" data-i18n="editor.document_reach_help">Counts, per pattern, how many documents it occurs in and how much its largest documents contribute.</small>
+            </span>
+            <span class="compound-control-group" title="“Keep overlaps” skips resolve statements; other policy statements still apply. “Longest only” adds longest-match resolution only when the catalog has no resolve statements." data-i18n-title="editor.overlaps_help">
+                <label class="retained-control"><span data-i18n="editor.overlaps">Overlapping matches</span>
+                    <select name="overlaps">
+                        <option value="catalog" data-i18n="editor.overlaps_catalog">Catalog policy</option>
+                        <option value="keep"{% if run_options.overlaps == Overlaps::Keep %} selected{% endif %} data-i18n="editor.overlaps_keep">Keep overlaps</option>
+                        <option value="longest"{% if run_options.overlaps == Overlaps::Longest %} selected{% endif %} data-i18n="editor.overlaps_longest">Longest only</option>
+                    </select>
+                </label>
+                <small class="compound-help" data-i18n="editor.overlaps_help">“Keep overlaps” skips resolve statements; other policy statements still apply. “Longest only” adds longest-match resolution only when the catalog has no resolve statements.</small>
+            </span>
+            </div>
+        </details>
         <button type="button" class="btn btn-secondary copy-permalink" data-copy-permalink><span data-i18n="editor.copy_link">Copy link</span></button>
         <button type="button" class="btn btn-secondary editor-size-toggle"
                 data-editor-toggle aria-controls="corpus-editor"
@@ -141,6 +149,9 @@
     <br>
     <kbd>Ctrl+Enter</kbd> <span data-i18n="editor.kbd_run">run query</span> &middot;
     <kbd>Ctrl+E</kbd> <span data-i18n="editor.kbd_fold">fold / expand editor</span>.
+    <br>
+    <kbd>Tab</kbd> <span data-i18n="editor.kbd_tab">leave the editor</span> &middot;
+    <kbd>Ctrl+]</kbd> / <kbd>Ctrl+[</kbd> <span data-i18n="editor.kbd_indent">indent / outdent</span>.
     </p>
     <button type="button" class="btn btn-secondary editor-help-close" data-editor-help-close
             data-i18n="editor.help_close">Close</button>

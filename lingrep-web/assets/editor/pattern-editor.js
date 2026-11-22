@@ -201,6 +201,12 @@ async function runLiveSummary(state) {
 
 function markDraftResults(state) {
   if (!state.keyPicker) return;
+  // A finished search status describes the submitted source; CSS hides it
+  // while the editor holds a different one.
+  document.getElementById("search-status")?.toggleAttribute(
+    "data-draft",
+    state.submittedSource !== undefined && state.submittedSource !== state.source(),
+  );
   const notice = document.getElementById("results-stale");
   if (!notice || !document.querySelector("#results:not(:empty)")) return;
   if (state.completedSource === state.source()) {
@@ -1459,6 +1465,20 @@ function patternTreeSitter(state, cm) {
   );
 }
 
+const PORTABLE_ATTRIBUTES = PATTERN_ATTRIBUTES.map(([key]) => key).filter((key) => !key.includes("."));
+
+// The translation key and arguments for a local ERROR node: an unprefixed
+// attribute outside the portable set is named, because the grammar rejects it
+// before the server can.
+export function localSyntaxMessage(errorText) {
+  const name = /^[\s&|!(]*([A-Za-z_][A-Za-z0-9_]*)\s*(?:!?[=~]|\s(?:not\s+)?in\b)/.exec(errorText)?.[1];
+  if (!name || PORTABLE_ATTRIBUTES.includes(name)) return { key: "editor.diag_syntax_local", args: null };
+  return {
+    key: name === "orth" || name === "form" ? "editor.diag_unknown_attribute_written" : "editor.diag_unknown_attribute",
+    args: { name, portable: PORTABLE_ATTRIBUTES.join(", ") },
+  };
+}
+
 // Instant local diagnostics from the latest tree-sitter parse: ERROR and
 // MISSING nodes, mapped onto UTF-16 document positions.
 function localSyntaxDiagnostics(state) {
@@ -1478,7 +1498,7 @@ function localSyntaxDiagnostics(state) {
           from: Math.min(start, docLength),
           to: Math.min(end, docLength),
           severity: "error",
-          message: cursor.nodeIsMissing ? t("editor.diag_missing", { node: node.type }) : t("editor.diag_syntax_local"),
+          message: cursor.nodeIsMissing ? t("editor.diag_missing", { node: node.type }) : (({ key, args }) => t(key, args))(localSyntaxMessage(node.text)),
           source: "pattern (local)",
         });
         continue; // do not descend into error subtrees
@@ -1606,7 +1626,9 @@ function patternLintSource(state) {
     const local = localSyntaxDiagnostics(state);
     if (local.length > 0) {
       state.textarea.setAttribute("aria-invalid", "true");
-      status(state, () => t("editor.status_local_syntax"), true);
+      const first = local[0];
+      const line = view.state.doc.lineAt(first.from);
+      status(state, () => t("editor.status_local_syntax", { line: line.number, column: first.from - line.from + 1, message: first.message }), true);
       return local;
     }
     if (state.lastCheck?.source === source) return state.lastCheck.diagnostics;
@@ -1863,7 +1885,7 @@ async function enhance(textarea, grammar, cm, options = {}) {
     form?.addEventListener("scope:updated", rerunSummaryOnChange);
     form?.querySelector("select[name=overlaps]")?.addEventListener("change", rerunSummaryOnChange);
     document.addEventListener("htmx:beforeRequest", (event) => {
-      if (event.detail?.elt === textarea.closest("form")) state.submittedSource = state.source();
+      if (event.detail?.elt === textarea.closest("form")) { state.submittedSource = state.source(); markDraftResults(state); }
     });
     document.addEventListener("htmx:oobAfterSwap", (event) => {
       if (event.detail?.target?.id === "results") state.completedSource = state.submittedSource;
@@ -1910,7 +1932,6 @@ async function enhance(textarea, grammar, cm, options = {}) {
         ...cm.completionKeymap,
         ...cm.lintKeymap,
         ...cm.searchKeymap,
-        cm.indentWithTab,
       ]),
       cm.EditorView.updateListener.of((update) => {
         if (!update.docChanged) return;

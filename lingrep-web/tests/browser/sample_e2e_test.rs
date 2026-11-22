@@ -227,6 +227,32 @@ async fn the_sample_page_posts_one_run_on_arrival() -> WebDriverResult<()> {
 }
 
 #[tokio::test]
+async fn tab_moves_focus_out_of_the_pattern_editor_without_editing_it() -> WebDriverResult<()> {
+    let Some(driver) = driver().await? else {
+        return Ok(());
+    };
+    let served = serve().await;
+    let result: WebDriverResult<()> = async {
+        driver.goto(&served.base).await?;
+        wait_for(&driver, CHECKED, "the editor's first check").await?;
+        let content = driver.find(By::Css("#sample-editor .cm-content")).await?;
+        content.click().await?;
+        content.send_keys(Key::Tab).await?;
+        observed(
+            &driver,
+            "return [document.querySelector('#sample-pattern').value,              !!document.activeElement.closest('.cm-editor')]",
+            json!([SEED, false]),
+            "the pattern and the focus after Tab",
+        )
+        .await
+    }
+    .await;
+    driver.quit().await?;
+    served.server.abort();
+    result
+}
+
+#[tokio::test]
 async fn a_failed_sample_run_shows_the_servers_reason_but_not_a_gateway_page() -> WebDriverResult<()>
 {
     let Some(driver) = driver().await? else {
@@ -413,7 +439,7 @@ async fn japanese_is_applied_to_stream_swaps_replaced_elements_and_attribute_slo
         .await?;
         observed(
             &driver,
-            "return document.querySelector('.compound-control-group').title",
+            "return document.querySelector('.compound-control-group[title]').title",
             json!("隣接する一致の連鎖から、複合項目を生成します。"),
             "a title on an element without a text slot",
         )

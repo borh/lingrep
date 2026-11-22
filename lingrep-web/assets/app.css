@@ -102,6 +102,13 @@ body {
 *,
 *::before,
 *::after { box-sizing: border-box; }
+::placeholder { color: var(--text-muted); opacity: 1; }
+:where(a, select, input, textarea, summary, [tabindex]):focus-visible {
+  outline: 3px solid var(--focus-ring);
+  outline-offset: 2px;
+}
+:where(input[type="checkbox"], input[type="radio"]) { inline-size: 1rem; block-size: 1rem; }
+:where(select) { min-block-size: 1.5rem; }
 
 [hidden] { display: none !important; }
 
@@ -119,6 +126,7 @@ body { font-family: var(--font-cjk); margin: 0; background: var(--surface); colo
   .site-nav { padding-inline: 0.75rem; gap: 0.25rem; }
   .site-nav-sep { display: none; }
 }
+@media (max-width: 32rem) { .site-nav + main { margin-inline: 0.75rem; } }
 .locale-toggle {
   border: 1px solid var(--border-light); background: var(--surface); color: var(--nav-link-color);
   border-radius: 3px; padding: 0.18rem 0.65rem; cursor: pointer; font: inherit; font-size: 0.82rem; font-weight: 500;
@@ -330,6 +338,10 @@ button.export-download:disabled {
 @media (max-width: 63.99rem) {
   /* The dock shell itself never shows on narrow viewports. */
   .inspector-dock { display: none !important; }
+  /* The pattern list scrolls in place, so the selected pattern's results stay
+     within a screen of it. */
+  .pattern-catalog[open] { max-block-size: 22rem; overflow-y: auto; }
+  .pattern-catalog > summary { position: sticky; inset-block-start: 0; z-index: 1; background: var(--surface); }
 }
 .inspector-dock-header,
 .kwic-inspector-header {
@@ -810,6 +822,8 @@ code { background: var(--code-bg); padding: 0.1rem 0.3rem; border-radius: 3px; f
 }
 .kwic-pane-header .kwic-filter-bar { flex: 1 1 20rem; min-width: 0; margin-block: 0; }
 .kwic-pane-header .kwic-pager { flex: 0 1 auto; min-width: 0; max-width: 100%; margin-block: 0; }
+.kwic-pane-header { font-size: 0.85rem; }
+.kwic-pane-header .btn { padding: 0.2rem 0.55rem; font-size: 0.82rem; }
 /* The name the rest of the strip is about. */
 .kwic-pane-pattern {
   font-family: var(--font-mono);
@@ -1179,12 +1193,17 @@ td.neighbors-similarity { display: flex; align-items: center; gap: var(--space-3
   .kwic-concordance th:first-child,
   .kwic-concordance td:first-child { width: 2.5rem; }
 }
+@media (max-width: 32rem) {
+  .kwic-concordance th:first-child,
+  .kwic-concordance td:first-child { width: 1.75rem; }
+  .kwic-concordance th, .kwic-concordance td { padding-inline: 0.15rem; }
+}
 .provenance-chip {
   display: inline-block;
   margin-inline-end: 0.35rem;
   padding: 0 0.4rem;
   border-radius: 0.7rem;
-  font-size: 0.75em;
+  font-size: max(0.75em, 0.6875rem);
   line-height: 1.5;
   background: var(--surface-accent, #e6eef7);
   color: var(--text-muted, #33475b);
@@ -1587,8 +1606,8 @@ form .btn { margin-top: var(--space-3); }
   }
   .results-explorer.inspector-open {
     grid-template-columns:
-      minmax(14rem, 20rem) minmax(0, 1fr)
-      minmax(17rem, clamp(17rem, 24vw, 24rem));
+      minmax(12rem, 17rem) minmax(0, 1fr)
+      minmax(17rem, clamp(17rem, 22vw, 22rem));
   }
   .inspector-dock {
     position: sticky;
@@ -1683,6 +1702,8 @@ html { scroll-padding-block-start: calc(var(--sticky-top) + var(--space-2)); }
 .band-head > * { margin: 0; min-width: 0; }
 .band-head #search-status { margin-inline-start: auto; font-size: 0.85rem; color: var(--text-muted); }
 .band-head .revision-status p { margin: 0; }
+.band-head .revision-status-error { color: var(--alert-error-text); font-weight: 600; }
+#search-status[data-draft] .revision-status[role="status"] { display: none; }
 .band-head #search-status:empty,
 .band-head #results-stale:empty { display: none; }
 /* The band's own controls are compact: every row it keeps is a row the results
@@ -1730,6 +1751,17 @@ html { scroll-padding-block-start: calc(var(--sticky-top) + var(--space-2)); }
 .compound-help {
   display: none;
 }
+.run-options { font-size: 0.82rem; color: var(--text-muted); }
+.run-options summary { cursor: pointer; padding: 0.24rem 0.2rem; }
+.run-options[open] { flex: 1 0 100%; order: 1; }
+.run-options-panel {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(16rem, 1fr));
+  gap: var(--space-2);
+  margin-block-start: var(--space-1);
+}
+.run-options-panel .compound-control-group { align-content: start; padding: var(--space-2); }
+.run-options-panel .compound-help { display: block; flex-basis: 100%; color: var(--text-muted); font-size: 0.8rem; }
 .editor-help-open {
   display: inline-flex;
   align-items: center;

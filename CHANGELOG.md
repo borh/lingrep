@@ -18,6 +18,29 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   pattern that cannot bind to its token schema. The Workbench drawer also
   reports when the selected corpus was analyzed with a different token schema.
 
+### Changed
+
+- In the web pattern editor, Tab and Shift+Tab move focus to the next and
+  previous control instead of indenting, so the editor can be left from the
+  keyboard. Ctrl+] and Ctrl+[ indent and outdent.
+- A syntax error in the web pattern editor states its line and column, and an
+  unprefixed attribute outside `text`, `surface`, `lemma`, `norm`, `upos`,
+  `xpos` is named with the portable set.
+- The Workbench hides the status of the last search while the editor holds a
+  different pattern, and shows a failed search in the error color.
+- "Hits kept", "Derive compounds", "Count documents reached" and "Overlapping
+  matches" are in a "Run options" disclosure whose summary states the values in
+  effect; each option's explanation is visible when it is open.
+- Below 64rem the pattern list scrolls in place above the selected pattern's
+  results. The concordance toolbar is one row at desktop width, and the open
+  inspector leaves the concordance more width.
+
+### Fixed
+
+- Placeholder text in the web UI meets 4.5:1 contrast in the light and dark
+  themes; provenance chips are at least 11px; links, selects, checkboxes and
+  disclosure summaries show the same focus ring as buttons.
+
 ## [0.9.1] - 2026-11-20
 
 See the [0.9.1 release notes](docs/release-notes/v0.9.1.md) for the Python tokenizer command, Stanza bundle options, Unicode alignment fix, and file-limit fixes.
