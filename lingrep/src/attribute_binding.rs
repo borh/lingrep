@@ -474,8 +474,6 @@ mod tests {
         );
     }
 
-    /// A schema without `surface` is one prepared before 0.9; every analyzer
-    /// this ling runs publishes `surface` with a folded `text`.
     #[test]
     fn only_a_schema_carrying_text_without_surface_is_named_unfolded() {
         let output = compiled("g := [text=ＮＨＫ].\nh := [lemma=猫].");

@@ -567,16 +567,15 @@ the requested kind contributes one to `counters.records_unkeyed`. This option
 overrides the pattern's grouping key. If several spans of that kind contain
 the complete match, the shortest wins, with ties resolved by sentence span ID.
 
-Span kinds are not part of a token schema: each sentence carries the spans that
-its analyzer or its CoNLL-U rows supply. When no sentence of a run carries a span
-of the requested kind, such as `bunsetsu` over Vibrato or `sudachi.c` under
-split mode C, every record is unkeyed and the run ends with
-`warning[span_kind_unavailable]`. `ling matches` and `ling summarize` report
-the same warning for a kind that a `where span(…)`, `within_span` or
-`span_dependency` constraint references, with the definitions that then match
-nothing; `ling matches` omits it after a run that `--limit` stopped. A run that
-reads no sentence reports nothing, and `ling check --schema`, the browser and
-`ling explore` do not report it.
+Span annotations come from the analyzer or CoNLL-U input and vary by
+sentence. When the requested kind is absent, `--by-span` counts every match
+as unkeyed. For example, Vibrato supplies no `bunsetsu` spans, and Sudachi
+split mode C supplies no `sudachi.c` spans. After a full scan that admits at
+least one sentence, `ling matches` and `ling summarize` report
+`warning[span_kind_unavailable]` for each requested kind that never occurred.
+For kinds referenced by `where span(…)`, `within_span`, or `span_dependency`,
+the warning lists the definitions that reference them. Limited scans,
+`ling check --schema`, the browser, and `ling explore` omit this warning.
 
 JSONL `match` records carry `span_ids` when annotations contain the complete
 published match. These zero-based IDs are local to `corpus_sentence_ordinal`.
@@ -705,8 +704,8 @@ ling --json summarize --by-window 300 --corpus corpus.lingcorpus \
 ling contracts lingrep.window-counts/v1
 ```
 
-Within each document, divide the zero-based token ordinal of a sentence's first
-word by `N` and round down. The result is the window ordinal. The entire sentence
+Set the window size with `--by-window N`. Within each document, divide the
+zero-based token ordinal of a sentence's first word by `N` and round down. The result is the window ordinal. The entire sentence
 contributes to that window, even when the sentence crosses one or more window
 boundaries. Window ordinals restart at zero in each document and may have gaps.
 
@@ -714,12 +713,12 @@ The JSONL stream begins with the window size, corpus identities, catalog
 fingerprint, and published pattern names. Each `window` record contains document
 and window ordinals, sentence and token totals, and a sparse count for each
 published pattern. A missing pattern count is zero. Counts apply publication
-policy and include all published occurrences. The output carries counts and
-ordinals only for the admitted text. The `complete` record confirms a full scan.
+policy and include all published occurrences. Counts and ordinals are relative
+to the admitted text. Check for the final `complete` record before using the
+stream as a full scan.
 
-Use `--corpus` or `--cache`. Window assignment uses the full prepared document,
-so a window run requires the complete corpus and rejects scope filters and
-sampling. If a sentence exceeds execution limits, increase the limit and rerun.
+Use `--json` and either `--corpus` or `--cache`. Window assignment uses the full
+prepared document, so a window run rejects scope filters and sampling. If a sentence exceeds execution limits, increase the limit and rerun.
 
 ### Counting per section
 
@@ -1935,7 +1934,7 @@ The common analysis choices are:
 | --- | --- | --- |
 | `--normalization` | `nfc`, `none` | Normalize input before analysis; default `none` |
 | `--analyzer` | `vibrato`, `sudachi`, `external` | Select the token producer; default `vibrato` |
-| `--profile` | `morphology`, `text` | Retain full morphology or token text only; default `morphology` |
+| `--profile` | `morphology`, `text` | Default `morphology`. For Vibrato and Sudachi, `text` retains only the `text` and `surface` attributes. |
 | `--segmentation` | `input`, `analyzer` | Preserve input sentence units or accept analyzer sentence boundaries; default `input` |
 
 Every analyzer reads a folded view of the source (variation selectors removed,
@@ -2339,8 +2338,8 @@ sentences. It uses exact token surfaces for FORM. Morphology-only analyses
 write `_` in HEAD and DEPREL. The export preserves pretokenized FEATS, MISC,
 basic and enhanced dependencies, empty nodes, sentence IDs and document
 boundaries. Multiword-token range rows and unrelated comments are omitted.
-Where character offsets are available, `# text` is reconstructed from FORM
-and the gaps between words using spaces.
+When all words have character offsets, the export reconstructs `# text` from
+FORM and inserts one space wherever the offsets show a gap.
 
 For analyzed input, `feat.*` attributes become FEATS and provider attributes
 and `norm` are emitted in MISC. MISC values escape percent signs, separators
@@ -2352,8 +2351,9 @@ ID receive a run-local ID derived from their corpus sentence ordinal.
 For a nonempty full export, the final sentence carries
 `# lingrep_export = complete N`, where `N` counts its word and empty-node
 rows. Check the row count and final blank line to detect interruption during
-publication of that sentence. An explicit limit marks the last sentence
-`# lingrep_export = prefix N`. Check the process exit status for an empty export.
+publication of that sentence. When an explicit limit stops the scan, the last
+sentence instead carries `# lingrep_export = prefix N`. Check the process exit
+status for an empty export.
 
 ## Prepared V1 corpora
 
@@ -2572,9 +2572,10 @@ identify the dictionary it came from. `--analyzer-dir DIR` adds the size of a
 
 ### Pruning superseded artifacts
 
-When a canonical build finds readable realizations of the same source under
-different analysis settings, stderr reports how many apparent bytes each
-retains. Preview cleanup with `ling corpus prune --source` using the build's
+When a canonical build finds readable artifacts of the same source built with
+different analysis settings, it reports each retained artifact's apparent size
+on stderr when it can measure it.
+Preview cleanup with `ling corpus prune --source SOURCE`, using the build's
 analyzer and reader options. Review the plan before adding `--execute`.
 
 ```bash

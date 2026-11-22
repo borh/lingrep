@@ -144,8 +144,8 @@ split modes and the other Sudachi options.
 
 ### Python
 
-The Python package includes the Vibrato tokenizer. Version 0.9.1 adds a `uvx` command. Pass a sentence as an argument, or pipe one sentence
-per line:
+Since lingrep 0.9.1, `uvx lingrep tokenize` runs the Python package's Vibrato
+tokenizer. Pass a sentence as an argument or pipe one sentence per line.
 
 ```bash
 uvx lingrep tokenize '猫が眠る。'
@@ -224,8 +224,8 @@ use the same indices as the captures. Record `tokenizer.dictionary_path`,
 
 Install the `arrow` extra for token tables. Each record batch includes the
 sentence index, token index and sentence-relative character offsets as
-unsigned integers. Conversion
-materializes the selected columns. Consumers can process one batch at a time.
+unsigned integers. Conversion materializes the selected columns in batches
+that callers can process one at a time.
 
 ```python
 import polars as pl

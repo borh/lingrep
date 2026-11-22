@@ -174,13 +174,13 @@ and `[text=ガラス]` find the same tokens, `[text=ＮＨＫ]` finds `NHK`, and
 written. The fold applies to `text` alone: `lemma`, `norm` and provider
 attributes are compared as written.
 
-Every analyzer, and the CoNLL-U reader, publishes `surface` and the folded
-`text`. A corpus prepared before 0.9 lacks `surface` and carries `text`
-unfolded, so `[text=ＮＨＫ]` does not find a token spelled ＮＨＫ there.
-`matches` and `summarize` report `warning[text_unfolded]` for such a corpus,
-listing the definitions that compare `text`; rebuild it with `ling corpus
-build`. A `surface` test over such a corpus binds as
-absent and reports `warning[attribute_unavailable]`.
+Analyzers and the CoNLL-U reader publish `surface` and the folded `text`.
+A corpus prepared before 0.9 has unfolded `text` and no `surface`. Over such
+an artifact, `[text=ＮＨＫ]` tests for the folded key `NHK`, which does not match
+the stored value `ＮＨＫ`. `matches` and `summarize` report `warning[text_unfolded]`
+and list the definitions that reference `text`. A `surface` test binds as
+absent and the command reports `warning[attribute_unavailable]`. Rebuild the
+corpus from source with `ling corpus build` to make both attributes available.
 
 `surface` literals, including the members of a named set compared with
 `surface`, are compared exactly, without the fold or NFC. Over the source 葛
@@ -671,10 +671,10 @@ annotated or inconsistent tree gives `invalid_tree`. These three non-`ok`
 statuses carry a `null` value. Using such a binding in `key:` leaves the record
 unkeyed; `ling summarize` reports how many records had no key.
 
-`measure count($v -[L]-> [T])` counts the links that `where $v -[L]-> [T] as $n`
-counts. They differ on a sentence whose dependencies do not form a single tree:
-the measure returns `invalid_tree`, while the `where` count reads the edges
-present.
+On a valid tree, `measure count($v -[L]-> [T])` counts the same links as
+`where $v -[L]-> [T] as $n`. If every word has a usable basic dependency
+but the edges fail tree validation, the measure returns `invalid_tree`.
+The `where` count can still use the observed edges.
 
 Measures are published in JSON match records only. When a pattern with
 `interpret` entries has several readings of one occurrence, readings with the
@@ -758,8 +758,9 @@ a half-open token range in the original sentence, and string, boolean or
 signed integer labels. Equal joint assignments appear once. Every occurrence
 of a repeated role is retained. An absent optional role contributes no
 occurrence. Classification collects the distinct values of each label on the
-designated role within that reading. If the designated role is absent from a reading, its classification is omitted. Fragment references can supply captures; the public role
-name comes from the declaration on the emitting pattern.
+designated role in each reading. A reading without that role has no
+classification. The emitting pattern's declaration supplies the public role
+name, including for captures from a referenced fragment.
 
 `ling matches --json` publishes the readings in the match's `interpretations`
 array. Ordinary match counts still count that record once. To count each
@@ -771,9 +772,10 @@ jq -r 'select(.type == "match") | .data.interpretations[]? | .classification.voi
 ```
 
 Interpretation extraction supports token tests, named captures, sequences,
-alternation and repetition. A `where` clause filters each reading with its own capture assignments and the published graph bindings. Role declarations reference surface captures. Extraction is bounded
-per sentence. Exceeding a resource limit fails the query before that sentence
-is published. The Workbench hit inspector shows the same roles and classifications.
+alternation and repetition. A `where` clause filters each reading using that reading's capture assignments
+and the published graph bindings. Role declarations reference surface
+captures. If extraction exceeds the per-sentence resource limit, the query
+fails before publishing that sentence's results. The Workbench hit inspector shows the same roles and classifications.
 
 ## Metadata
 

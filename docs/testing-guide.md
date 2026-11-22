@@ -141,9 +141,10 @@ python3 scripts/check-soranoha.py target/debug/ling \
 ```
 
 For an external analyzer, pass `-- --analyzer-config /path/to/analyzer.toml`.
-The script stops any `ling` command that runs longer than 600 seconds, so use
-an archive that the analyzer can build within that time.
-The validation pattern tests only `text`, which every analyzer supplies.
+Commands that the script runs directly, including the initial `ling matches`
+and `ling corpus build`, time out after 600 seconds by default.
+`--build-timeout` changes only the build timeout. The validation pattern
+uses `text`, which every supported analyzer supplies.
 Analyzer options are rejected with `--corpus`, because a prepared corpus
 records the analyzer that built it.
 

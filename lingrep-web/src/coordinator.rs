@@ -550,9 +550,6 @@ fn run_scan_blocking_with_options(
     sink.set_metadata_conflicts(crate::pattern_catalog::pattern_metadata_conflicts(
         &output.matcher,
     ));
-    // Held rather than borrowed inline: it binds the catalog *and* tells the
-    // executor which schema the artifact's stored tokens are in, which is the
-    // one question a prepared run cannot answer from an analyzer session.
     let schema = ready.artifact.token_schema().map_err(|error| {
         tracing::warn!(%error, "artifact schema admission failed");
         integrity_failure()

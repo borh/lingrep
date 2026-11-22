@@ -213,8 +213,8 @@ ling corpus render /srv/corpora/papers.lingcorpus --source-root /srv/papers \
   --md-recover-conversion-artifacts --output /srv/reading/papers.reading
 ```
 
-A sidecar that does not bind stops the unit at startup with an error
-identifying it. The binding rules are in
+Startup fails and identifies any sidecar that the service cannot load or
+bind to a served corpus. The binding rules are in
 [the CLI usage guide](cli-usage-guide.md#rendered-documents-from-reading-sidecars).
 
 `api/read`, which the Frequencies view uses to open a line, returns any
@@ -457,9 +457,9 @@ Each option maps to the `lingrep-web` flag of the same name.
 
 - Authentication and rate limiting: `lingrep-web` provides neither; configure
   them at the proxy.
-- State: `lingrep-web` writes the artifacts it prepares from corpus sources under
-  `/var/lib/lingrep-web/corpora/`. They are rebuildable from the sources, and
-  sessions are not persisted, so `lingrep-web` has no state requiring backup.
+- `lingrep-web` stores prepared artifacts built by the service under
+  `/var/lib/lingrep-web/corpora/`. Keep the original sources and configuration
+  needed to rebuild them. Sessions expire when the service restarts.
 
 ## Logs and observability
 

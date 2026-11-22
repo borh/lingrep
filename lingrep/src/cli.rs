@@ -2564,9 +2564,7 @@ impl Cli {
 }
 
 impl ExecutionCliConfig {
-    /// The normalization a reader of `format` is identified under. CoNLL-U
-    /// is read as written whatever `--normalization` says: its tokens are its
-    /// FORM column, not analyzed text.
+    /// CoNLL-U preserves the FORM column regardless of `--normalization`.
     pub(crate) fn reader_normalization(
         &self,
         format: lingrep_core::corpus::CorpusFormat,
@@ -2729,7 +2727,6 @@ mod analyzer_selection_tests {
         assert!(conflicting.execution_config().is_err());
     }
 
-    /// Every analyzer reads the raw source by default.
     #[test]
     fn normalization_defaults_to_none_for_every_analyzer_and_an_explicit_choice_wins() {
         use lingrep_core::analysis::NormalizationPolicy::{Nfc, None as Raw};

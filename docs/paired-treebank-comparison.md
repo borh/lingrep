@@ -1,11 +1,10 @@
 # Comparing one query across UD and SUD
 
-A dependency query names heads, so it has to be rewritten when the same
-sentences are annotated under another head convention. This guide rewrites one
-query, "a verb governs an overt を-marked nominal", from Universal Dependencies
-(UD) to Surface-Syntactic UD (SUD) and checks the rewrite occurrence by
-occurrence. [`examples/compare_paired_treebanks.py`](../examples/compare_paired_treebanks.py)
-does the comparison and requires only Python 3.
+Compare the occurrences selected by two versions of a query for verbs that
+govern an overt を-marked nominal. The Universal Dependencies (UD) and
+Surface-Syntactic UD (SUD) patterns use different dependency paths because
+the two schemes assign different heads. The comparison script requires
+Python 3. [`examples/compare_paired_treebanks.py`](../examples/compare_paired_treebanks.py)
 
 SUD_Japanese-GSD is generated from UD_Japanese-GSD by rule, so the comparison
 tests the rewritten query against the conversion. It does not test either
@@ -80,8 +79,8 @@ python3 examples/compare_paired_treebanks.py \
   --roles n,w,v > compare.tsv
 ```
 
-An occurrence is a `sent_id` and the word ID of each role in `--roles`. The
-`--b` runs are pooled. `compare.tsv` has one row per occurrence: `shared`,
+For these patterns, the occurrence key consists of `sent_id` and the word ID
+of each role in `--roles`. The script pools records from the `--b` runs. `compare.tsv` has one row per occurrence: `shared`,
 `a_only` or `b_only`; the number of records on each side; the `sent_id`; the
 role positions; each side's rows for the role words as
 `role=FORM(ID,DEPREL→HEAD)`; and the sentence. A side without a record shows its
@@ -89,14 +88,17 @@ rows for the compared roles, so a one-sided row shows what the other annotation
 has in those positions. Each side's record counts, `source_identity` and
 `analysis_identity`, and the totals, go to stderr.
 
-The script exits with status 2, and writes no rows, when
+The script exits with status 2 before writing TSV rows if any of these checks
+fails.
 
-- a `sent_id` is absent, occurs twice in a file, or is in only one file;
-- a sentence's ID, FORM or UPOS sequence differs between the files;
-- a run is incomplete, limited, sampled, or without `--evidence` or
-  `--source-metadata @sentence.sent_id`, or the `--b` runs differ in corpus,
-  analysis or `--where` scope;
-- a run did not read the file named for its side.
+- Each sentence has a `sent_id`. IDs are unique within each file and both
+  files contain the same IDs.
+- For each sentence, the sequences of word IDs, FORM, and UPOS match.
+- Each run is complete and unsampled and supplies match evidence and sentence
+  IDs. The `--b` runs share the same corpus, analysis, and `--where` scope.
+- Each run admits as many sentences as its file contains. Match records have
+  the file's basename and a known `sent_id`. Where the file supplies `# text`,
+  the evidence contains that sentence text.
 
 Run each query over one file, not over a treebank directory.
 
@@ -120,7 +122,8 @@ a_only  1  0  test-s81  n=9 w=11 v=12
   n=何(9,comp→10) w=を(11,comp:obj→12) v=物語っ(12,comp→13)
 ```
 
-With both runs the row is `shared`, and the SUD side names the intervening か:
+With both SUD runs, the row is `shared`. The SUD analysis column includes the
+intervening か.
 
 ```text
 shared  1  1  test-s81  n=9 w=11 v=12
@@ -128,24 +131,21 @@ shared  1  1  test-s81  n=9 w=11 v=12
   n=何(9,comp→10) p=か(10,comp→11) w=を(11,comp:obj→12) v=物語っ(12,comp→13)
 ```
 
-The second SUD pattern was written after reading those three test rows. Dev
-and train were then run without changing a pattern. The 22 UD-only train
-occurrences show that two SUD patterns do not complete the rewrite. In 18, the
-word between the nominal and を is not a single `ADP`: a suffix tagged `PART`
-(凄惨さを, `train-s1347`), the nominalizer の tagged `SCONJ` (`train-s1857`), a
-copula, or two particles. In 4, another function word stands between を and the
-verb, and を is its bare `comp` (`train-s682`). The UD pattern is one
-configuration because every function word is a leaf. The SUD rewrite is a
-family that grows with each function word the conversion can stack on either
-side of を.
+The three test rows informed the second SUD pattern. The dev and train runs
+used the same patterns. On train, the UD pattern selected 22 occurrences that
+neither SUD pattern selected. In 18, the path between the nominal and を contains
+something other than a single `ADP`, such as a suffix tagged `PART` (凄惨さを,
+`train-s1347`), the nominalizer の tagged `SCONJ` (`train-s1857`), a copula, or
+two particles. In the other 4, another function word stands between を and the
+verb, with を attached to that word as `comp` (`train-s682`).
 
-The を-token column counts `[text=を & upos=ADP].`, which is equal on both
-sides. Both queries leave the same を tokens out. Of the 37 on test, 24 mark the
-object of a `NOUN` predicate; 4 follow the last conjunct of a coordinated
-object, whose `obj` edge is on the first conjunct; 6 follow a host tagged `ADJ`
-or `VERB`; and the remaining 3 are an object of an `ADJ`, an `obl` nominal and
-a `fixed` を. A total of zero one-sided rows covers only the
-occurrences that one of the queries selects.
+The を-token column counts matches of `[text=を & upos=ADP].` on each side.
+Those counts match. Both queries omit the same 37 を tokens on the test split.
+Of these, 24 mark the object of a `NOUN` predicate. Four follow the last
+conjunct of a coordinated object whose `obj` edge is on the first conjunct.
+Six follow a host tagged `ADJ` or `VERB`. The remaining three are an object
+of an `ADJ`, an `obl` nominal, and a `fixed` を. The shared count measures overlap between the selected
+occurrences. An occurrence missed by both queries contributes no row.
 
 ## Controls
 
@@ -163,5 +163,5 @@ Changing one FORM in a copy of the SUD file, here word 10 of `test-s81`, and
 querying the copy stops the comparison before any row is written:
 
 ```text
-compare_paired_treebanks: 1 sentences differ in word ID, FORM or UPOS, first test-s81; word IDs cannot identify the same word on both sides
+compare_paired_treebanks: Word ID, FORM or UPOS sequences differ. First differing sent_id is test-s81 (1 affected).
 ```

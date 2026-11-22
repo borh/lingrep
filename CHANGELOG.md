@@ -29,11 +29,11 @@ See the [0.9.1 release notes](docs/release-notes/v0.9.1.md) for the Python token
   warns when a regex on `text` contains a character that never occurs in the
   folded key. `text_unfolded` warns when a corpus prepared before 0.9 is
   queried with `text` literals, and names the definitions affected.
-- `warning[span_kind_unavailable]` ends a `ling matches` or `ling summarize`
-  run in which no sentence carries a span kind that `--by-span` or a
-  `where span(…)`, `within_span` or `span_dependency` constraint names, such
-  as `bunsetsu` over Vibrato. Such a run printed `0 records` without a
-  diagnostic.
+- `ling matches` and `ling summarize` report `warning[span_kind_unavailable]`
+  after a complete scan that admits at least one sentence if none carries a
+  span kind referenced by `--by-span`, `where span(…)`, `within_span`, or
+  `span_dependency`. For example, the warning distinguishes missing `bunsetsu`
+  annotations over Vibrato from a query with no matches in annotated text.
 
 ### Changed
 
@@ -95,9 +95,9 @@ See the [0.9.1 release notes](docs/release-notes/v0.9.1.md) for the Python token
   includes the revision of the `text` fold. A corpus built by 0.8.x still
   opens, without `surface` and with `text_unfolded` warnings; a count table
   written by 0.8.x fails with "built with a different matcher revision".
-  After `ling corpus build`, `ling corpus prune` lists the 0.8.x corpus of
-  the same source as superseded and deletes it, with the count tables bound
-  only to it.
+  After `ling corpus build`, preview cleanup with `ling corpus prune`. The plan
+  includes the superseded 0.8.x corpus of the same source and any count tables
+  bound only to it. Add `--execute` to apply the plan.
 
 ### Removed
 
@@ -113,9 +113,9 @@ See the [0.9.1 release notes](docs/release-notes/v0.9.1.md) for the Python token
 - `ling analyzer prepare stanza` accepts `tokenize`, `pos` and `lemma` without
   `mwt`, so a language for which Stanza has no multi-word token model, such as
   Japanese, can be prepared. Its profile declares the `identity-v1` alignment
-  policy in place of `stanza-mwt/v1`. Preparation now fails, naming the missing
-  package, when Stanza loads an `mwt` model that `--package` did not name;
-  such an analyzer previously failed at its first query. Analyzers prepared
+  policy in place of `stanza-mwt/v1`. If Stanza loads an `mwt` model omitted
+  from `--package`, preparation fails and identifies the missing package.
+  Earlier versions failed when running the first query. Analyzers prepared
   with `mwt` keep their identity.
 - Long Japanese sentences use 64-bit Vibrato path costs.
 

@@ -83,9 +83,9 @@ Reusable corpus storage belongs to `lingrep-corpus` V1 artifacts alone.
 ## Token attributes
 
 The portable, unprefixed keys are `text`, `surface`, `lemma`, `norm`, `upos`,
-`xpos` — CoNLL-U's `FORM/LEMMA/UPOS/XPOS` plus spaCy's `norm_`, with `text` for
-the token's match key and `surface` for its exact source text. Everything else is provider-namespaced: `unidic.*`, `sudachi.*`,
-`spacy.*`, or `feat.*`.
+`xpos`. Use `text` for the folded match key and `surface` for the exact source
+text. Other keys use a namespace such as `unidic.*`, `sudachi.*`, `spacy.*`, or
+`feat.*`.
 
 The set is closed in two places — `validate_canonical_key` in
 `lingrep-core/src/token_match/attribute_key.rs` and `portable_attribute_key` in
@@ -95,12 +95,12 @@ gives. An unprefixed key outside the set is a compile error, so `[orth=…]` and
 `[form=…]` are both refused: write `[text=…]`, or `[unidic.orthbase=…]` for
 書字形基本形. `unidic.form` is 語形出現形, not the surface.
 
-The compiler folds every `text` literal with `text_key`
-(`lingrep-core/src/analysis/view.rs`). A token schema that carries `surface`
-declares that its `text` is `text_key` of `surface`
-(`TokenSchema::text_is_folded_key`); `ling matches` warns `text_unfolded`
-over any other. Add `surface` to an analyzer's schema only together with that
-`text`.
+The compiler folds `text` literals with `text_key`
+(`lingrep-core/src/analysis/view.rs`). When adding `surface` to an analyzer's
+schema, derive `text` by applying `text_key` to `surface`.
+`TokenSchema::text_is_folded_key` uses the presence of `surface` to recognize
+that contract. `ling matches` reports `text_unfolded` when a catalog
+references `text` and the corpus schema carries `text` without `surface`.
 
 Attribute keys are hashed into the token-schema digest and from there into
 analysis identity, so renaming a key changes every prepared artifact's identity

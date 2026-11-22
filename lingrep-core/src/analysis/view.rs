@@ -6,8 +6,7 @@
 //! - **source**: the exact admitted text of one unit. A token's **surface** is
 //!   the source slice it covers.
 //! - **fold**: [`ViewFold::fold`], the function from source to view.
-//! - **view**: the folded text. It is canonically equivalent to the source
-//!   except where the fold rules below say otherwise.
+//! - **view**: the text produced by applying the fold to the source.
 //! - **group**: the smallest pair of source and view spans the map aligns.
 
 use std::{cell::Cell, collections::BTreeSet, sync::LazyLock};
@@ -492,8 +491,8 @@ impl<'a> SourceBoundaries<'a> {
 }
 
 /// Converts between byte offsets and code-point positions of one text. Each
-/// call scans forward from the previous answer, or from the start when asked
-/// for an earlier one.
+/// call scans forward from the previous position. A lookup before that
+/// position restarts the scan at the start of the text.
 pub(crate) struct CodePointCursor<'a> {
     text: &'a str,
     byte: usize,

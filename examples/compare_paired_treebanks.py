@@ -4,8 +4,8 @@
 A and B are two CoNLL-U files that annotate the same words differently, for
 example a UD treebank and its SUD conversion. Each side is queried with its own
 pattern by `ling --json matches --evidence --limit all --source-metadata
-@sentence.sent_id`, one file per run; B may
-be several runs, whose records are pooled. An occurrence is a `sent_id` and the
+@sentence.sent_id`, one file per run. Repeat `--b` to pool records from
+several runs over B. An occurrence is a `sent_id` and the
 word ID of every compared role, so the two patterns must name those roles alike.
 The output is one TSV row per occurrence, marked `shared`, `a_only` or `b_only`,
 with each side's analysis of the role words.
@@ -28,7 +28,7 @@ from compare_occurrences import InputError, identity, read_stream, roles, select
 
 
 def read_conllu(path: str, label: str) -> dict[str, Any]:
-    """The file's sentences in order, each with its integer-ID word rows."""
+    """Read integer-ID rows and reject missing or repeated sentence IDs."""
     sentences: list[dict[str, Any]] = []
     current: dict[str, Any] | None = None
     with open(path, encoding="utf-8") as source:
@@ -64,8 +64,8 @@ def require_aligned(a: dict[str, Any], b: dict[str, Any]) -> None:
     missing = sorted(set(a["by_id"]) ^ set(b["by_id"]))
     if missing:
         raise InputError(
-            f"{len(missing)} sent_id values are in only one file, first {missing[0]}; "
-            "compare files that hold the same sentences"
+            f"Sentence IDs differ. First unmatched sent_id is {missing[0]} "
+            f"({len(missing)} unmatched)."
         )
     unaligned = [
         sent_id
@@ -75,13 +75,13 @@ def require_aligned(a: dict[str, Any], b: dict[str, Any]) -> None:
     ]
     if unaligned:
         raise InputError(
-            f"{len(unaligned)} sentences differ in word ID, FORM or UPOS, first {unaligned[0]}; "
-            "word IDs cannot identify the same word on both sides"
+            f"Word ID, FORM or UPOS sequences differ. First differing sent_id is "
+            f"{unaligned[0]} ({len(unaligned)} affected)."
         )
 
 
 def read_side(paths: list[str], conllu: dict[str, Any], label: str) -> dict[str, Any]:
-    """The side's file, its runs' shared completion event, and every record with its stream and sent_id."""
+    """Check each match against its side's CoNLL-U file before grouping records."""
     streams = []
     for path in paths:
         with open(path, encoding="utf-8") as source:
@@ -126,7 +126,7 @@ def unit(record: dict[str, Any], compared: list[str], label: str) -> tuple[str, 
 
 def analysis(conllu: dict[str, Any], sent_id: str, record: dict[str, Any] | None,
              compared: list[str], positions: tuple[str, ...]) -> str:
-    """The side's rows as `role=FORM(ID,DEPREL→HEAD)`: the record's role words, or the compared words."""
+    """Format matched roles, falling back to compared roles when there is no record."""
     words = conllu["sentences"][conllu["by_id"][sent_id]]["words"]
     if record is None:
         named = [(int(position), role) for role, position in zip(compared, positions)

@@ -8,8 +8,8 @@ that compilation enforces.
 
 lingrep patterns supports exact sentence anchors (`^`, `$`) and four non-consuming lookaround
 assertions: `preceded_by(E)`, `not_preceded_by(E)`, `followed_by(E)`, and
-`not_followed_by(E)`. Their bodies are regular lingrep patterns expressions
-rather than single predicates, and they may nest lookaround to any depth. Both
+`not_followed_by(E)`. Their bodies accept regular lingrep expressions,
+including nested lookaround within the compiler's depth budget. Both
 `preceded_by([upos=NOUN] [upos=VERB])` and `preceded_by([]{2,3})` compile.
 Captures and `same_as` are rejected inside a body. Because the bodies are
 regular, no unbounded backreference or recursive context is expressible.
@@ -18,11 +18,9 @@ regular, no unbounded backreference or recursive context is expressible.
 
 The compiler accepts only the CST shape produced by the pinned
 `tree-sitter-lingrep` revision. Tree-sitter recovery nodes (`ERROR` or `MISSING`)
-are compile errors; the compiler does not attempt error recovery. Every
-definition requires its terminal period.
+are compile errors. End every definition with a period.
 
-There is no quoted-value form; a literal that contains `.`, `(`, `)` or `|` is
-written with an escape, as
+Use unquoted values in token tests. Escape `.`, `(`, `)` or `|` in a literal, as
 [Unquoted values and escapes](pattern-language-reference.md#unquoted-values-and-escapes)
 describes.
 
