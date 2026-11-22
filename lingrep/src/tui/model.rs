@@ -22,39 +22,21 @@ pub struct ViewModel<'a> {
     pub selected_kwic_idx: Option<usize>,
 }
 
-pub fn derive_viewmodel(model: &Model, viewport_height: u16) -> ViewModel<'_> {
-    let mut patterns: Vec<(PatternId, &str, u64)> = Vec::new();
-    let mut total_matches: u64 = 0;
+pub fn derive_viewmodel(model: &Model, viewport_width: u16) -> ViewModel<'_> {
+    let patterns = model.ordered_patterns();
+    let total_matches: u64 = patterns.iter().map(|(_, _, count)| *count).sum();
 
-    for (_req_id, freqs) in &model.cache.frequencies {
-        for (pid, count) in freqs {
-            if let Some(name) = model.pattern_ids.get(pid) {
-                patterns.push((*pid, name.as_str(), *count));
-                total_matches += count;
-            }
-        }
-    }
-
-    match model.sort_mode {
-        SortMode::CountDesc => patterns.sort_by_key(|b| std::cmp::Reverse(b.2)),
-        SortMode::CountAsc => patterns.sort_by_key(|a| a.2),
-        SortMode::NameAsc => patterns.sort_by(|a, b| a.1.cmp(b.1)),
-        SortMode::NameDesc => patterns.sort_by(|a, b| b.1.cmp(a.1)),
-    }
-
-    // Derive surface entries for selected pattern
+    // Derive surface entries for selected pattern from the active request only
     let mut surface_entries: Vec<&SurfaceEntry> = Vec::new();
     let mut surface_total = 0;
     let mut surface_window_start = 0;
-    if let Some(pid) = model.selected_pattern {
-        for ((_req_id, cache_pid), entries) in &model.cache.surface {
-            if *cache_pid == pid {
-                surface_entries = entries.window.iter().collect();
-                surface_total = entries.len();
-                surface_window_start = entries.window_start;
-                break;
-            }
-        }
+    if let Some(pid) = model.selected_pattern
+        && let Some(req_id) = model.tasks.surface.active_request_id()
+        && let Some(entries) = model.cache.surface.peek(&(req_id, pid))
+    {
+        surface_entries = entries.window.iter().collect();
+        surface_total = entries.len();
+        surface_window_start = entries.window_start;
     }
     surface_entries.sort_by(|left, right| {
         right
@@ -62,19 +44,17 @@ pub fn derive_viewmodel(model: &Model, viewport_height: u16) -> ViewModel<'_> {
             .cmp(&left.count)
             .then_with(|| left.form.as_bytes().cmp(right.form.as_bytes()))
     });
-    // Derive KWIC lines for selected pattern
+    // Derive KWIC lines for selected pattern from the active request only
     let mut kwic_lines: Vec<&KwicLine> = Vec::new();
     let mut kwic_total = 0;
     let mut kwic_window_start = 0;
-    if let Some(pid) = model.selected_pattern {
-        for ((_req_id, cache_pid), lines) in &model.cache.kwic {
-            if *cache_pid == pid {
-                kwic_lines = lines.window.iter().collect();
-                kwic_total = lines.len();
-                kwic_window_start = lines.window_start;
-                break;
-            }
-        }
+    if let Some(pid) = model.selected_pattern
+        && let Some(req_id) = model.tasks.kwic.active_request_id()
+        && let Some(lines) = model.cache.kwic.peek(&(req_id, pid))
+    {
+        kwic_lines = lines.window.iter().collect();
+        kwic_total = lines.len();
+        kwic_window_start = lines.window_start;
     }
 
     // Bound selected_kwic_idx to actual line count
@@ -92,7 +72,7 @@ pub fn derive_viewmodel(model: &Model, viewport_height: u16) -> ViewModel<'_> {
         .max(5) as u16
         + 2;
 
-    let remaining = viewport_height.saturating_sub(kwic_key_width + 4);
+    let remaining = viewport_width.saturating_sub(kwic_key_width + 4);
     let kwic_before_width = remaining / 2;
     let kwic_after_width = remaining.saturating_sub(kwic_before_width);
 
@@ -202,7 +182,14 @@ pub struct TaskStates {
 pub struct PatternLoadState {
     pub status: LoadStatus,
     pub request_id: Option<RequestId>,
+    pub displayed_request_id: Option<RequestId>,
     pub progress: Progress,
+}
+
+impl PatternLoadState {
+    pub fn active_request_id(&self) -> Option<RequestId> {
+        self.request_id.or(self.displayed_request_id)
+    }
 }
 
 impl Default for PatternLoadState {
@@ -210,6 +197,7 @@ impl Default for PatternLoadState {
         Self {
             status: LoadStatus::Idle,
             request_id: None,
+            displayed_request_id: None,
             progress: Progress::default(),
         }
     }
@@ -219,8 +207,15 @@ impl Default for PatternLoadState {
 pub struct SubTaskLoadState {
     pub status: LoadStatus,
     pub request_id: Option<RequestId>,
+    pub displayed_request_id: Option<RequestId>,
     pub pattern_id: Option<PatternId>,
     pub received_lines: usize,
+}
+
+impl SubTaskLoadState {
+    pub fn active_request_id(&self) -> Option<RequestId> {
+        self.request_id.or(self.displayed_request_id)
+    }
 }
 
 impl Model {
@@ -262,17 +257,45 @@ impl Model {
         id
     }
 
+    pub fn ordered_patterns(&self) -> Vec<(PatternId, &str, u64)> {
+        let Some(req_id) = self.tasks.pattern.active_request_id() else {
+            return Vec::new();
+        };
+        let Some(freqs) = self.cache.frequencies.peek(&req_id) else {
+            return Vec::new();
+        };
+        let mut patterns: Vec<(PatternId, &str, u64)> = freqs
+            .iter()
+            .filter_map(|(pid, count)| {
+                self.pattern_ids
+                    .get(pid)
+                    .map(|name| (*pid, name.as_str(), *count))
+            })
+            .collect();
+        match self.sort_mode {
+            SortMode::CountDesc => {
+                patterns.sort_by(|a, b| b.2.cmp(&a.2).then_with(|| a.1.cmp(b.1)));
+            }
+            SortMode::CountAsc => {
+                patterns.sort_by(|a, b| a.2.cmp(&b.2).then_with(|| a.1.cmp(b.1)));
+            }
+            SortMode::NameAsc => patterns.sort_by(|a, b| a.1.cmp(b.1)),
+            SortMode::NameDesc => patterns.sort_by(|a, b| b.1.cmp(a.1)),
+        }
+        patterns
+    }
+
     pub fn ensure_visible_window(&mut self) {
         let Some(pattern_id) = self.selected_pattern else {
             return;
         };
         let result = match self.mode {
             AppMode::Viewing { tab: Tab::Surface } => self
-                .cache
+                .tasks
                 .surface
-                .iter_mut()
-                .find(|((_, cached_pattern), _)| *cached_pattern == pattern_id)
-                .map(|(_, result)| {
+                .active_request_id()
+                .and_then(|req_id| self.cache.surface.get_mut(&(req_id, pattern_id)))
+                .map(|result| {
                     self.scroll.surface.offset = self
                         .scroll
                         .surface
@@ -281,11 +304,11 @@ impl Model {
                     result.ensure_window(self.scroll.surface.offset)
                 }),
             AppMode::Viewing { tab: Tab::Context } => self
-                .cache
+                .tasks
                 .kwic
-                .iter_mut()
-                .find(|((_, cached_pattern), _)| *cached_pattern == pattern_id)
-                .map(|(_, result)| {
+                .active_request_id()
+                .and_then(|req_id| self.cache.kwic.get_mut(&(req_id, pattern_id)))
+                .map(|result| {
                     let last = result.len().saturating_sub(1);
                     self.scroll.context.offset = self.scroll.context.offset.min(last);
                     self.selected_kwic_line = self.selected_kwic_line.min(last);
@@ -370,6 +393,7 @@ mod tests {
         let _ = model.get_or_create_pattern_id("alpha");
 
         let req_id = RequestId(0);
+        model.tasks.pattern.displayed_request_id = Some(req_id);
         model.cache.frequencies.put(req_id, StdHashMap::new());
         if let Some(freqs) = model.cache.frequencies.get_mut(&req_id) {
             let pid_zebra = *model.pattern_names.get("zebra").unwrap();
@@ -392,6 +416,7 @@ mod tests {
         model.selected_pattern = Some(pid);
 
         let req_id = RequestId(0);
+        model.tasks.surface.displayed_request_id = Some(req_id);
         let key = (req_id, pid);
         model.cache.surface.put(
             key,
@@ -420,6 +445,8 @@ mod tests {
         let pid = model.get_or_create_pattern_id("ordered");
         model.selected_pattern = Some(pid);
         let key = (RequestId(11), pid);
+        model.tasks.surface.displayed_request_id = Some(RequestId(11));
+        model.tasks.kwic.displayed_request_id = Some(RequestId(11));
         model.cache.surface.put(
             key,
             PagedResult::from_rows(&[
@@ -483,6 +510,7 @@ mod tests {
         model.selected_kwic_line = 100; // Out of bounds
 
         let req_id = RequestId(0);
+        model.tasks.kwic.displayed_request_id = Some(req_id);
         let key = (req_id, pid);
         model.cache.kwic.put(
             key,
@@ -511,6 +539,8 @@ mod tests {
         let pid = model.get_or_create_pattern_id("paged");
         model.selected_pattern = Some(pid);
         let key = (RequestId(88), pid);
+        model.tasks.surface.displayed_request_id = Some(RequestId(88));
+        model.tasks.kwic.displayed_request_id = Some(RequestId(88));
         let rows = DEFAULT_PAGE_ROWS * 3 + 9;
         model.cache.surface.put(
             key,

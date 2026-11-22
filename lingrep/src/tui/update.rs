@@ -34,7 +34,10 @@ pub fn update(msg: ExplorerMessage, mut model: Model) -> (Model, Option<Command>
 
                 model.tasks.pattern.status = LoadStatus::Loading;
                 model.tasks.pattern.request_id = Some(request_id);
+                model.tasks.pattern.displayed_request_id = Some(request_id);
                 model.tasks.pattern.progress = Default::default();
+                model.tasks.surface.displayed_request_id = None;
+                model.tasks.kwic.displayed_request_id = None;
                 model
                     .cache
                     .frequencies
@@ -73,6 +76,7 @@ pub fn update(msg: ExplorerMessage, mut model: Model) -> (Model, Option<Command>
                 return (model, None);
             }
 
+            model.tasks.pattern.displayed_request_id = Some(request_id);
             if model.cache.frequencies.get(&request_id).is_none() {
                 model
                     .cache
@@ -100,6 +104,7 @@ pub fn update(msg: ExplorerMessage, mut model: Model) -> (Model, Option<Command>
             }
 
             model.tasks.pattern.status = LoadStatus::Complete;
+            model.tasks.pattern.displayed_request_id = Some(request_id);
             model.tasks.pattern.request_id = None;
             model.mode = AppMode::Viewing {
                 tab: Tab::Frequencies,
@@ -140,6 +145,7 @@ pub fn update(msg: ExplorerMessage, mut model: Model) -> (Model, Option<Command>
                     model.cache.surface.put((request_id, pattern_id), result);
                     model.scroll.surface.offset = 0;
                     model.tasks.surface.status = LoadStatus::Complete;
+                    model.tasks.surface.displayed_request_id = Some(request_id);
                     model.tasks.surface.request_id = None;
                 }
                 Err(error) => {
@@ -165,6 +171,7 @@ pub fn update(msg: ExplorerMessage, mut model: Model) -> (Model, Option<Command>
             model.tasks.surface.request_id = None;
             if code == Some(ErrorCode::Cancelled) {
                 model.tasks.surface.status = LoadStatus::Idle;
+                model.tasks.surface.displayed_request_id = None;
                 model.tasks.surface.pattern_id = None;
                 return (model, None);
             }
@@ -189,6 +196,7 @@ pub fn update(msg: ExplorerMessage, mut model: Model) -> (Model, Option<Command>
                     model.scroll.context.offset = 0;
                     model.selected_kwic_line = 0;
                     model.tasks.kwic.status = LoadStatus::Complete;
+                    model.tasks.kwic.displayed_request_id = Some(request_id);
                     model.tasks.kwic.request_id = None;
                 }
                 Err(error) => {
@@ -214,6 +222,7 @@ pub fn update(msg: ExplorerMessage, mut model: Model) -> (Model, Option<Command>
             model.tasks.kwic.request_id = None;
             if code == Some(ErrorCode::Cancelled) {
                 model.tasks.kwic.status = LoadStatus::Idle;
+                model.tasks.kwic.displayed_request_id = None;
                 model.tasks.kwic.pattern_id = None;
                 return (model, None);
             }
@@ -282,7 +291,10 @@ fn handle_ui(msg: UiMsg, mut model: Model) -> (Model, Option<Command>) {
 
             model.tasks.pattern.status = LoadStatus::Loading;
             model.tasks.pattern.request_id = Some(request_id);
+            model.tasks.pattern.displayed_request_id = Some(request_id);
             model.tasks.pattern.progress = Default::default();
+            model.tasks.surface.displayed_request_id = None;
+            model.tasks.kwic.displayed_request_id = None;
 
             model
                 .cache
@@ -351,20 +363,18 @@ fn handle_ui(msg: UiMsg, mut model: Model) -> (Model, Option<Command>) {
                 tab: Tab::Frequencies,
             } = model.mode
             {
-                let mut pattern_list: Vec<(PatternId, u64)> = Vec::new();
-                for (_req_id, freqs) in &model.cache.frequencies {
-                    for (pid, count) in freqs {
-                        pattern_list.push((*pid, *count));
-                    }
-                }
-                pattern_list.sort_by_key(|b| std::cmp::Reverse(b.1));
+                let pattern_list: Vec<PatternId> = model
+                    .ordered_patterns()
+                    .into_iter()
+                    .map(|(pid, _, _)| pid)
+                    .collect();
 
                 if !pattern_list.is_empty() {
                     let current_idx: usize = model
                         .selected_pattern
-                        .and_then(|pid| pattern_list.iter().position(|(p, _)| *p == pid))
+                        .and_then(|pid| pattern_list.iter().position(|p| *p == pid))
                         .map_or(0, |i: usize| (i + 1).min(pattern_list.len() - 1));
-                    model.selected_pattern = Some(pattern_list[current_idx].0);
+                    model.selected_pattern = Some(pattern_list[current_idx]);
                 }
             }
             (model, None)
@@ -375,20 +385,18 @@ fn handle_ui(msg: UiMsg, mut model: Model) -> (Model, Option<Command>) {
                 tab: Tab::Frequencies,
             } = model.mode
             {
-                let mut pattern_list: Vec<(PatternId, u64)> = Vec::new();
-                for (_req_id, freqs) in &model.cache.frequencies {
-                    for (pid, count) in freqs {
-                        pattern_list.push((*pid, *count));
-                    }
-                }
-                pattern_list.sort_by_key(|b| std::cmp::Reverse(b.1));
+                let pattern_list: Vec<PatternId> = model
+                    .ordered_patterns()
+                    .into_iter()
+                    .map(|(pid, _, _)| pid)
+                    .collect();
 
                 if !pattern_list.is_empty() {
                     let current_idx: usize = model
                         .selected_pattern
-                        .and_then(|pid| pattern_list.iter().position(|(p, _)| *p == pid))
+                        .and_then(|pid| pattern_list.iter().position(|p| *p == pid))
                         .map_or(0, |i: usize| i.saturating_sub(1));
-                    model.selected_pattern = Some(pattern_list[current_idx].0);
+                    model.selected_pattern = Some(pattern_list[current_idx]);
                 }
             }
             (model, None)
@@ -569,6 +577,7 @@ fn start_surface_if_selected(mut model: Model) -> (Model, Option<Command>) {
 
         model.tasks.surface.status = LoadStatus::Loading;
         model.tasks.surface.request_id = Some(request_id);
+        model.tasks.surface.displayed_request_id = Some(request_id);
         model.tasks.surface.pattern_id = Some(pid);
         model.tasks.surface.received_lines = 0;
         model.scroll.surface.offset = 0;
@@ -595,6 +604,7 @@ fn start_kwic_if_selected(mut model: Model) -> (Model, Option<Command>) {
 
         model.tasks.kwic.status = LoadStatus::Loading;
         model.tasks.kwic.request_id = Some(request_id);
+        model.tasks.kwic.displayed_request_id = Some(request_id);
         model.tasks.kwic.pattern_id = Some(pid);
         model.tasks.kwic.received_lines = 0;
         model.scroll.context.offset = 0;
@@ -633,6 +643,7 @@ mod tests {
         model.mode = AppMode::Viewing { tab: Tab::Context };
         model.selected_kwic_line = selected;
         model.scroll.context.offset = selected;
+        model.tasks.kwic.displayed_request_id = Some(RequestId(90));
         model.cache.kwic.put(
             (RequestId(90), pattern),
             PagedResult::from_rows(
@@ -1283,5 +1294,204 @@ mod tests {
             Some(Command::StartPattern { pattern_text, .. })
                 if pattern_text == "new := [text=猫]."
         ));
+    }
+
+    #[test]
+    fn stale_request_cache_entries_are_excluded_from_viewmodel_and_navigation() {
+        let mut model = make_model();
+        model.pattern_draft = "alpha := [text=猫].\nold_only := [text=犬].".into();
+
+        // First pattern catalog run
+        let (model, _) = update(ExplorerMessage::Ui(UiMsg::SubmitPattern), model);
+        let req0 = model.tasks.pattern.request_id.unwrap();
+        let (model, _) = update(
+            ExplorerMessage::PatternDelta {
+                request_id: req0,
+                delta_counts: vec![("alpha".into(), 10), ("old_only".into(), 4)],
+            },
+            model,
+        );
+        let (mut model, _) = update(ExplorerMessage::PatternFinished { request_id: req0 }, model);
+        let alpha_pid = *model.pattern_names.get("alpha").unwrap();
+        model.selected_pattern = Some(alpha_pid);
+
+        // Populate Surface and KWIC for the first catalog run
+        let (model, _) = update(ExplorerMessage::Ui(UiMsg::TabChange(Tab::Surface)), model);
+        let surface_req0 = model.tasks.surface.request_id.unwrap();
+        let old_surface = PagedResult::from_rows(&[SurfaceEntry {
+            form: "old-surface".into(),
+            count: 10,
+        }]);
+        let (model, _) = update(
+            ExplorerMessage::SurfaceFinished {
+                request_id: surface_req0,
+                pattern_id: alpha_pid,
+                store: old_surface.store.clone(),
+            },
+            model,
+        );
+
+        let (model, _) = update(ExplorerMessage::Ui(UiMsg::TabChange(Tab::Context)), model);
+        let kwic_req0 = model.tasks.kwic.request_id.unwrap();
+        let old_kwic = PagedResult::from_rows(&[KwicLine {
+            pre: "old-pre".into(),
+            key: "old-key".into(),
+            post: "old-post".into(),
+            match_start: 0,
+            match_end: 1,
+        }]);
+        let (mut model, _) = update(
+            ExplorerMessage::KwicFinished {
+                request_id: kwic_req0,
+                pattern_id: alpha_pid,
+                store: old_kwic.store.clone(),
+            },
+            model,
+        );
+
+        // Edit and submit a second pattern catalog
+        model.mode = AppMode::Viewing {
+            tab: Tab::Frequencies,
+        };
+        model.pattern_draft = "alpha := [text=猫].\nbeta := [text=鳥].".into();
+        let (model, _) = update(ExplorerMessage::Ui(UiMsg::SubmitPattern), model);
+        let req1 = model.tasks.pattern.request_id.unwrap();
+        let (model, _) = update(
+            ExplorerMessage::PatternDelta {
+                request_id: req1,
+                delta_counts: vec![("alpha".into(), 3), ("beta".into(), 2)],
+            },
+            model,
+        );
+        let (model, _) = update(ExplorerMessage::PatternFinished { request_id: req1 }, model);
+
+        let vm = crate::tui::model::derive_viewmodel(&model, 80);
+        let displayed: Vec<(&str, u64)> = vm
+            .patterns
+            .iter()
+            .map(|(_, name, count)| (*name, *count))
+            .collect();
+        assert_eq!(displayed, vec![("alpha", 3), ("beta", 2)]);
+        assert_eq!(vm.total_matches, 5);
+
+        // Switching to Surface starts a new request; while loading, stale surface must not leak
+        let (model, _) = update(ExplorerMessage::Ui(UiMsg::TabChange(Tab::Surface)), model);
+        let surface_req1 = model.tasks.surface.request_id.unwrap();
+        let loading_vm = crate::tui::model::derive_viewmodel(&model, 80);
+        assert!(
+            loading_vm.surface_entries.is_empty(),
+            "stale surface leaked while loading"
+        );
+        assert_eq!(loading_vm.surface_total, 0);
+
+        let new_surface = PagedResult::from_rows(&[SurfaceEntry {
+            form: "new-surface".into(),
+            count: 3,
+        }]);
+        let (model, _) = update(
+            ExplorerMessage::SurfaceFinished {
+                request_id: surface_req1,
+                pattern_id: alpha_pid,
+                store: new_surface.store.clone(),
+            },
+            model,
+        );
+        let vm = crate::tui::model::derive_viewmodel(&model, 80);
+        assert_eq!(vm.surface_entries.len(), 1);
+        assert_eq!(vm.surface_entries[0].form, "new-surface");
+
+        // Switching to Context starts a new request; while loading, stale KWIC must not leak
+        let (model, _) = update(ExplorerMessage::Ui(UiMsg::TabChange(Tab::Context)), model);
+        let kwic_req1 = model.tasks.kwic.request_id.unwrap();
+        let loading_vm = crate::tui::model::derive_viewmodel(&model, 80);
+        assert!(
+            loading_vm.kwic_lines.is_empty(),
+            "stale KWIC leaked while loading"
+        );
+        assert_eq!(loading_vm.kwic_total, 0);
+
+        let new_kwic = PagedResult::from_rows(&[KwicLine {
+            pre: "new-pre".into(),
+            key: "new-key".into(),
+            post: "new-post".into(),
+            match_start: 0,
+            match_end: 1,
+        }]);
+        let (model, _) = update(
+            ExplorerMessage::KwicFinished {
+                request_id: kwic_req1,
+                pattern_id: alpha_pid,
+                store: new_kwic.store.clone(),
+            },
+            model,
+        );
+        let vm = crate::tui::model::derive_viewmodel(&model, 80);
+        assert_eq!(vm.kwic_lines.len(), 1);
+        assert_eq!(vm.kwic_lines[0].key, "new-key");
+    }
+
+    #[test]
+    fn pattern_selection_follows_every_active_sort_mode() {
+        let mut model = make_model();
+        model.pattern_draft = "alpha := [text=a].\nmiddle := [text=m].\nzebra := [text=z].".into();
+        let (model, _) = update(ExplorerMessage::Ui(UiMsg::SubmitPattern), model);
+        let req = model.tasks.pattern.request_id.unwrap();
+        let (model, _) = update(
+            ExplorerMessage::PatternDelta {
+                request_id: req,
+                delta_counts: vec![
+                    ("middle".into(), 20),
+                    ("alpha".into(), 10),
+                    ("zebra".into(), 30),
+                ],
+            },
+            model,
+        );
+        let (mut model, _) = update(ExplorerMessage::PatternFinished { request_id: req }, model);
+
+        for _ in 0..4 {
+            let mode = model.sort_mode;
+            let expected: Vec<PatternId> = crate::tui::model::derive_viewmodel(&model, 80)
+                .patterns
+                .into_iter()
+                .map(|(pid, _, _)| pid)
+                .collect();
+            assert_eq!(expected.len(), 3, "{mode:?}");
+
+            model.selected_pattern = None;
+            let mut visited_forward = Vec::new();
+            for _ in 0..3 {
+                let (next_model, _) = update(ExplorerMessage::Ui(UiMsg::SelectNextPattern), model);
+                model = next_model;
+                visited_forward.push(model.selected_pattern.unwrap());
+            }
+            assert_eq!(visited_forward, expected, "forward order for {mode:?}");
+
+            // Clamped at the end
+            let (next_model, _) = update(ExplorerMessage::Ui(UiMsg::SelectNextPattern), model);
+            model = next_model;
+            assert_eq!(model.selected_pattern, Some(expected[2]), "{mode:?}");
+
+            // Walk backward to the start
+            let mut visited_backward = Vec::new();
+            for _ in 0..2 {
+                let (prev_model, _) = update(ExplorerMessage::Ui(UiMsg::SelectPrevPattern), model);
+                model = prev_model;
+                visited_backward.push(model.selected_pattern.unwrap());
+            }
+            assert_eq!(
+                visited_backward,
+                vec![expected[1], expected[0]],
+                "backward order for {mode:?}"
+            );
+
+            // Clamped at the start
+            let (prev_model, _) = update(ExplorerMessage::Ui(UiMsg::SelectPrevPattern), model);
+            model = prev_model;
+            assert_eq!(model.selected_pattern, Some(expected[0]), "{mode:?}");
+
+            let (toggled, _) = update(ExplorerMessage::Ui(UiMsg::ToggleSort), model);
+            model = toggled;
+        }
     }
 }

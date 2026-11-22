@@ -40,6 +40,7 @@ pub fn run(
         let request_id = model.next_request_id();
         model.tasks.pattern.status = LoadStatus::Loading;
         model.tasks.pattern.request_id = Some(request_id);
+        model.tasks.pattern.displayed_request_id = Some(request_id);
         model.cache.frequencies.put(request_id, HashMap::new());
         Some(Command::StartPattern {
             request_id,
@@ -330,14 +331,18 @@ fn run_command(
             pattern_text,
             sample_text,
         } => {
-            let message = match execute_playground(execution, &pattern_text, &sample_text) {
-                Ok(matches) => ExplorerMessage::PlaygroundComplete {
-                    request_id,
-                    matches,
-                },
-                Err(error) => ExplorerMessage::PlaygroundFailed { request_id, error },
-            };
-            let _ = tx.send(message);
+            let execution = Arc::clone(execution);
+            let tx = tx.clone();
+            std::thread::spawn(move || {
+                let message = match execute_playground(&execution, &pattern_text, &sample_text) {
+                    Ok(matches) => ExplorerMessage::PlaygroundComplete {
+                        request_id,
+                        matches,
+                    },
+                    Err(error) => ExplorerMessage::PlaygroundFailed { request_id, error },
+                };
+                let _ = tx.send(message);
+            });
         }
     }
 }
@@ -512,7 +517,7 @@ fn view_frequencies_widget(f: &mut Frame, model: &Model, area: Rect) {
         .constraints([Constraint::Percentage(60), Constraint::Percentage(40)])
         .split(area);
 
-    let vm = crate::tui::model::derive_viewmodel(model, chunks[0].height);
+    let vm = crate::tui::model::derive_viewmodel(model, chunks[0].width);
 
     let scroll = model.scroll.frequencies.offset;
     let viewport = (chunks[0].height as usize).saturating_sub(3);
@@ -582,7 +587,7 @@ fn view_frequencies_widget(f: &mut Frame, model: &Model, area: Rect) {
 }
 
 fn view_surface_widget(f: &mut Frame, model: &Model, area: Rect) {
-    let vm = crate::tui::model::derive_viewmodel(model, area.height);
+    let vm = crate::tui::model::derive_viewmodel(model, area.width);
 
     if let Some(pid) = model.selected_pattern
         && let Some(pattern_name) = model.pattern_ids.get(&pid)
@@ -657,7 +662,17 @@ fn view_surface_widget(f: &mut Frame, model: &Model, area: Rect) {
 fn view_context_widget(f: &mut Frame, model: &Model, area: Rect) {
     use ratatui::text::Span;
 
-    let vm = crate::tui::model::derive_viewmodel(model, area.height);
+    let (kwic_area, detail_area) = if model.show_detail_panel {
+        let chunks = Layout::default()
+            .direction(Direction::Horizontal)
+            .constraints([Constraint::Percentage(60), Constraint::Percentage(40)])
+            .split(area);
+        (chunks[0], Some(chunks[1]))
+    } else {
+        (area, None)
+    };
+
+    let vm = crate::tui::model::derive_viewmodel(model, kwic_area.width);
 
     if let Some(pid) = model.selected_pattern
         && let Some(pattern_name) = model.pattern_ids.get(&pid)
@@ -683,16 +698,6 @@ fn view_context_widget(f: &mut Frame, model: &Model, area: Rect) {
             f.render_widget(para, area);
             return;
         }
-
-        let (kwic_area, detail_area) = if model.show_detail_panel {
-            let chunks = Layout::default()
-                .direction(Direction::Horizontal)
-                .constraints([Constraint::Percentage(60), Constraint::Percentage(40)])
-                .split(area);
-            (chunks[0], Some(chunks[1]))
-        } else {
-            (area, None)
-        };
 
         let scroll = model.scroll.context.offset;
         let viewport = (kwic_area.height as usize).saturating_sub(3);
@@ -992,6 +997,7 @@ mod tests {
         model.mode = AppMode::Viewing { tab: Tab::Context };
         model.show_detail_panel = true;
         model.tasks.kwic.status = LoadStatus::Complete;
+        model.tasks.kwic.displayed_request_id = Some(request);
         model.selected_kwic_line = 256;
         model.scroll.context.offset = 256;
         model.cache.kwic.put(
@@ -1120,8 +1126,11 @@ mod tests {
             }]),
         );
         model.tasks.pattern.status = LoadStatus::Complete;
+        model.tasks.pattern.displayed_request_id = Some(request_id);
         model.tasks.surface.status = LoadStatus::Complete;
+        model.tasks.surface.displayed_request_id = Some(request_id);
         model.tasks.kwic.status = LoadStatus::Complete;
+        model.tasks.kwic.displayed_request_id = Some(request_id);
 
         let mut snapshots = String::new();
         for tab in [Tab::Frequencies, Tab::Surface, Tab::Context, Tab::Parsed] {
@@ -1190,5 +1199,106 @@ mod tests {
             assert!(handles.surface.is_none());
             assert!(handles.kwic.is_none());
         }
+    }
+
+    #[test]
+    fn kwic_column_widths_use_horizontal_area_width_not_height() {
+        let mut model = Model::default();
+        let request = RequestId(73);
+        let pattern = model.get_or_create_pattern_id("wide");
+        model.selected_pattern = Some(pattern);
+        model.mode = AppMode::Viewing { tab: Tab::Context };
+        model.tasks.kwic.status = LoadStatus::Loading;
+        model.tasks.kwic.request_id = Some(request);
+        model.tasks.kwic.pattern_id = Some(pattern);
+        let result = PagedResult::from_rows(&[KwicLine {
+            pre: "left-context-text".into(),
+            key: "MATCHKEY".into(),
+            post: "right-context-text".into(),
+            match_start: 0,
+            match_end: 1,
+        }]);
+        let (mut model, _) = crate::tui::update::update(
+            ExplorerMessage::KwicFinished {
+                request_id: request,
+                pattern_id: pattern,
+                store: result.store.clone(),
+            },
+            model,
+        );
+
+        for show_detail in [false, true] {
+            model.show_detail_panel = show_detail;
+            let backend = TestBackend::new(120, 14);
+            let mut terminal = Terminal::new(backend).unwrap();
+            terminal.draw(|frame| view(frame, &model)).unwrap();
+            let screen: String = terminal
+                .backend()
+                .buffer()
+                .content
+                .iter()
+                .map(ratatui::buffer::Cell::symbol)
+                .collect();
+            assert!(
+                screen.contains("left-context-text"),
+                "show_detail={show_detail}: {screen}"
+            );
+            assert!(
+                screen.contains("MATCHKEY"),
+                "show_detail={show_detail}: {screen}"
+            );
+            assert!(
+                screen.contains("right-context-text"),
+                "show_detail={show_detail}: {screen}"
+            );
+        }
+    }
+
+    #[test]
+    fn start_playground_does_not_deadlock_when_message_channel_is_full() {
+        let (_directory, execution) = crate::interactive_execution::direct_test_execution("猫。\n");
+        let (tx, rx) = crossbeam_channel::bounded(1);
+        tx.send(ExplorerMessage::Tick).unwrap();
+
+        let (done_tx, done_rx) = crossbeam_channel::bounded(1);
+        let tx_for_run = tx.clone();
+        let execution_for_run = Arc::clone(&execution);
+        let runner = std::thread::spawn(move || {
+            let mut handles = TaskHandles::default();
+            run_command(
+                Command::StartPlayground {
+                    request_id: RequestId(99),
+                    pattern_text: "p := [text=猫].".into(),
+                    sample_text: "猫。".into(),
+                },
+                &tx_for_run,
+                &mut handles,
+                &execution_for_run,
+            );
+            let _ = done_tx.send(());
+        });
+
+        let returned = done_rx.recv_timeout(Duration::from_secs(2));
+        if returned.is_err() {
+            // Unblock the deadlocked sender before failing so the probe thread exits cleanly.
+            drop(rx);
+            let _ = runner.join();
+            panic!("run_command(StartPlayground) deadlocked on a full bounded channel");
+        }
+        runner.join().unwrap();
+
+        assert!(matches!(rx.recv().unwrap(), ExplorerMessage::Tick));
+        let reply = rx
+            .recv_timeout(Duration::from_secs(5))
+            .expect("playground worker should deliver its result once the channel drains");
+        assert!(matches!(
+            reply,
+            ExplorerMessage::PlaygroundComplete {
+                request_id: RequestId(99),
+                ref matches,
+            } if matches.len() == 1
+                && matches[0].matched_text == "猫"
+                && matches[0].pattern_name.as_deref() == Some("p")
+        ));
     }
 }
