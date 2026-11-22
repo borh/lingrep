@@ -1012,6 +1012,7 @@ fn check_drift_round_trips_and_keeps_the_v2_schema_string() {
             ],
         }],
         binding: None,
+        containment: None,
     }));
 
     let bytes = jsonl(&envelope);
@@ -1113,6 +1114,7 @@ fn fixtures() -> Vec<(&'static str, Vec<u8>)> {
                 // the check-command tests.
                 drift: Vec::new(),
                 binding: None,
+                containment: None,
             }))),
         ),
         (

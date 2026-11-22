@@ -31,6 +31,7 @@ mod schema;
 mod sentence_filter;
 mod skip;
 pub(crate) mod source_text;
+mod static_checks;
 mod text_key;
 mod token_test;
 
@@ -61,6 +62,10 @@ pub use no_match::{
     RelaxationOutcome, RelaxedConstraint, StopReason, StoppedAttempt,
 };
 pub use render::{render_diagnostics, render_pattern_error};
+pub use static_checks::{
+    ContainedPair, Containment, ContainmentReport, Unsatisfiable, UnsatisfiableKind,
+    WitnessAttribute, WitnessToken, WitnessValue,
+};
 
 use crate::fsm::AttrValueType;
 use compact_str::CompactString;
