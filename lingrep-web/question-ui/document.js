@@ -148,7 +148,7 @@ export function initQuestion(config, { changed, viewChanged, search, getLocale }
     const text = (en, ja) => getLocale() === 'ja' ? ja : en;
     function localizeNumberErrors() {
         for (const [id, en, ja] of [
-            ['reading-validation', 'Enter a whole number for the example count and context size.', '用例数と文脈の長さは整数で入力してください。'],
+            ['reading-validation', 'Use whole numbers for reading settings.', '表示の設定には整数を入力してください。'],
             ['metadata-validation', 'Use whole numbers within this field’s bounds, with the minimum no greater than the maximum.', '項目の範囲内の整数で、下限が上限を超えない値を入力してください。'],
         ]) {
             const node = $('#' + id), message = text(en, ja);
@@ -374,7 +374,19 @@ export function initQuestion(config, { changed, viewChanged, search, getLocale }
         return; state.lines = Number($('#line-limit').value); validateReadingNumbers(); viewChanged(); changed(); }, validateReadingNumbers);
     renderChips();
     void checkFields();
-    return { state, examplesFound(found) { $('#line-limit').disabled = found === 0; }, where: () => scopeClause(state.metadata, $('#where').value), entries: () => ({ metadata: JSON.stringify(state.metadata), raw: $('#where').value, context: state.context, lines: state.lines }), restore(params) {
+    return { state, setLineLimit(visible, hasLines) {
+            const label = $('#kwic-line-limit'), input = $('#line-limit');
+            const disabled = !visible || !hasLines;
+            if (label.hidden === !visible && input.disabled === disabled)
+                return;
+            if (disabled && !input.checkValidity()) {
+                input.value = String(state.lines);
+                paintNumber(input);
+            }
+            label.hidden = !visible;
+            input.disabled = disabled;
+            validateReadingNumbers();
+        }, where: () => scopeClause(state.metadata, $('#where').value), entries: () => ({ metadata: JSON.stringify(state.metadata), raw: $('#where').value, context: state.context, lines: state.lines }), restore(params) {
             clearTimeout(searchTimer);
             clearTimeout(valueTimer);
             ++requestId;
@@ -392,7 +404,7 @@ export function initQuestion(config, { changed, viewChanged, search, getLocale }
             if (!$('#metadata-picker').hidden)
                 loadFields();
         }, localize() { localizeNumberErrors(); for (const input of document.querySelectorAll('.number-span'))
-            input.title = text('Drag horizontally or type a number. Hold Shift for precise dragging', '左右にドラッグ、または数値を入力。Shift キーで細かく調整'); $('#line-limit').setAttribute('aria-label', text('Number of examples', '表示する用例数')); $('#context-size').setAttribute('aria-label', text('Context tokens', '前後の文脈のトークン数')); renderChips(); if (fields.length) {
+            input.title = text('Drag horizontally or type a number. Hold Shift for precise dragging', '左右にドラッグ、または数値を入力。Shift キーで細かく調整'); renderChips(); if (fields.length) {
             const selected = $('#metadata-field').value;
             $('#metadata-field').innerHTML = fields.map(f => `<option value="${esc(f.key)}">${esc(label(f.key))} (${f.present.toLocaleString()})</option>`).join('');
             $('#metadata-field').value = selected;

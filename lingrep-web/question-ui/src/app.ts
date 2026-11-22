@@ -19,12 +19,12 @@ const count = (value: number | undefined) => Number(value ?? 0).toLocaleString(l
 let locale: Locale = storedLocale(globalThis.localStorage,navigator.language);
 const en = Object.fromEntries([...document.querySelectorAll<HTMLElement>('[data-t]')].map(element => [element.dataset.t, element.textContent]));
 const ja: Record<string,string> = {
-  readingOptions:'表示の設定',questionActions:'問いの操作',questionNav:'問い',remix:'問いを複製',saveQuestion:'問いを保存',openQuestion:'開く',searchFor:'',among:'の',update:'検索する',done:'完了',exclude:'選んだ値を除外',previousValues:'前の値',nextValues:'次の値',clearConditions:'条件を消去',textClause:'条件式を直接編集',read:'表示する用例は',examplesWith:'件、前後の文脈は',contextTokens:'トークンずつ',closeAnalysis:'用例を閉じる',tokenHelp:'トークンを選ぶと、属性を確認できます。',remixTest:'条件を追加',showLatest:'新しい結果を表示',prototypeOptions:'検索の設定',searchNav:'検索',incumbentNav:'分析ツール',frequencyNav:'頻度',compareNav:'比較',helpNav:'ヘルプ',stopReplay:'再生を停止', find:'', in:'', patternSource:'パターンのソース', toSearch:'で検索', draft:'Alt+Enter または「検索する」で検索します。',formatSource:'パターンを整形',run:'検索する',where:'文書の条件',edited:'編集済み · 検索して適用',ready:'検索できます。',stop:'検索を停止',retry:'もう一度検索',during:'新しい検索の実行中は',keep:'完了した結果を表示',live:'途中の結果を表示',compare:'前回と今回を並べる',replay:'検索の経過を再生',replayNote:'検索の経過を再生しています。',boundary:'検索結果について',boundaryBody:'選択したコーパスとコンパイル済みのパターンに基づく検索結果です。用例はページごとに表示します。検索中の件数は途中経過です。原文は検索条件で絞り込まずに表示します。',return:'用例に戻る',paragraph:'段落を読む',document:'文書を読む',
+  readingOptions:'表示の設定',questionActions:'問いの操作',questionNav:'問い',remix:'問いを複製',saveQuestion:'問いを保存',openQuestion:'開く',searchFor:'',among:'の',update:'検索する',done:'完了',exclude:'選んだ値を除外',previousValues:'前の値',nextValues:'次の値',clearConditions:'条件を消去',textClause:'条件式を直接編集',kwicLines:'KWIC の表示行数',contextLabel:'前後の文脈',contextTokens:'トークンずつ',closeAnalysis:'用例を閉じる',tokenHelp:'トークンを選ぶと、属性を確認できます。',remixTest:'条件を追加',showLatest:'新しい結果を表示',prototypeOptions:'検索の設定',searchNav:'検索',incumbentNav:'分析ツール',frequencyNav:'頻度',compareNav:'比較',helpNav:'ヘルプ',stopReplay:'再生を停止', find:'', in:'', patternSource:'パターンのソース', toSearch:'で検索', draft:'Alt+Enter または「検索する」で検索します。',formatSource:'パターンを整形',run:'検索する',where:'文書の条件',edited:'編集済み · 検索して適用',ready:'検索できます。',stop:'検索を停止',retry:'もう一度検索',during:'新しい検索の実行中は',keep:'完了した結果を表示',live:'途中の結果を表示',compare:'前回と今回を並べる',replay:'検索の経過を再生',replayNote:'検索の経過を再生しています。',boundary:'検索結果について',boundaryBody:'選択したコーパスとコンパイル済みのパターンに基づく検索結果です。用例はページごとに表示します。検索中の件数は途中経過です。原文は検索条件で絞り込まずに表示します。',return:'用例に戻る',paragraph:'段落を読む',document:'文書を読む',
   current:'今回の結果',previous:'前回の完了した結果',completed:'検索完了',partial:'検索中 · 件数は途中経過',cancelled:'停止済み · 件数は途中経過',failed:'検索に失敗',retained:'表示中の用例',noLines:'このパターンの用例はまだありません。',download:'JSONL で保存',source:'検索時のパターン',copy:'CLI コマンドをコピー',copied:'コピーしました',savedQuery:'検索時の query.lx を保存',runNumber:'検索',scope:'文書の条件',all:'すべての文書',soFar:'件が見つかりました',running:'検索しています',notTotal:'検索中の件数は途中経過です。',stopped:'検索を停止しました。途中の件数はコーパス全体の件数ではありません。',failedKeep:'検索に失敗しました。前回の検索結果を表示しています。',errorRetry:'パターンや条件を確認して、もう一度検索してください。',draftRunning:'新しいパターンを編集中です。実行中の検索には影響しません。',keeping:'新しい検索の間、前回の完了した結果を表示しています。',loadingRead:'原文を読み込んでいます…',readError:'原文を読み込めませんでした。もう一度開いてください。',tokenContext:'トークンによる前後の文脈',real:'検索',replayed:'記録した検索の再生',unknownProgress:'進捗の割合は不明',dependencies:'係り受け',viewBunsetsu:'文節',viewWords:'語',viewVertical:'全文（縦）',evidenceCaption:'この用例が結び付ける語',evidenceWord:'語番号',evidenceRoles:'役割',evidenceText:'表層形',evidenceLemma:'辞書形',evidencePos:'品詞',evidenceHead:'係り先',evidenceRel:'関係',root:'文の中心',frequencyReturn:'頻度に戻る',occurrenceMissing:'頻度表の用例をこの検索で開けませんでした。',
 };
 const extra: Record<string,string> = {readingOptions:'Reading options',questionActions:'Question actions',stopReplay:'Stop replay',current:'Current results',previous:'Previous results',completed:'Complete',partial:'Searching · counts are partial',cancelled:'Stopped · counts are partial',failed:'Search failed',retained:'Displayed examples',noLines:'No lines for this pattern yet.',download:'Download JSONL',source:'Pattern used for this search',copy:'Copy CLI command',copied:'Copied',savedQuery:'Download this query.lx',runNumber:'Search',scope:'Document condition',all:'All documents',soFar:'matches found',running:'Searching',notTotal:'Counts are partial until the search finishes.',stopped:'Search stopped. Counts are partial.',failedKeep:'Search failed. Previous results are retained.',errorRetry:'Check the pattern or condition and run the search again.',draftRunning:'Editing the next pattern. The running search is unchanged.',keeping:'Showing previous results while searching.',loadingRead:'Loading the original text…',readError:'Could not load the original text. Open it again to retry.',tokenContext:'Token context',real:'Live search',replayed:'Recorded search replay',unknownProgress:'Scan percentage unavailable',occurrenceMissing:'Could not open the frequency table occurrence in this search.'};
 const t = (key: string) => (locale === 'ja' ? ja[key] : null) ?? en[key] ?? extra[key] ?? key;
-Object.assign(ja,{catalogChanged:'このリンクを作ったときから、サーバーのパターンが変わっています。今のパターンで検索すると、リンクを作ったときと結果が異なることがあります。',catalogSearch:'今のパターンで検索',catalogDefault:'既定の問いを開く',exportRun:'全結果を JSONL で保存',completeUndisplayed:'検索は完了しましたが、結果をここに表示できません。',completeUnexportable:'検索は完了しましたが、結果をここで表示することも保存することもできません。パターンを絞り込むか、コマンドラインの ling matches で全件を保存してください。',skipQuestion:'問いへ移動',skip:'検索結果へ移動',readingEnd:'。',noMatches:'このパターンに一致する用例はありません。',partialCount:'途中までの件数',chooseDefinition:'検索する定義を 1 つ選んでください。',occurrenceNotFound:'この検索には、その文で同じ語が同じ役割に入る用例がありません。',occurrenceChanged:'頻度表を作ったときとコーパスまたはパターンが異なるため、用例を特定できません。',analysisChanged:'この問いを保存したときから、コーパスの内容が変わっています。現在のコーパスで検索し直せます。',searchCurrentCorpus:'現在のコーパスで検索',resultLimit:'結果が多すぎて保持できません。パターンや文書の条件を絞り込んで、もう一度検索してください。',current:'用例',previous:'前回の完了した用例',boundaryBody:'検索中の件数は途中経過です。ダウンロードには全件を含みます。原文は文書の条件で絞り込まずに表示します。',return:'用例に戻る',during:'新しい検索の実行中は',keep:'前回の検索結果を表示'});
+Object.assign(ja,{catalogChanged:'このリンクを作ったときから、サーバーのパターンが変わっています。今のパターンで検索すると、リンクを作ったときと結果が異なることがあります。',catalogSearch:'今のパターンで検索',catalogDefault:'既定の問いを開く',exportRun:'全結果を JSONL で保存',completeUndisplayed:'検索は完了しましたが、結果をここに表示できません。',completeUnexportable:'検索は完了しましたが、結果をここで表示することも保存することもできません。パターンを絞り込むか、コマンドラインの ling matches で全件を保存してください。',skipQuestion:'問いへ移動',skip:'検索結果へ移動',noMatches:'このパターンに一致する用例はありません。',partialCount:'途中までの件数',chooseDefinition:'検索する定義を 1 つ選んでください。',occurrenceNotFound:'この検索には、その文で同じ語が同じ役割に入る用例がありません。',occurrenceChanged:'頻度表を作ったときとコーパスまたはパターンが異なるため、用例を特定できません。',analysisChanged:'この問いを保存したときから、コーパスの内容が変わっています。現在のコーパスで検索し直せます。',searchCurrentCorpus:'現在のコーパスで検索',resultLimit:'結果が多すぎて保持できません。パターンや文書の条件を絞り込んで、もう一度検索してください。',current:'用例',previous:'前回の完了した用例',boundaryBody:'検索中の件数は途中経過です。ダウンロードには全件を含みます。原文は文書の条件で絞り込まずに表示します。',return:'用例に戻る',during:'新しい検索の実行中は',keep:'前回の検索結果を表示'});
 Object.assign(extra,{completeUndisplayed:'The search is complete, but its results cannot be displayed here.',completeUnexportable:'The search is complete, but its results can be neither displayed nor downloaded here. Narrow the pattern, or save every match with ling matches on the command line.',root:'heads the sentence',noMatches:'No examples match this pattern.',partialCount:'Count so far',chooseDefinition:'Choose one definition to search.',occurrenceNotFound:'This search has no example in that sentence with the same words in the same roles.',occurrenceChanged:'The corpus or pattern differs from the one the frequency table counted, so the example cannot be located.'});extra.current='Results';extra.resultLimit='Too many results to retain. Narrow the pattern or document conditions and search again.';extra.analysisChanged='The corpus has changed since this question was saved. You can search the current corpus instead.';extra.searchCurrentCorpus='Search the current corpus';extra.previous='Previous results';
 let config: Configuration;
 const named=(attribute:string,value:string)=>valueName(config?.value_names,attribute,value,locale);
@@ -270,8 +270,19 @@ function overflowText(run:RunSnapshot):string|null{
 
 
 const compactLayout=matchMedia('(max-width:480px)');
-function adaptControls(){for(const selector of ['#question-actions'])for(const details of document.querySelectorAll<HTMLDetailsElement>(selector))details.open=!compactLayout.matches;}
-adaptControls();compactLayout.addEventListener('change',adaptControls);
+const questionActions=$<HTMLDetailsElement>('#question-actions'),actionsSummary=$('summary',questionActions);
+let actionsInline:boolean|undefined;
+function adaptQuestionActions(){
+  const inline=getComputedStyle(actionsSummary).display==='none';
+  if(inline===actionsInline)return;
+  actionsInline=inline;
+  const focused=document.activeElement;
+  questionActions.open=inline;
+  if(inline&&focused===actionsSummary)$('#remix').focus({preventScroll:true});
+  if(!inline&&focused&&focused!==actionsSummary&&questionActions.contains(focused))actionsSummary.focus({preventScroll:true});
+}
+adaptQuestionActions();
+new ResizeObserver(adaptQuestionActions).observe($('.site'));
 
 async function request<T>(path: string, options?: RequestInit): Promise<T> {
   const response = await fetch(serviceURL(path), options);
@@ -483,8 +494,6 @@ function connect(id: string) {
 
 function render(force=false) {
   if (!config||!controls) return;
-  const evidence=displayedEvidence(),pattern=evidence?(selection.get(evidence.id)??evidence.definitions[0]??''):'';
-  controls.examplesFound(evidence?.phase==='complete'?evidence.counts[pattern]??0:null);
   updateDraft(false);
   const current=state.current;
   if(current&&documentSections.has(current.id))documentSections.get(current.id)!.run=current;
@@ -539,6 +548,8 @@ function render(force=false) {
     $('#status').textContent=locale==='ja'?`${other?`${label} の`:'新しい'}検索が完了しました。開いている用例は${other?` ${other} の`:''}前回の検索結果です。`:`The ${other?`search of ${label}`:'new search'} is complete. The open example is from the previous search${other?` of ${other}`:''}.`;
   }
   const shown=[...new Map([...documentSections.values()].map(section=>section.run).concat(visibleRuns.filter((run):run is RunSnapshot=>run!=null&&!(run.phase==='failed'&&!Object.keys(run.counts).length))).map(run=>[run.id,run])).values()];
+  const lineRuns=shown.filter(run=>!byWork(run)&&!entryShown(run));
+  controls.setLineLimit(lineRuns.length>0,lineRuns.some(run=>run.phase!=='complete'||(run.counts[selection.get(run.id)??run.definitions[0]??'']??0)>0));
   $('#result-panels').className=compared?'comparing':'';
   const ids=shown.map(run=>run.id);
   for (const [id,panel] of panels) {
@@ -844,7 +855,16 @@ function updateReaderNavigation() {
 
 const renderSignatures=new WeakMap<HTMLElement,string>();
 const concordanceNodes=new WeakMap<HTMLElement,Map<string,HTMLElement>>();
-const concordanceContent=new WeakMap<HTMLElement,{row:MatchRecord|null;ordinal:number;context:number;number:HTMLElement;left:HTMLElement;hit:HTMLElement;right:HTMLElement}>();
+const concordanceContent=new WeakMap<HTMLElement,{
+  row:MatchRecord|null;
+  ordinal:number;
+  context:number;
+  hrefScope:string;
+  number:HTMLElement;
+  left:HTMLElement;
+  hit:HTMLElement;
+  right:HTMLElement;
+}>();
 const concordanceHeadings=new WeakMap<HTMLElement,{title:HTMLElement;author:HTMLElement;count:HTMLElement}>();
 function setConcordanceText(element:HTMLElement,text:string){
   if(element.childNodes.length===1&&element.firstChild!.nodeType===Node.TEXT_NODE){if(element.firstChild!.nodeValue!==text)element.firstChild!.nodeValue=text;}
@@ -866,7 +886,6 @@ function renderLines(panel: HTMLElement,run: RunSnapshot | undefined,_force=fals
   if(entryShown(run)){renderEntryList(panel,run);return;}
   const pattern=selection.get(run.id)??'',view=documentView(run,pattern);
   const work=workView(view),zoom=zoomLevel(panel);
-  list.dataset.zoom=String(zoom);
   if(grouped&&pattern&&work.total===null&&!work.loading&&!work.error){
     void loadWorkSamples(panel,run,pattern,work);return;
   }
@@ -899,15 +918,17 @@ function renderLines(panel: HTMLElement,run: RunSnapshot | undefined,_force=fals
   const shownCounts=new Map<number,number>();
   for(const row of rows)shownCounts.set(row.document_ordinal,(shownCounts.get(row.document_ordinal)??0)+1);
   const total=!grouped&&pageReady?view.matchesTotal:run.counts[pattern]??0,shownLines=Math.min(allRows.length,limit);
-  const input=$<HTMLInputElement>('.line-controls input',panel),hint=locale==='ja'?`表示中の${count(shownLines)}件から絞り込む`:`Filter the ${count(shownLines)} lines shown`;
-  input.placeholder=hint;input.setAttribute('aria-label',hint);
-  $('.line-controls span',panel).textContent=run.phase==='complete'&&!isReplay
-    ? filter?(locale==='ja'?`表示中の ${count(shownLines)} 件のうち ${count(rows.length)} 件 · 全 ${count(total)} 件`:`${count(rows.length)} of the ${count(shownLines)} lines shown · ${count(total)} total matches`)
-    :!rows.length?'':(locale==='ja'?`${count(view.start+1)}–${count(view.start+rows.length)} 件を表示。`:`Reading ${count(rows.length?view.start+1:0)}–${count(view.start+rows.length)}.`)
-    : locale==='ja'?`${count(total)} 件が見つかりました · ${count(rows.length)} 件を表示`:`${count(rows.length)} shown · ${count(total)} found`;
-  if(view.loading&&!rows.length)$('.line-controls span',panel).textContent=locale==='ja'?`全 ${count(total)} 件`:`${count(total)} total matches`;
+  if(!grouped){
+    const input=$<HTMLInputElement>('.line-controls input',panel),hint=locale==='ja'?`表示中の${count(shownLines)}件から絞り込む`:`Filter the ${count(shownLines)} lines shown`;
+    input.placeholder=hint;input.setAttribute('aria-label',hint);
+    $('.line-controls span',panel).textContent=run.phase==='complete'&&!isReplay
+      ? filter?(locale==='ja'?`表示中の ${count(shownLines)} 件のうち ${count(rows.length)} 件 · 全 ${count(total)} 件`:`${count(rows.length)} of the ${count(shownLines)} lines shown · ${count(total)} total matches`)
+      :!rows.length?'':(locale==='ja'?`${count(view.start+1)}–${count(view.start+rows.length)} 件を表示。`:`Reading ${count(rows.length?view.start+1:0)}–${count(view.start+rows.length)}.`)
+      : locale==='ja'?`${count(total)} 件が見つかりました · ${count(rows.length)} 件を表示`:`${count(rows.length)} shown · ${count(total)} found`;
+    if(view.loading&&!rows.length)$('.line-controls span',panel).textContent=locale==='ja'?`全 ${count(total)} 件`:`${count(total)} total matches`;
+  }
   const matchingDocuments=grouped?work.total:pageReady?(view.scopeDocument!=null?(total?1:0):view.query?null:view.documentsTotal):null;
-  $('.evidence-sentence',panel).textContent=run.phase!=='complete'&&!isReplay?(locale==='ja'?`途中までに ${count(total)} 件。`:`${count(total)} ${total===1?'match':'matches'} so far.`):locale==='ja'?`${count(total)} 件${matchingDocuments==null?'':` · ${count(matchingDocuments)} 文書`}。`:`${count(total)} ${total===1?'match':'matches'}${matchingDocuments==null?'':` in ${count(matchingDocuments)} ${matchingDocuments===1?'document':'documents'}`}.`;
+  setConcordanceText($('.evidence-sentence',panel),run.phase!=='complete'&&!isReplay?(locale==='ja'?`途中までに ${count(total)} 件。`:`${count(total)} ${total===1?'match':'matches'} so far.`):locale==='ja'?`${count(total)} 件${matchingDocuments==null?'':` · ${count(matchingDocuments)} 文書`}。`:`${count(total)} ${total===1?'match':'matches'}${matchingDocuments==null?'':` in ${count(matchingDocuments)} ${matchingDocuments===1?'document':'documents'}`}.`);
   const scope=$('.document-scope',panel);
   scope.hidden=grouped||view.scopeDocument==null;
   if(!scope.hidden){
@@ -930,6 +951,7 @@ function renderLines(panel: HTMLElement,run: RunSnapshot | undefined,_force=fals
   let nodes=concordanceNodes.get(list);if(!nodes){nodes=new Map();concordanceNodes.set(list,nodes);}
   const desired:HTMLElement[]=[],used=new Set<string>();
   const node=(key:string,tag:'div'|'a'|'p'|'button',className:string)=>{used.add(key);let value=nodes!.get(key);if(!value){value=document.createElement(tag);value.className=className;nodes!.set(key,value);}return value;};
+  const hrefScope=hrefFor(run,concordanceFor(run));
   let previousDocument:number|undefined;
   for(const [index,row] of rows.entries()){
     if(previousDocument!==row.document_ordinal){
@@ -966,31 +988,40 @@ function renderLines(panel: HTMLElement,run: RunSnapshot | undefined,_force=fals
     }
     const link=node(`match:${row.sequence}`,'a','kwic-row') as HTMLAnchorElement;
     if(!link.hasAttribute('data-sequence')){link.dataset.sequence=String(row.sequence);link.setAttribute('data-view','');}
-    const href=hrefFor(run,hitLocation(run,row,'example'));if(link.getAttribute('href')!==href)link.setAttribute('href',href);
     const ordinal=grouped?index+1:view.start+allRows.indexOf(row)+1;
-    const label=(documentTitle(row))+', '+ordinal+': '+lineText(row);if(link.getAttribute('aria-label')!==label)link.setAttribute('aria-label',label);
     const expanded=String(inspecting?.run.id===run.id&&inspecting.row.sequence===row.sequence&&!tokenLab.hidden);if(link.getAttribute('aria-expanded')!==expanded)link.setAttribute('aria-expanded',expanded);
     let content=concordanceContent.get(link);
     if(!content){
       link.innerHTML='<span class="line-number"></span><span class="context-left" lang="ja"><span></span></span><mark lang="ja"></mark><span class="context-right" lang="ja"></span>';
-      content={row:null,ordinal:-1,context:-1,number:link.children[0] as HTMLElement,left:link.children[1].firstElementChild as HTMLElement,hit:link.children[2] as HTMLElement,right:link.children[3] as HTMLElement};
+      content={row:null,ordinal:-1,context:-1,hrefScope:'',number:link.children[0] as HTMLElement,left:link.children[1].firstElementChild as HTMLElement,hit:link.children[2] as HTMLElement,right:link.children[3] as HTMLElement};
       concordanceContent.set(link,content);
     }
-    link.classList.toggle('has-sentence',grouped&&zoom===2&&!!row.sentence_text);
-    const contextKey=grouped?-(context+2)-zoom*100:context;
-    if(content.row!==row||content.ordinal!==ordinal||content.context!==contextKey){
+    const rowChanged=content.row!==row;
+    if(rowChanged||content.hrefScope!==hrefScope){
+      link.href=hrefFor(run,hitLocation(run,row,'example'));
+      content.hrefScope=hrefScope;
+    }
+    if(rowChanged||content.ordinal!==ordinal){
+      link.setAttribute('aria-label',`${documentTitle(row)}, ${ordinal}: ${lineText(row)}`);
+      setConcordanceText(content.number,String(ordinal));
+      content.ordinal=ordinal;
+    }
+    const sentence=grouped&&zoom===2?row.sentence_text:null;
+    const contextKey=grouped?(sentence?-1:-(context+2)):context;
+    if(rowChanged||content.context!==contextKey){
+      link.classList.toggle('has-sentence',!!sentence);
       const bound=boundOutside(row,row.span.end+(row.right_context?.length??0));
-      for(const [element,text] of [[content.number,String(ordinal)],[content.hit,row.surface]] as const)setConcordanceText(element,text);
+      setConcordanceText(content.hit,row.surface);
       const left=context?(row.left_context??[]).slice(-context):[],right=(row.right_context??[]).slice(0,context);
-      if(grouped&&zoom===2&&row.sentence_text){
-        const [before,match,after]=row.sentence_text;
+      if(sentence){
+        const [before,match,after]=sentence;
         setConcordanceText(content.left,before);setConcordanceText(content.hit,match);setConcordanceText(content.right,after);
       }else{
         setContext(content.left,left,bound);setContext(content.right,right,bound);
         if(grouped&&left.length&&row.tokens[0]?.space_before)content.left.append(' ');
         if(grouped&&right[0]?.space_before)content.right.prepend(' ');
       }
-      content.row=row;content.ordinal=ordinal;content.context=contextKey;
+      content.row=row;content.context=contextKey;
     }
     desired.push(link);
     if(inspectionFailure?.runId===run.id&&inspectionFailure.sequence===row.sequence){
@@ -1210,7 +1241,18 @@ function selectToken(index: number) {
   if(!tokenData)return;tokenIndex=index;
   const token=tokenData.tokens[index],field=attributeKey,members=attributeMembers(token.attributes[field]);
   attributeMember=attributeMember!==undefined&&members.includes(attributeMember)?attributeMember:members[0];
-  for(const button of $('#token-ribbon').querySelectorAll<HTMLButtonElement>('button')){const token=tokenData.tokens[Number(button.dataset.token)];button.classList.toggle('selected',token.index===index);button.setAttribute('aria-pressed',String(token.index===index));}
+  for(const button of $('#token-ribbon').querySelectorAll<HTMLButtonElement>('button')){
+    const token=tokenData.tokens[Number(button.dataset.token)],surface=surfaceOf(token);
+    button.classList.toggle('selected',token.index===index);
+    button.setAttribute('aria-pressed',String(token.index===index));
+    if(!surface.trim()){
+      const name=surface===''?(locale==='ja'?'空のトークン':'Empty token')
+        :/^\u3000+$/.test(surface)?(locale==='ja'?'全角空白':'Ideographic space')
+        :(locale==='ja'?'空白':'Whitespace');
+      button.lang=locale;
+      button.setAttribute('aria-label',name);
+    }
+  }
   const details=detailsOf(tokenData.tokens,index,inspecting?.row??{span:{start:0,end:0}},config?.value_names,locale,t('root'));
   const row=({key,name,values}:DetailRow)=>{
     const label=name?`${escape(name)} <code>${escape(key)}</code>`:escape(key);

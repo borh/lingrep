@@ -106,7 +106,7 @@ export function initQuestion(config: Configuration, {changed,viewChanged,search,
   const text=(en: string,ja: string)=>getLocale()==='ja'?ja:en;
   function localizeNumberErrors(){
     for(const [id,en,ja] of [
-      ['reading-validation','Enter a whole number for the example count and context size.','用例数と文脈の長さは整数で入力してください。'],
+      ['reading-validation','Use whole numbers for reading settings.','表示の設定には整数を入力してください。'],
       ['metadata-validation','Use whole numbers within this field’s bounds, with the minimum no greater than the maximum.','項目の範囲内の整数で、下限が上限を超えない値を入力してください。'],
     ]){const node=$('#'+id),message=text(en,ja);if(node.textContent!==message)node.textContent=message;}
   }
@@ -244,11 +244,19 @@ export function initQuestion(config: Configuration, {changed,viewChanged,search,
   scrubNumber($<HTMLInputElement>('#context-size'),()=>{if(!$<HTMLInputElement>('#context-size').checkValidity()||$<HTMLInputElement>('#context-size').value==='')return;state.context=Number($<HTMLInputElement>('#context-size').value);validateReadingNumbers();viewChanged();changed();},validateReadingNumbers);
   scrubNumber($<HTMLInputElement>('#line-limit'),()=>{if(!$<HTMLInputElement>('#line-limit').checkValidity()||$<HTMLInputElement>('#line-limit').value==='')return;state.lines=Number($<HTMLInputElement>('#line-limit').value);validateReadingNumbers();viewChanged();changed();},validateReadingNumbers);
   renderChips();void checkFields();
-  return {state,examplesFound(found:number|null){$<HTMLInputElement>('#line-limit').disabled=found===0;},where:()=>scopeClause(state.metadata,$<HTMLInputElement>('#where').value),entries:()=>({metadata:JSON.stringify(state.metadata),raw:$<HTMLInputElement>('#where').value,context:state.context,lines:state.lines}),restore(params:URLSearchParams){
+  return {state,setLineLimit(visible:boolean,hasLines:boolean){
+    const label=$('#kwic-line-limit'),input=$<HTMLInputElement>('#line-limit');
+    const disabled=!visible||!hasLines;
+    if(label.hidden===!visible&&input.disabled===disabled)return;
+    if(disabled&&!input.checkValidity()){input.value=String(state.lines);paintNumber(input);}
+    label.hidden=!visible;
+    input.disabled=disabled;
+    validateReadingNumbers();
+  },where:()=>scopeClause(state.metadata,$<HTMLInputElement>('#where').value),entries:()=>({metadata:JSON.stringify(state.metadata),raw:$<HTMLInputElement>('#where').value,context:state.context,lines:state.lines}),restore(params:URLSearchParams){
     clearTimeout(searchTimer);clearTimeout(valueTimer);++requestId;Object.assign(state,questionSettings(params));
     $<HTMLInputElement>('#where').value=state.raw;$<HTMLInputElement>('#context-size').value=String(state.context);$<HTMLInputElement>('#line-limit').value=String(state.lines);
     for(const input of document.querySelectorAll('.number-span'))input.removeAttribute('aria-invalid');
     $('#reading-validation').hidden=true;$('#metadata-validation').hidden=true;
     fields=[];renderChips();void checkFields();if(!$('#metadata-picker').hidden)loadFields();
-  },localize(){localizeNumberErrors();for(const input of document.querySelectorAll<HTMLElement>('.number-span'))input.title=text('Drag horizontally or type a number. Hold Shift for precise dragging','左右にドラッグ、または数値を入力。Shift キーで細かく調整');$<HTMLInputElement>('#line-limit').setAttribute('aria-label',text('Number of examples','表示する用例数'));$<HTMLInputElement>('#context-size').setAttribute('aria-label',text('Context tokens','前後の文脈のトークン数'));renderChips();if(fields.length){const selected=$<HTMLSelectElement>('#metadata-field').value;$<HTMLSelectElement>('#metadata-field').innerHTML=fields.map(f=>`<option value="${esc(f.key)}">${esc(label(f.key))} (${f.present.toLocaleString()})</option>`).join('');$<HTMLSelectElement>('#metadata-field').value=selected;if(!$('#metadata-picker').hidden){after='';previous=[];loadValues();}}}};
+  },localize(){localizeNumberErrors();for(const input of document.querySelectorAll<HTMLElement>('.number-span'))input.title=text('Drag horizontally or type a number. Hold Shift for precise dragging','左右にドラッグ、または数値を入力。Shift キーで細かく調整');renderChips();if(fields.length){const selected=$<HTMLSelectElement>('#metadata-field').value;$<HTMLSelectElement>('#metadata-field').innerHTML=fields.map(f=>`<option value="${esc(f.key)}">${esc(label(f.key))} (${f.present.toLocaleString()})</option>`).join('');$<HTMLSelectElement>('#metadata-field').value=selected;if(!$('#metadata-picker').hidden){after='';previous=[];loadValues();}}}};
 }
