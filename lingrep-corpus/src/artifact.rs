@@ -3,10 +3,7 @@ use std::{
     fs::{self, File},
     io::{Read, SeekFrom},
     path::{Path, PathBuf},
-    sync::{
-        Arc,
-        atomic::{AtomicU64, Ordering},
-    },
+    sync::Arc,
 };
 
 use lingrep_core::{
@@ -33,11 +30,10 @@ use crate::{
         PROVENANCE_NAME, TOKENS_NAME, component_fact_guarded, encode_digest,
     },
     provenance::{AnalysisRecord, ProvenanceHandle},
+    publication::StagingDirectory,
     scratch::BudgetedScratch,
     tokens::{TokenReader, TokenWriter},
 };
-
-static STAGING_SEQUENCE: AtomicU64 = AtomicU64::new(0);
 
 const UNMAPPED_TARGET_GROUP: u64 = u64::MAX;
 
@@ -424,7 +420,7 @@ pub struct SentenceProvenance {
 /// A complete, unpublished artifact directory.
 #[derive(Debug)]
 pub(crate) struct CompletedStagingArtifact {
-    staging: StagingOwner,
+    staging: StagingDirectory,
     destination: PathBuf,
     token_name: &'static str,
     has_enhanced: bool,
@@ -457,8 +453,8 @@ impl CompletedStagingArtifact {
         components
     }
 
-    pub(crate) fn mark_published(&mut self) {
-        self.staging.disarm();
+    pub(crate) fn staging_and_destination_mut(&mut self) -> (&mut StagingDirectory, &Path) {
+        (&mut self.staging, &self.destination)
     }
 }
 
@@ -515,7 +511,7 @@ pub struct CorpusBuilder {
     sentence_truncation: Option<crate::SentenceTruncation>,
     distinct_target_groups: u64,
     discovery_digest: blake3::Hasher,
-    staging: StagingOwner,
+    staging: StagingDirectory,
 }
 
 /// Immutable, normally size-independent open view of one prepared artifact.
@@ -607,7 +603,7 @@ impl CorpusBuilder {
             .file_name()
             .and_then(|name| name.to_str())
             .unwrap_or("corpus");
-        let staging = create_staging(parent, base)?;
+        let staging = StagingDirectory::create(parent, base)?;
         let tokens_name = TOKENS_NAME;
         let token_writer = TokenWriter::create_indexed(
             &staging.join(tokens_name),
@@ -2001,66 +1997,6 @@ fn increment_scratch_count(
     counts.seek(SeekFrom::Start(offset))?;
     counts.write_existing(&count.to_le_bytes())?;
     Ok(count)
-}
-
-#[derive(Debug)]
-struct StagingOwner {
-    path: PathBuf,
-    armed: bool,
-    _lock: crate::publication::StagingLock,
-}
-
-impl StagingOwner {
-    fn path(&self) -> &Path {
-        &self.path
-    }
-
-    fn disarm(&mut self) {
-        self.armed = false;
-    }
-}
-
-impl std::ops::Deref for StagingOwner {
-    type Target = Path;
-
-    fn deref(&self) -> &Self::Target {
-        self.path()
-    }
-}
-
-impl Drop for StagingOwner {
-    fn drop(&mut self) {
-        if self.armed {
-            let _ = fs::remove_dir_all(&self.path);
-        }
-    }
-}
-
-fn create_staging(parent: &Path, base: &str) -> Result<StagingOwner, CorpusError> {
-    crate::publication::reclaim_orphaned_staging(parent, base);
-    for _ in 0..1024 {
-        let sequence = STAGING_SEQUENCE.fetch_add(1, Ordering::Relaxed);
-        let (path, lock) = crate::publication::staging_paths(
-            parent,
-            base,
-            &format!("{}-{sequence}", std::process::id()),
-        );
-        let Some(lock) = crate::publication::StagingLock::acquire(lock)? else {
-            continue;
-        };
-        match fs::create_dir(&path) {
-            Ok(()) => {
-                return Ok(StagingOwner {
-                    path,
-                    armed: true,
-                    _lock: lock,
-                });
-            }
-            Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => continue,
-            Err(error) => return Err(CorpusError::Io(error)),
-        }
-    }
-    Err(invalid_builder("could not allocate a private staging name"))
 }
 
 fn metadata_json(metadata: &Metadata) -> Result<Option<String>, CorpusError> {

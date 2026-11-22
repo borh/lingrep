@@ -4,6 +4,7 @@ use std::{
     fs::{self, File},
     io::{self, Read, Write},
     path::{Path, PathBuf},
+    sync::atomic::{AtomicU64, Ordering},
 };
 
 use crate::{
@@ -12,6 +13,8 @@ use crate::{
     error::io_at,
     fs_capability::{Capability, rename_noreplace},
 };
+
+static STAGING_SEQUENCE: AtomicU64 = AtomicU64::new(0);
 
 #[derive(Debug, thiserror::Error)]
 pub enum PublicationError {
@@ -68,38 +71,70 @@ fn publish_with_ops(
 pub(crate) fn publish_guarded_with_ops(
     ops: &impl PublicationOps,
     completed: &mut CompletedStagingArtifact,
-    mut should_continue: impl FnMut() -> bool,
+    should_continue: impl FnMut() -> bool,
     claim_commit: impl FnOnce() -> bool,
 ) -> Result<bool, CorpusError> {
-    for component in completed.publication_components() {
+    let components = completed.publication_components();
+    let (staging, destination) = completed.staging_and_destination_mut();
+    commit_directory_with_ops(
+        ops,
+        staging,
+        destination,
+        &components,
+        should_continue,
+        claim_commit,
+    )
+    .map_err(into_corpus_error)
+}
+
+fn commit_directory_with_ops(
+    ops: &impl PublicationOps,
+    staging: &mut StagingDirectory,
+    destination: &Path,
+    components: &[PathBuf],
+    mut should_continue: impl FnMut() -> bool,
+    claim_commit: impl FnOnce() -> bool,
+) -> Result<bool, PublicationError> {
+    for component in components {
         if !should_continue() {
             return Ok(false);
         }
-        ops.fsync(&component)
-            .map_err(|error| CorpusError::Io(sync_error(&component, error)))?;
+        ops.fsync(component)
+            .map_err(|error| sync_error(component, error))?;
     }
     if !should_continue() {
         return Ok(false);
     }
-    ops.fsync(completed.path())
-        .map_err(|error| CorpusError::Io(sync_error(completed.path(), error)))?;
+    ops.fsync(staging.path())
+        .map_err(|error| sync_error(staging.path(), error))?;
 
     if !claim_commit() {
         return Ok(false);
     }
-    let staging = completed.path();
-    let destination = completed.destination();
-    ops.rename_noreplace(staging, destination)
-        .map_err(|error| map_rename_error(error, staging, destination))?;
-    completed.mark_published();
+    ops.rename_noreplace(staging.path(), destination)
+        .map_err(|error| map_rename_error(error, staging.path(), destination))?;
+    staging.mark_published();
 
-    let parent = destination_parent(completed.destination());
-    if ops.fsync(parent).is_err() {
-        return Err(CorpusError::PublicationDurabilityUncertain {
-            path: completed.destination().to_path_buf(),
-        });
-    }
+    let parent = destination_parent(destination);
+    ops.fsync(parent)
+        .map_err(|source| PublicationError::DurabilityUncertain {
+            path: destination.to_path_buf(),
+            source,
+        })?;
     Ok(true)
+}
+
+fn into_corpus_error(error: PublicationError) -> CorpusError {
+    match error {
+        PublicationError::Io(source) => CorpusError::Io(source),
+        PublicationError::DestinationExists { path } => CorpusError::DestinationExists { path },
+        PublicationError::Unsupported { path, errno } => {
+            CorpusError::UnsupportedPublication { path, errno }
+        }
+        PublicationError::DurabilityUncertain { path, .. } => {
+            CorpusError::PublicationDurabilityUncertain { path }
+        }
+    }
 }
 
 fn sync_error(path: &Path, error: io::Error) -> io::Error {
@@ -111,19 +146,19 @@ fn rename_error(staging: &Path, destination: &Path, error: io::Error) -> io::Err
     io_at(operation, destination, error.kind(), error)
 }
 
-fn map_rename_error(error: io::Error, staging: &Path, destination: &Path) -> CorpusError {
+fn map_rename_error(error: io::Error, staging: &Path, destination: &Path) -> PublicationError {
     let errno = error.raw_os_error().unwrap_or(libc::EIO);
     if matches!(errno, libc::EEXIST | libc::ENOTEMPTY) {
-        CorpusError::DestinationExists {
+        PublicationError::DestinationExists {
             path: destination.to_path_buf(),
         }
     } else if Capability::NoReplaceRename.unsupported_by(&error) {
-        CorpusError::UnsupportedPublication {
+        PublicationError::Unsupported {
             path: destination.to_path_buf(),
             errno,
         }
     } else {
-        CorpusError::Io(rename_error(staging, destination, error))
+        PublicationError::Io(rename_error(staging, destination, error))
     }
 }
 
@@ -348,13 +383,22 @@ fn host_name() -> Option<Vec<u8>> {
 
 /// A directory beside a destination that is removed on drop unless it was
 /// renamed into place.
+#[derive(Debug)]
 pub(crate) struct StagingDirectory {
-    pub(crate) path: std::path::PathBuf,
-    pub(crate) published: bool,
+    pub(crate) path: PathBuf,
+    published: bool,
     _lock: StagingLock,
 }
 
 impl StagingDirectory {
+    pub(crate) fn path(&self) -> &Path {
+        &self.path
+    }
+
+    pub(crate) fn mark_published(&mut self) {
+        self.published = true;
+    }
+
     pub(crate) fn publish(&mut self, destination: &Path) -> Result<u64, PublicationError> {
         self.publish_with_ops(destination, &RealOps)
     }
@@ -367,31 +411,38 @@ impl StagingDirectory {
         let bytes = fs::read_dir(&self.path)?
             .map(|entry| Ok(entry?.metadata()?.len()))
             .sum::<io::Result<u64>>()?;
-        ops.fsync(&self.path)
-            .map_err(|error| sync_error(&self.path, error))?;
-        ops.rename_noreplace(&self.path, destination)
-            .map_err(|source| {
-                let errno = source.raw_os_error().unwrap_or(libc::EIO);
-                if matches!(errno, libc::EEXIST | libc::ENOTEMPTY) {
-                    PublicationError::DestinationExists {
-                        path: destination.to_path_buf(),
-                    }
-                } else if Capability::NoReplaceRename.unsupported_by(&source) {
-                    PublicationError::Unsupported {
-                        path: destination.to_path_buf(),
-                        errno,
-                    }
-                } else {
-                    PublicationError::Io(rename_error(&self.path, destination, source))
-                }
-            })?;
-        self.published = true;
-        ops.fsync(destination_parent(destination))
-            .map_err(|source| PublicationError::DurabilityUncertain {
-                path: destination.to_path_buf(),
-                source,
-            })?;
+        let published = commit_directory_with_ops(ops, self, destination, &[], || true, || true)?;
+        debug_assert!(published, "unconditional publication guard must commit");
         Ok(bytes)
+    }
+
+    /// Creates a new, uniquely named staging directory under `parent` for `name`,
+    /// retrying with a monotonic sequence counter if a candidate name already exists.
+    pub(crate) fn create(parent: &Path, name: &str) -> io::Result<Self> {
+        reclaim_orphaned_staging(parent, name);
+        for _ in 0..1024 {
+            let sequence = STAGING_SEQUENCE.fetch_add(1, Ordering::Relaxed);
+            let (path, lock) =
+                staging_paths(parent, name, &format!("{}-{sequence}", std::process::id()));
+            let Some(lock) = StagingLock::acquire(lock)? else {
+                continue;
+            };
+            match fs::create_dir(&path) {
+                Ok(()) => {
+                    return Ok(Self {
+                        path,
+                        published: false,
+                        _lock: lock,
+                    });
+                }
+                Err(error) if error.kind() == io::ErrorKind::AlreadyExists => continue,
+                Err(error) => return Err(error),
+            }
+        }
+        Err(io::Error::new(
+            io::ErrorKind::AlreadyExists,
+            "could not allocate a private staging name",
+        ))
     }
 
     /// Creates a new, uniquely named directory beside `destination`, or
@@ -400,24 +451,16 @@ impl StagingDirectory {
         let Some(name) = destination.file_name() else {
             return Ok(None);
         };
-        let parent = destination
-            .parent()
-            .filter(|parent| !parent.as_os_str().is_empty())
-            .unwrap_or_else(|| Path::new("."));
-        let nanos = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .map_or(0, |elapsed| elapsed.as_nanos());
-        let name = name.to_string_lossy();
-        reclaim_orphaned_staging(parent, &name);
-        let (path, lock) = staging_paths(parent, &name, &format!("{}-{nanos}", std::process::id()));
-        let lock = StagingLock::acquire(lock)?
-            .ok_or_else(|| io::Error::from(io::ErrorKind::AlreadyExists))?;
-        std::fs::create_dir(&path)?;
-        Ok(Some(Self {
-            path,
-            published: false,
-            _lock: lock,
-        }))
+        let parent = destination_parent(destination);
+        Self::create(parent, &name.to_string_lossy()).map(Some)
+    }
+}
+
+impl std::ops::Deref for StagingDirectory {
+    type Target = Path;
+
+    fn deref(&self) -> &Self::Target {
+        self.path()
     }
 }
 
@@ -1116,5 +1159,26 @@ mod tests {
             .verify_integrity()
             .await
             .unwrap();
+    }
+
+    #[test]
+    fn create_beside_allocates_distinct_staging_directories_without_colliding() {
+        let directory = tempfile::tempdir().unwrap();
+        let destination = directory.path().join("output");
+        let staged = (0..16)
+            .map(|_| {
+                super::StagingDirectory::create_beside(&destination)
+                    .unwrap()
+                    .unwrap()
+            })
+            .collect::<Vec<_>>();
+        let paths = staged
+            .iter()
+            .map(|dir| dir.path().to_path_buf())
+            .collect::<std::collections::BTreeSet<_>>();
+        assert_eq!(paths.len(), 16);
+        assert!(paths.iter().all(|path| path.is_dir()));
+        drop(staged);
+        assert!(paths.iter().all(|path| !path.exists()));
     }
 }
