@@ -57,7 +57,8 @@ pub use limits::{CompileLimitError, CompileLimits, CompilerStats, TightenedCompi
 pub use model::{CatalogVectors, NearQuery, NearTest, SimilarityThreshold};
 pub use no_match::{
     AttributeTestOutcome, ClaimSite, ConsumedToken, DefinitionExplanation, DefinitionOutcome,
-    ElementLocation, NoMatchExplainer, NoMatchOutcome, NoMatchReport, StopReason, StoppedAttempt,
+    ElementLocation, NoMatchExplainer, NoMatchOutcome, NoMatchReport, Relaxation,
+    RelaxationOutcome, RelaxedConstraint, StopReason, StoppedAttempt,
 };
 pub use render::{render_diagnostics, render_pattern_error};
 

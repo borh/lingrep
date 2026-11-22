@@ -359,6 +359,7 @@ fn claims_are_checked_against_the_definition_and_against_what_policy_publishes()
                     ))
                 ),
             ],
+            vacuous: Vec::new(),
         })
     );
     assert_eq!(run_of("pattern a := 甲.").claims, SampleClaims::Undeclared);
@@ -531,5 +532,25 @@ fn a_match_token_carries_the_source_ranges_of_the_element_and_reference_that_con
             vec!["[text=と]".to_owned()],
             vec!["[text=犬]".to_owned()],
         ]
+    );
+}
+
+#[test]
+fn a_counterexample_that_no_single_relaxation_matches_is_listed_as_vacuous() {
+    use lingrep_web::sample::{SampleClaims, VacuousClaim};
+    // `甲丁` is one token test from `甲 乙`; `丁丁丁` is not within one
+    // relaxation of it.
+    let run = run_of("counterexamples: [\"甲丁\", \"丁丁丁\"] pattern a := 甲 乙.");
+    let SampleClaims::Checked(report) = run.claims else {
+        panic!("the claims are checked");
+    };
+    assert_eq!(report.failures, Vec::new());
+    assert_eq!(
+        report.vacuous,
+        vec![VacuousClaim {
+            definition: "a".into(),
+            example: "丁丁丁".into(),
+            tried: 4,
+        }]
     );
 }

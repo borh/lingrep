@@ -114,6 +114,22 @@ definition when the definition does not write it, and the sample runs again.
 No action is offered when the list already holds the sentence or when the
 definition inherits the list from `defaults` or a bundle.
 
+A counterexample passes whenever its definition does not match it, including
+when the sentence is unrelated to the definition. Verification therefore also
+evaluates each passing counterexample against its definition once per
+attribute test, token element and lookaround of the body, with that one
+constraint removed. A counterexample that no such relaxation matches is
+reported under `vacuous_counterexamples` with the relaxations tried; it does
+not change the exit status. `unchecked_counterexamples` lists those whose
+definition the explanation pass cannot evaluate.
+
+`--propose-counterexamples FILE` runs the same relaxations over a file with one
+sentence per line, analyzed like the claims. `counterexample_candidates` lists
+sentences a definition does not match and does match with one constraint
+removed, at most three per definition and constraint, each with the constraint
+and the matched token span. The report gives the number of sentences scanned
+and the definitions that were not evaluated; it describes that file only.
+
 ### Pattern diagrams
 
 `check --diagram` displays recognition flow instead of the check report. No

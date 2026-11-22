@@ -308,6 +308,7 @@ fn a_run_names_its_tokenizer_its_missing_attributes_and_each_failed_claim() {
                     }],
                 }))),
             }],
+            vacuous: Vec::new(),
         }),
     );
     assert!(!html.contains("data-sample-unavailable"));
@@ -351,6 +352,7 @@ fn a_run_names_its_tokenizer_its_missing_attributes_and_each_failed_claim() {
                 kind: ClaimFailureKind::Malformed,
                 why_not: None,
             }],
+            vacuous: Vec::new(),
         }),
     );
     assert!(html.contains("Examples and counterexamples checked (0)."));
@@ -361,8 +363,16 @@ fn a_run_names_its_tokenizer_its_missing_attributes_and_each_failed_claim() {
         SampleClaims::Checked(ClaimsReport {
             checked: 2,
             failures: Vec::new(),
+            vacuous: vec![lingrep_web::sample::VacuousClaim {
+                definition: "v".into(),
+                example: "<丁>".into(),
+                tried: 4,
+            }],
         }),
     );
     assert!(html.contains("data-sample-refused"));
     assert!(html.contains(r#"data-sample-claims="hold""#));
+    assert!(html.contains("data-sample-claims-vacuous"));
+    assert!(html.contains(r#"<code>v</code> <span lang="ja">&#60;丁&#62;</span>"#));
+    assert!(html.contains("(4 relaxations tried)"));
 }

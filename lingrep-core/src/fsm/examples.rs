@@ -80,8 +80,8 @@ pub struct ExampleReport {
 /// A caveat that applies only to the `must_match == false` half: a
 /// counterexample passes whenever the definition does not match it, including
 /// when the text could never have matched *anything* in the catalog. Such a
-/// claim is vacuous — it would pass against any definition — and nothing here
-/// detects that. Measured, not hypothetical: `をいずれ近いうちに実現を目指す`
+/// claim is vacuous — it would pass against any definition — and this pass
+/// does not detect that; `CompileOutput::relax_counterexamples` does. Measured, not hypothetical: `をいずれ近いうちに実現を目指す`
 /// was first proposed for `double_wo_exclude_directional_frame` and matches no
 /// pattern in that catalog at all, because its final token is a 動詞 and every
 /// anchor excludes 動詞.

@@ -520,6 +520,9 @@ pub struct CheckArgs {
     /// Execute examples and counterexamples with the selected native analyzer.
     #[arg(long, conflicts_with = "schema")]
     pub verify_examples: bool,
+    /// With --verify-examples: read one sentence per line from FILE and list, per definition, sentences it does not match and would match with one constraint removed.
+    #[arg(long, requires = "verify_examples", value_name = "FILE")]
+    pub propose_counterexamples: Option<PathBuf>,
     /// Vibrato dictionary for example verification; overrides LINGREP_DICTIONARY_PATH.
     #[arg(long, requires = "verify_examples", value_name = "PATH")]
     pub dict_path: Option<PathBuf>,

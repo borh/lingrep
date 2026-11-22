@@ -347,3 +347,39 @@ fn the_verified_nesting_claim_counts_are_what_the_catalogs_contain() {
 
     assert_eq!(counts, expected);
 }
+
+#[test]
+fn a_counterexample_no_single_relaxation_matches_is_vacuous() {
+    use lingrep_core::fsm::RelaxationOutcome;
+    let (name, text) = tracked_catalog_sources()
+        .into_iter()
+        .find(|(name, _)| name == "patterns/double-wo.lx")
+        .expect("the catalog is tracked");
+    let output = compile_catalog(PatternSource::named(&name, &text), CompileLimits::default())
+        .expect("the catalog compiles");
+    let relax = |sentence: &str| {
+        output.relax_definition(
+            "double_wo_exclude_directional_frame",
+            &tokenize_japanese(sentence)[..],
+        )
+    };
+
+    // The definition's own counterexample is one particle from its example.
+    let RelaxationOutcome::Distinguished { by, .. } = relax("を上へ左手を下") else {
+        panic!("a minimal pair matches under one relaxation");
+    };
+    assert_eq!(
+        by.constraint,
+        lingrep_core::fsm::RelaxedConstraint::AttributeTest {
+            attribute: "unidic.orthbase".to_owned(),
+            test: "=に".to_owned()
+        }
+    );
+
+    // Its final token is a 動詞, which every anchor of the catalog excludes.
+    let RelaxationOutcome::Vacuous { tried } = relax("をいずれ近いうちに実現を目指す")
+    else {
+        panic!("no single relaxation reaches this sentence");
+    };
+    assert!(!tried.is_empty());
+}

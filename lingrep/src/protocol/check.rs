@@ -216,6 +216,96 @@ pub struct ExampleVerification {
     pub failures: Vec<ExampleFailure>,
     pub post_policy_checked: u64,
     pub post_policy_failures: Vec<ExampleFailure>,
+    /// Counterexamples that hold and that no single relaxation of their
+    /// definition matches. Additive under the `lingrep.check/v1` rule.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub vacuous_counterexamples: Vec<VacuousCounterexample>,
+    /// Holding counterexamples whose relaxations were not all evaluated.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub unchecked_counterexamples: Vec<UncheckedCounterexample>,
+    /// The `--propose-counterexamples` scan, when one was requested.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub counterexample_candidates: Option<CandidateScan>,
+}
+
+/// One constraint of a definition that a relaxation removes.
+#[derive(
+    Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize, schemars::JsonSchema,
+)]
+pub struct Relaxation {
+    /// `attribute_test`: one attribute test of a token element holds for
+    /// every token. `element`: a token element may match no token.
+    /// `lookaround`: a lookaround holds everywhere.
+    pub kind: String,
+    /// The token element or lookaround that carries the constraint.
+    pub element: ElementLocation,
+    /// For `attribute_test`: the attribute.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub attribute: Option<String>,
+    /// For `attribute_test`: the operator and operand, such as `=猫`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub test: Option<String>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
+pub struct VacuousCounterexample {
+    pub definition: String,
+    pub example: String,
+    /// Every relaxation tried: each attribute test, token element and
+    /// lookaround of the definition body, references expanded, one at a time.
+    pub relaxations_tried: Vec<Relaxation>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
+pub struct UncheckedCounterexample {
+    pub definition: String,
+    pub example: String,
+    pub reason: String,
+}
+
+/// Sentences of one file that a definition does not match and one relaxation
+/// of it does.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
+pub struct CandidateScan {
+    pub source: String,
+    /// Non-empty lines of `source` that were analyzed, each as one sentence.
+    pub sentences_scanned: u64,
+    /// Pattern definitions each sentence was evaluated against.
+    pub definitions_evaluated: u64,
+    /// Definitions the explanation pass cannot evaluate, which have no candidates.
+    pub definitions_skipped: Vec<String>,
+    /// At most `candidates_per_relaxation` sentences per definition and relaxation.
+    pub candidates_per_relaxation: u64,
+    pub candidates: Vec<CounterexampleCandidate>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
+pub struct CounterexampleCandidate {
+    pub definition: String,
+    pub sentence: String,
+    /// The constraint whose removal makes the definition match `sentence`.
+    pub relaxation: Relaxation,
+    /// The `[start, end)` token span the relaxed definition matches.
+    pub span: [u64; 2],
+}
+
+impl From<lingrep_core::fsm::Relaxation> for Relaxation {
+    fn from(relaxation: lingrep_core::fsm::Relaxation) -> Self {
+        use lingrep_core::fsm::RelaxedConstraint;
+        let (kind, attribute, test) = match relaxation.constraint {
+            RelaxedConstraint::AttributeTest { attribute, test } => {
+                ("attribute_test", Some(attribute), Some(test))
+            }
+            RelaxedConstraint::Element => ("element", None, None),
+            RelaxedConstraint::Lookaround => ("lookaround", None, None),
+        };
+        Self {
+            kind: kind.to_owned(),
+            element: relaxation.element.into(),
+            attribute,
+            test,
+        }
+    }
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
@@ -272,7 +362,9 @@ pub struct StoppedAttempt {
     pub tests: Vec<AttributeTest>,
 }
 
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
+#[derive(
+    Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize, schemars::JsonSchema,
+)]
 pub struct ElementLocation {
     pub source: String,
     pub line: u64,
@@ -356,13 +448,7 @@ impl NoMatchExplanation {
                     position: attempt.position as u64,
                     token: surface(attempt.position),
                     stop: stop.into(),
-                    element: attempt.element.map(|element| ElementLocation {
-                        source: element.source.to_string(),
-                        line: element.line as u64,
-                        column: element.column as u64,
-                        byte_start: element.byte_range.start as u64,
-                        byte_end: element.byte_range.end as u64,
-                    }),
+                    element: attempt.element.map(ElementLocation::from),
                     tests: tests
                         .into_iter()
                         .map(|test| AttributeTest {
@@ -391,4 +477,16 @@ pub struct DefinitionRevision {
     pub kind: String,
     pub body_group: u64,
     pub expanded: String,
+}
+
+impl From<lingrep_core::fsm::ElementLocation> for ElementLocation {
+    fn from(element: lingrep_core::fsm::ElementLocation) -> Self {
+        Self {
+            source: element.source.to_string(),
+            line: element.line as u64,
+            column: element.column as u64,
+            byte_start: element.byte_range.start as u64,
+            byte_end: element.byte_range.end as u64,
+        }
+    }
 }

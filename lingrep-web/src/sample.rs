@@ -708,6 +708,17 @@ pub enum SampleClaims {
 pub struct ClaimsReport {
     pub checked: usize,
     pub failures: Vec<ClaimFailure>,
+    /// Counterexamples that hold and that the definition does not match with
+    /// any one constraint removed.
+    pub vacuous: Vec<VacuousClaim>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct VacuousClaim {
+    pub definition: String,
+    pub example: String,
+    /// Relaxations tried: each attribute test, token element and lookaround.
+    pub tried: usize,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -812,6 +823,24 @@ pub fn sample_run(
                             });
                     }
                 }
+                report.vacuous = output
+                    .relax_counterexamples(tokenize)
+                    .into_iter()
+                    .filter_map(|(definition, example, outcome)| match outcome {
+                        lingrep_core::fsm::RelaxationOutcome::Vacuous { tried }
+                            if !report.failures.iter().any(|failure| {
+                                failure.definition == definition && failure.example == example
+                            }) =>
+                        {
+                            Some(VacuousClaim {
+                                definition,
+                                example,
+                                tried: tried.len(),
+                            })
+                        }
+                        _ => None,
+                    })
+                    .collect();
                 SampleClaims::Checked(report)
             }
             Err(error) => SampleClaims::Failed(error.to_string()),
@@ -863,6 +892,7 @@ fn claims_report(report: ExampleReport) -> ClaimsReport {
     ClaimsReport {
         checked: report.checked,
         failures,
+        vacuous: Vec::new(),
     }
 }
 

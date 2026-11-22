@@ -643,6 +643,8 @@
   "sample.add_example": "この文を定義の examples に追加",
   "sample.add_counterexample": "この文を定義の counterexamples に追加",
   "sample.claim_stale": "この結果の計算後にパターンが変更されました。サンプルを再実行してから追加してください。",
+  "sample.claims_vacuous": "制約を検証していない counterexample（{count} 件）。属性テスト・トークン要素・前後条件のどれか一つを外しても、定義はこれらに一致しません。",
+  "sample.claims_vacuous_tried": "（{tried} 通りの緩和を試行）",
   "sample.tokens_range": "トークン {start}..{end}",
   "status.abandoned": "ページが閉じられたか接続が切れたため、この検索は停止されました。検索を再実行してください。",
   "status.current": "結果は最新です。",

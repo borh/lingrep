@@ -147,6 +147,7 @@ impl NoMatchExplainer {
             start: 0,
             recording: true,
             best: None,
+            relaxed: None,
         };
         let mut spans = Vec::new();
         let mut starts_tried = 0;
@@ -347,6 +348,10 @@ struct Run<'t, S: ?Sized> {
     /// attempt.
     recording: bool,
     best: Option<Failure>,
+    /// The relaxed constraint: a node address and the index of one attribute
+    /// test of a token element. Without an index, a lookaround holds and a
+    /// token element is optional.
+    relaxed: Option<(usize, Option<usize>)>,
 }
 
 impl<S: TokenSequence + ?Sized> Run<'_, S> {
@@ -392,19 +397,31 @@ impl<S: TokenSequence + ?Sized> Run<'_, S> {
         let at = |held: bool| held.then_some(start).into_iter().collect::<BTreeSet<_>>();
         match node.as_ref() {
             Node::Token { predicate, span } => {
+                let relaxed = self
+                    .relaxed
+                    .filter(|(site, _)| *site == Rc::as_ptr(node) as usize);
+                // A relaxed element is optional.
+                let optional = relaxed.is_some_and(|(_, test)| test.is_none());
                 if start >= self.tokens.len() {
                     self.fail(start, Some(*span), StopReason::SentenceEnded);
-                    return BTreeSet::new();
+                    return at(optional);
                 }
                 let tests = predicate
                     .iter()
-                    .map(|attribute| attribute_test(self.tokens, start, attribute))
+                    .enumerate()
+                    .map(|(index, attribute)| {
+                        let mut test = attribute_test(self.tokens, start, attribute);
+                        test.held |= relaxed == Some((Rc::as_ptr(node) as usize, Some(index)));
+                        test
+                    })
                     .collect::<Vec<_>>();
+                let mut ends = at(optional);
                 if tests.iter().all(|test| test.held) {
-                    return BTreeSet::from([start + 1]);
+                    ends.insert(start + 1);
+                } else {
+                    self.fail(start, Some(*span), StopReason::Token { tests });
                 }
-                self.fail(start, Some(*span), StopReason::Token { tests });
-                BTreeSet::new()
+                ends
             }
             Node::SentenceStart => {
                 if start != 0 {
@@ -433,7 +450,8 @@ impl<S: TokenSequence + ?Sized> Run<'_, S> {
                     }
                 };
                 self.recording = recording;
-                let held = found == (*polarity == LookPolarity::Positive);
+                let held = found == (*polarity == LookPolarity::Positive)
+                    || self.relaxed == Some((Rc::as_ptr(node) as usize, None));
                 if !held {
                     self.fail(
                         start,
@@ -936,6 +954,7 @@ impl super::CompileOutput {
             start,
             recording: false,
             best: None,
+            relaxed: None,
         };
         let mut consumed = Vec::new();
         let derived = run.derive(&root, start, end, &mut Vec::new(), &mut consumed);
@@ -951,5 +970,231 @@ impl super::CompileOutput {
                 })
                 .collect()
         })
+    }
+}
+
+/// One constraint of a definition that a relaxation treats as holding.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Relaxation {
+    /// The token element or lookaround that carries the constraint.
+    pub element: ElementLocation,
+    pub constraint: RelaxedConstraint,
+}
+
+/// What a [`Relaxation`] removes.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum RelaxedConstraint {
+    /// One attribute test of a token element holds for every token; the
+    /// fields are `attribute` and `test` of [`AttributeTestOutcome`].
+    AttributeTest { attribute: String, test: String },
+    /// A token element may match no token.
+    Element,
+    /// A lookaround holds everywhere.
+    Lookaround,
+}
+
+/// Whether a sentence that a definition does not match would match it with
+/// one constraint removed.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum RelaxationOutcome {
+    /// The body matches with this one constraint treated as holding.
+    Distinguished {
+        by: Relaxation,
+        span: (usize, usize),
+    },
+    /// The body matches as written, so a `where` clause, a span constraint or
+    /// result policy excludes the sentence.
+    BodyMatches,
+    /// No single relaxation matches. `tried` lists them.
+    Vacuous { tried: Vec<Relaxation> },
+    /// The relaxations were not all evaluated.
+    Unchecked { reason: String },
+}
+
+/// Relaxations evaluated per sentence before the answer is `Unchecked`.
+const RELAXATION_LIMIT: usize = 512;
+
+impl super::CompileOutput {
+    /// Evaluates `definition` on `tokens` once per attribute test, per token
+    /// element and per lookaround of its body, references expanded, with that
+    /// one constraint removed.
+    #[must_use]
+    pub fn relax_definition<S: TokenSequence + ?Sized>(
+        &self,
+        definition: &str,
+        tokens: &S,
+    ) -> RelaxationOutcome {
+        let explainer = &self.no_match;
+        let unchecked = |reason: String| RelaxationOutcome::Unchecked { reason };
+        let Some(target) = explainer
+            .program
+            .definitions
+            .iter()
+            .find(|candidate| candidate.name == definition && candidate.expr().is_some())
+        else {
+            return unchecked(format!("no pattern definition is named {definition}"));
+        };
+        let mut nodes = Nodes {
+            program: &explainer.program,
+            by_definition: HashMap::new(),
+            has_where: false,
+        };
+        let root = match nodes.definition(target) {
+            Ok(root) => root,
+            Err(construct) => {
+                return unchecked(format!(
+                    "the explanation pass does not evaluate {construct}"
+                ));
+            }
+        };
+        let mut sites = Vec::new();
+        collect_sites(&root, &mut BTreeSet::new(), &mut sites);
+        if sites.len() > RELAXATION_LIMIT {
+            return unchecked(format!(
+                "the body has {} constraints; at most {RELAXATION_LIMIT} are relaxed",
+                sites.len()
+            ));
+        }
+        let matched_span = |relaxed| {
+            let mut run = Run {
+                tokens,
+                memo: HashMap::new(),
+                steps: 0,
+                truncated: false,
+                start: 0,
+                recording: false,
+                best: None,
+                relaxed,
+            };
+            let span = (0..tokens.len()).find_map(|start| {
+                let end = run
+                    .ends(&root, start)
+                    .iter()
+                    .copied()
+                    .rfind(|end| *end > start)?;
+                Some((start, end))
+            });
+            (span, run.truncated)
+        };
+        let (unrelaxed, mut truncated) = matched_span(None);
+        if unrelaxed.is_some() {
+            return RelaxationOutcome::BodyMatches;
+        }
+        let relaxation = |site: &Site<'_>| Relaxation {
+            element: explainer.location(site.span),
+            constraint: match (site.test, site.lookaround) {
+                (Some(attribute), _) => {
+                    let test = render_test(&attribute.value);
+                    RelaxedConstraint::AttributeTest {
+                        attribute: attribute.attr.to_string(),
+                        test: if attribute.complement {
+                            format!("!({test})")
+                        } else {
+                            test
+                        },
+                    }
+                }
+                (None, true) => RelaxedConstraint::Lookaround,
+                (None, false) => RelaxedConstraint::Element,
+            },
+        };
+        for site in &sites {
+            let (span, stopped) = matched_span(Some((site.node, site.index)));
+            truncated |= stopped;
+            if let Some(span) = span {
+                return RelaxationOutcome::Distinguished {
+                    by: relaxation(site),
+                    span,
+                };
+            }
+        }
+        if truncated {
+            return unchecked("the explanation pass reached its step limit".to_owned());
+        }
+        RelaxationOutcome::Vacuous {
+            tried: sites.iter().map(relaxation).collect(),
+        }
+    }
+}
+
+impl super::CompileOutput {
+    /// [`Self::relax_definition`] for every string in every pattern's
+    /// `counterexamples`, as `(definition, counterexample, outcome)` in
+    /// catalog order.
+    pub fn relax_counterexamples(
+        &self,
+        tokenize: &dyn Fn(&str) -> Vec<crate::token_match::TokenInfo>,
+    ) -> Vec<(String, String, RelaxationOutcome)> {
+        let mut outcomes = Vec::new();
+        for (name, pattern) in self.matcher.patterns() {
+            let Some(entries) = pattern
+                .metadata
+                .get("counterexamples")
+                .and_then(|value| value.as_array())
+            else {
+                continue;
+            };
+            for example in entries.iter().filter_map(|entry| entry.as_str()) {
+                let outcome = self.relax_definition(name, tokenize(example).as_slice());
+                outcomes.push((name.to_string(), example.to_owned(), outcome));
+            }
+        }
+        outcomes
+    }
+}
+
+struct Site<'p> {
+    node: usize,
+    index: Option<usize>,
+    span: SourceSpan,
+    test: Option<&'p SymbolicAttrValue>,
+    lookaround: bool,
+}
+
+/// Every attribute test, token element and lookaround under `node`, each
+/// node once.
+fn collect_sites<'p>(node: &Rc<Node<'p>>, seen: &mut BTreeSet<usize>, sites: &mut Vec<Site<'p>>) {
+    let address = Rc::as_ptr(node) as usize;
+    if !seen.insert(address) {
+        return;
+    }
+    match node.as_ref() {
+        Node::Token { predicate, span } => {
+            sites.extend(predicate.iter().enumerate().map(|(index, test)| Site {
+                node: address,
+                index: Some(index),
+                span: *span,
+                test: Some(test),
+                lookaround: false,
+            }));
+            sites.push(Site {
+                node: address,
+                index: None,
+                span: *span,
+                test: None,
+                lookaround: false,
+            });
+        }
+        Node::Lookaround { body, span, .. } => {
+            sites.push(Site {
+                node: address,
+                index: None,
+                span: *span,
+                test: None,
+                lookaround: true,
+            });
+            collect_sites(body, seen, sites);
+        }
+        Node::SentenceStart | Node::SentenceEnd => {}
+        Node::Reference { body, .. } => collect_sites(body, seen, sites),
+        Node::Repeat { node, .. } => collect_sites(node, seen, sites),
+        Node::Sequence(nodes)
+        | Node::Alternation(nodes)
+        | Node::Intersection(nodes)
+        | Node::AnyOrder(nodes) => {
+            for node in nodes {
+                collect_sites(node, seen, sites);
+            }
+        }
     }
 }

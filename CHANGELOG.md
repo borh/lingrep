@@ -44,6 +44,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   before any corpus run. It is the drawing `ling check --diagram` produces,
   with the same option to expand references. When the text stops compiling,
   the last diagram stays and is marked as out of date.
+- `ling check --verify-examples` and the Sample debugger list counterexamples
+  that do not test a constraint: the definition does not match them with any
+  one attribute test, token element or lookaround removed. They are reported
+  separately from failures and do not change the exit status.
+  `--propose-counterexamples FILE` reads one sentence per line and lists, per
+  definition and constraint, sentences the definition does not match and
+  would match without that constraint, with the number of sentences scanned.
 
 ### Changed
 
