@@ -258,9 +258,11 @@ impl BoundScope {
         artifact: &CorpusArtifact,
         projection: &BoundProjection,
         division_kinds: Vec<compact_str::CompactString>,
+        decode_pool: Arc<rayon::ThreadPool>,
     ) -> Result<PreparedSentenceSource, CorpusError> {
         let source = artifact
             .bound_sentence_source(projection)?
+            .with_decode_pool(decode_pool)
             .with_admission(self.admission);
         match self.provenance {
             Some((provenance, runtime)) if !division_kinds.is_empty() => artifact

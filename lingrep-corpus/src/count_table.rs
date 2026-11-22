@@ -427,6 +427,7 @@ pub struct CountTableWriter {
     document_patterns: u64,
     open: Option<OpenEntry>,
     last_key: Option<(u32, Vec<u32>)>,
+    pool: Option<Arc<rayon::ThreadPool>>,
 }
 
 impl CountTableWriter {
@@ -553,7 +554,15 @@ impl CountTableWriter {
             document_patterns: 0,
             open: None,
             last_key: None,
+            pool: None,
         })
+    }
+
+    /// Runs ranking work during [`Self::finish`] on `pool` instead of Rayon's global pool.
+    #[must_use]
+    pub fn with_pool(mut self, pool: Arc<rayon::ThreadPool>) -> Self {
+        self.pool = Some(pool);
+        self
     }
 
     fn streams(&mut self) -> Result<&mut Streams, CountTableError> {
@@ -805,19 +814,22 @@ impl CountTableWriter {
             let mut ranked_map = unsafe { MmapMut::map_mut(&ranked_file)? };
             let ranked: &mut [u32] = bytemuck::try_cast_slice_mut(&mut ranked_map[..])
                 .map_err(|error| writer_error(format!("ranked entries: {error}")))?;
-            ranked
-                .par_iter_mut()
-                .enumerate()
-                .for_each(|(entry, slot)| *slot = entry as u32);
-            for pattern in &self.patterns {
-                check_cancellation(cancellation)?;
-                let [start, end] = pattern.entries;
-                ranked[start as usize..end as usize].par_sort_unstable_by(|left, right| {
-                    totals[*right as usize]
-                        .cmp(&totals[*left as usize])
-                        .then(left.cmp(right))
-                });
-            }
+            crate::in_pool(self.pool.as_deref(), || -> Result<(), CountTableError> {
+                ranked
+                    .par_iter_mut()
+                    .enumerate()
+                    .for_each(|(entry, slot)| *slot = entry as u32);
+                for pattern in &self.patterns {
+                    check_cancellation(cancellation)?;
+                    let [start, end] = pattern.entries;
+                    ranked[start as usize..end as usize].par_sort_unstable_by(|left, right| {
+                        totals[*right as usize]
+                            .cmp(&totals[*left as usize])
+                            .then(left.cmp(right))
+                    });
+                }
+                Ok(())
+            })?;
             let mut ranked_totals = Staged::create(&self.staging.path, RANKED_TOTALS)?;
             for chunk in ranked.chunks(CANCELLATION_INTERVAL) {
                 check_cancellation(cancellation)?;
@@ -1057,6 +1069,7 @@ pub struct CountTable {
     document_sentences: crate::mapped_index::U64Index,
     document_tokens: crate::mapped_index::U64Index,
     instance: u64,
+    pool: Option<Arc<rayon::ThreadPool>>,
 }
 
 static NEXT_INSTANCE: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
@@ -1201,6 +1214,13 @@ impl Iterator for TableRows<'_> {
 }
 
 impl CountTable {
+    /// Runs parallel table queries on `pool` instead of Rayon's global pool.
+    #[must_use]
+    pub fn with_pool(mut self, pool: Arc<rayon::ThreadPool>) -> Self {
+        self.pool = Some(pool);
+        self
+    }
+
     /// Opens the table at `path` and rejects it unless its key equals
     /// `expected`. Checks the format version and every section's length; the
     /// contents are checked by [`Self::verify`].
@@ -1364,6 +1384,7 @@ impl CountTable {
             document_sentences: small(DOCUMENT_SENTENCES)?,
             document_tokens: small(DOCUMENT_TOKENS)?,
             instance: NEXT_INSTANCE.fetch_add(1, std::sync::atomic::Ordering::Relaxed),
+            pool: None,
             path: path.to_path_buf(),
             header,
         };
@@ -1986,12 +2007,14 @@ impl CountTable {
                     return Some(Err(error));
                 }
                 let stop = start.saturating_add(CANCELLATION_INTERVAL).min(end);
-                let rows = (start..stop)
-                    .into_par_iter()
-                    .with_min_len(4096)
-                    .map(|entry| self.conditioned(entry as u32, &mask.admitted))
-                    .filter(|row| row.as_ref().map_or(true, |row| row.count > 0))
-                    .collect::<Result<Vec<_>, _>>();
+                let rows = crate::in_pool(self.pool.as_deref(), || {
+                    (start..stop)
+                        .into_par_iter()
+                        .with_min_len(4096)
+                        .map(|entry| self.conditioned(entry as u32, &mask.admitted))
+                        .filter(|row| row.as_ref().map_or(true, |row| row.count > 0))
+                        .collect::<Result<Vec<_>, _>>()
+                });
                 start = stop;
                 match rows {
                     Ok(rows) => block = rows.into_iter(),
@@ -2014,13 +2037,15 @@ impl CountTable {
         if mask.table != self.instance {
             return Err(corrupt("mask was built for a different table"));
         }
-        let rows = self
-            .pattern_range(pattern)?
-            .into_par_iter()
-            .with_min_len(4096)
-            .map(|entry| self.conditioned(entry as u32, &mask.admitted))
-            .filter(|row| row.as_ref().map_or(true, |row| row.count > 0))
-            .collect::<Result<Vec<_>, _>>()?;
+        let range = self.pattern_range(pattern)?;
+        let rows = crate::in_pool(self.pool.as_deref(), || {
+            range
+                .into_par_iter()
+                .with_min_len(4096)
+                .map(|entry| self.conditioned(entry as u32, &mask.admitted))
+                .filter(|row| row.as_ref().map_or(true, |row| row.count > 0))
+                .collect::<Result<Vec<_>, _>>()
+        })?;
         Ok(ranked(rows, usize::MAX))
     }
 
@@ -2039,12 +2064,14 @@ impl CountTable {
         while at < end {
             check_cancellation(cancellation)?;
             let stop = (at + CANCELLATION_INTERVAL).min(end);
-            let rows = (at..stop)
-                .into_par_iter()
-                .with_min_len(4096)
-                .map(|entry| self.conditioned(entry as u32, &mask.admitted))
-                .filter(|row| row.as_ref().map_or(true, |row| row.count > 0))
-                .collect::<Result<Vec<_>, _>>()?;
+            let rows = crate::in_pool(self.pool.as_deref(), || {
+                (at..stop)
+                    .into_par_iter()
+                    .with_min_len(4096)
+                    .map(|entry| self.conditioned(entry as u32, &mask.admitted))
+                    .filter(|row| row.as_ref().map_or(true, |row| row.count > 0))
+                    .collect::<Result<Vec<_>, _>>()
+            })?;
             for row in rows {
                 ordered.add(
                     RowOrder {
@@ -2247,15 +2274,17 @@ impl CountTable {
                 break;
             }
             let stop = (at + block).min(order.len());
-            let found = order[at..stop]
-                .par_iter()
-                .with_min_len(1024)
-                .map(|entry| self.conditioned(*entry, &mask.admitted))
-                .filter(|row| {
-                    row.as_ref()
-                        .map_or(true, |row| row.count > 0 && row.count >= floor)
-                })
-                .collect::<Result<Vec<_>, _>>()?;
+            let found = crate::in_pool(self.pool.as_deref(), || {
+                order[at..stop]
+                    .par_iter()
+                    .with_min_len(1024)
+                    .map(|entry| self.conditioned(*entry, &mask.admitted))
+                    .filter(|row| {
+                        row.as_ref()
+                            .map_or(true, |row| row.count > 0 && row.count >= floor)
+                    })
+                    .collect::<Result<Vec<_>, _>>()
+            })?;
             best.extend(found);
             best = ranked(best, limit);
             at = stop;

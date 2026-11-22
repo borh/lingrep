@@ -102,3 +102,15 @@ pub use siblings::{
 };
 pub use tokens::{PreparedDocumentStats, PreparedSentenceSource, PreparedTokenReader};
 pub use verify::{ComponentVerification, VerificationReport};
+
+/// Executes `work` inside `pool` when a caller-owned pool is supplied, or
+/// directly on the current thread (inheriting any enclosing Rayon pool) otherwise.
+pub(crate) fn in_pool<R: Send>(
+    pool: Option<&rayon::ThreadPool>,
+    work: impl FnOnce() -> R + Send,
+) -> R {
+    match pool {
+        Some(pool) => pool.install(work),
+        None => work(),
+    }
+}

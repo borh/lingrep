@@ -103,8 +103,15 @@ pub fn run_render(
         .map_err(CliError::InvalidArgs)?
         .with_max_frontmatter_bytes(config.limits.max_stage_input_bytes);
     let artifact = CorpusArtifact::open(&args.artifact)?;
+    let pool = Arc::new(
+        rayon::ThreadPoolBuilder::new()
+            .num_threads(config.workers)
+            .build()
+            .map_err(|error| CliError::Corpus(format!("failed to create worker pool: {error}")))?,
+    );
     let writer = ReadingSidecarWriter::new(&artifact, markdown.clone(), &args.output)
-        .map_err(sidecar_error)?;
+        .map_err(sidecar_error)?
+        .with_pool(pool);
     let progress = PresentationProgress::stderr(
         &config.stderr,
         config.progress,

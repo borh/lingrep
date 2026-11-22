@@ -209,6 +209,7 @@ pub struct VectorTable {
     provenance: Option<VectorProvenance>,
     digest: OnceLock<blake3::Hash>,
     answered: Mutex<AnswerCache>,
+    pool: Option<Arc<rayon::ThreadPool>>,
 }
 
 struct Malformed {
@@ -250,6 +251,7 @@ impl VectorTable {
             provenance: None,
             digest: OnceLock::new(),
             answered: Mutex::new(AnswerCache::new()),
+            pool: None,
         };
         if let Some(manifest) = manifest {
             let actual = table.digest().to_hex();
@@ -284,6 +286,13 @@ impl VectorTable {
         })
     }
 
+    /// Runs parallel chunk scans on `pool` instead of Rayon's global pool.
+    #[must_use]
+    pub fn with_pool(mut self, pool: Arc<rayon::ThreadPool>) -> Self {
+        self.pool = Some(pool);
+        self
+    }
+
     /// The unit vector of each word, or `None` for a word that has no row or
     /// whose first row is all zeros.
     ///
@@ -292,32 +301,33 @@ impl VectorTable {
     /// [`VectorTableError::Malformed`] when a word's row is malformed or
     /// its components or squared norm exceed the supported floating-point range.
     pub fn unit_vectors(&self, words: &[&str]) -> Result<Vec<Option<Vec<f64>>>, VectorTableError> {
-        let found = self
-            .chunks()
-            .into_par_iter()
-            .map(|(start, bytes)| {
-                let mut found: Vec<Option<Vec<f64>>> = vec![None; words.len()];
-                for (offset, line) in lines(start, bytes) {
-                    let (value, numbers) = split(line);
-                    for (slot, word) in found.iter_mut().zip(words) {
-                        if slot.is_none() && word.as_bytes() == value {
-                            let mut vector = Vec::new();
-                            parse_numbers(numbers, offset, |x| vector.push(x))?;
-                            if !vector.iter().map(|x| x * x).sum::<f64>().is_finite() {
-                                return Err(Malformed {
-                                    offset,
-                                    detail: "vector norm exceeds the supported numeric range"
-                                        .into(),
-                                });
+        let found = crate::in_pool(self.pool.as_deref(), || {
+            self.chunks()
+                .into_par_iter()
+                .map(|(start, bytes)| {
+                    let mut found: Vec<Option<Vec<f64>>> = vec![None; words.len()];
+                    for (offset, line) in lines(start, bytes) {
+                        let (value, numbers) = split(line);
+                        for (slot, word) in found.iter_mut().zip(words) {
+                            if slot.is_none() && word.as_bytes() == value {
+                                let mut vector = Vec::new();
+                                parse_numbers(numbers, offset, |x| vector.push(x))?;
+                                if !vector.iter().map(|x| x * x).sum::<f64>().is_finite() {
+                                    return Err(Malformed {
+                                        offset,
+                                        detail: "vector norm exceeds the supported numeric range"
+                                            .into(),
+                                    });
+                                }
+                                *slot = Some(vector);
                             }
-                            *slot = Some(vector);
                         }
                     }
-                }
-                Ok(found)
-            })
-            .collect::<Result<Vec<_>, Malformed>>()
-            .map_err(|error| self.malformed(error))?;
+                    Ok(found)
+                })
+                .collect::<Result<Vec<_>, Malformed>>()
+        })
+        .map_err(|error| self.malformed(error))?;
         Ok((0..words.len())
             .map(|index| {
                 let mut vector = found.iter().find_map(|chunk| chunk[index].clone())?;
@@ -362,64 +372,65 @@ impl VectorTable {
                 "queries must be nonempty finite vectors of equal dimensions".into(),
             ));
         }
-        let chunks = self
-            .chunks()
-            .into_par_iter()
-            .map(|(start, bytes)| {
-                let mut chunk = Chunk {
-                    hits: vec![Vec::new(); queries.len()],
-                    values: 0,
-                    values_without_vector: 0,
-                };
-                let mut dots = vec![0.0f64; queries.len()];
-                for (offset, line) in lines(start, bytes) {
-                    let (value, numbers) = split(line);
-                    chunk.values += 1;
-                    dots.fill(0.0);
-                    let (mut squares, mut count) = (0.0f64, 0usize);
-                    parse_numbers(numbers, offset, |x| {
-                        if count < width {
-                            for (dot, query) in dots.iter_mut().zip(queries) {
-                                *dot += x * query[count];
+        let chunks = crate::in_pool(self.pool.as_deref(), || {
+            self.chunks()
+                .into_par_iter()
+                .map(|(start, bytes)| {
+                    let mut chunk = Chunk {
+                        hits: vec![Vec::new(); queries.len()],
+                        values: 0,
+                        values_without_vector: 0,
+                    };
+                    let mut dots = vec![0.0f64; queries.len()];
+                    for (offset, line) in lines(start, bytes) {
+                        let (value, numbers) = split(line);
+                        chunk.values += 1;
+                        dots.fill(0.0);
+                        let (mut squares, mut count) = (0.0f64, 0usize);
+                        parse_numbers(numbers, offset, |x| {
+                            if count < width {
+                                for (dot, query) in dots.iter_mut().zip(queries) {
+                                    *dot += x * query[count];
+                                }
+                            }
+                            squares += x * x;
+                            count += 1;
+                        })?;
+                        if count != width {
+                            return Err(Malformed {
+                                offset,
+                                detail: format!("{count} numbers where {width} were expected"),
+                            });
+                        }
+                        if !squares.is_finite() {
+                            return Err(Malformed {
+                                offset,
+                                detail: "vector norm exceeds the supported numeric range".into(),
+                            });
+                        }
+                        if squares == 0.0 {
+                            chunk.values_without_vector += 1;
+                            continue;
+                        }
+                        let norm = squares.sqrt();
+                        let mut name = None;
+                        for (index, dot) in dots.iter().enumerate() {
+                            #[allow(clippy::cast_possible_truncation)]
+                            let similarity = ((dot / norm).clamp(-1.0, 1.0) * ONE).round() as i32;
+                            if keep(index, similarity) {
+                                let name = match &name {
+                                    Some(name) => name,
+                                    None => name.insert(text(value, offset)?),
+                                };
+                                chunk.hits[index].push((CompactString::from(*name), similarity));
                             }
                         }
-                        squares += x * x;
-                        count += 1;
-                    })?;
-                    if count != width {
-                        return Err(Malformed {
-                            offset,
-                            detail: format!("{count} numbers where {width} were expected"),
-                        });
                     }
-                    if !squares.is_finite() {
-                        return Err(Malformed {
-                            offset,
-                            detail: "vector norm exceeds the supported numeric range".into(),
-                        });
-                    }
-                    if squares == 0.0 {
-                        chunk.values_without_vector += 1;
-                        continue;
-                    }
-                    let norm = squares.sqrt();
-                    let mut name = None;
-                    for (index, dot) in dots.iter().enumerate() {
-                        #[allow(clippy::cast_possible_truncation)]
-                        let similarity = ((dot / norm).clamp(-1.0, 1.0) * ONE).round() as i32;
-                        if keep(index, similarity) {
-                            let name = match &name {
-                                Some(name) => name,
-                                None => name.insert(text(value, offset)?),
-                            };
-                            chunk.hits[index].push((CompactString::from(*name), similarity));
-                        }
-                    }
-                }
-                Ok(chunk)
-            })
-            .collect::<Result<Vec<_>, Malformed>>()
-            .map_err(|error| self.malformed(error))?;
+                    Ok(chunk)
+                })
+                .collect::<Result<Vec<_>, Malformed>>()
+        })
+        .map_err(|error| self.malformed(error))?;
 
         let mut scan = Scan {
             hits: vec![Vec::new(); queries.len()],

@@ -246,6 +246,7 @@ impl PostingsBuilder {
         Ok(())
     }
 
+    #[allow(clippy::too_many_arguments)]
     pub(crate) fn finish(
         self,
         root: &Path,
@@ -253,6 +254,7 @@ impl PostingsBuilder {
         analysis: &AnalysisIdentity,
         schema: &TokenSchemaIdentity,
         token_hash: &str,
+        pool: Option<&rayon::ThreadPool>,
         should_continue: &mut impl FnMut() -> bool,
     ) -> Result<bool, CorpusError> {
         let mut this = self;
@@ -291,7 +293,7 @@ impl PostingsBuilder {
                 start += entry.sentence_count;
             }
             let ordinals = (batch_start..start).collect::<Vec<_>>();
-            reader.decode_bound_ordinals(&ordinals, &projection, false)?;
+            reader.decode_bound_ordinals(&ordinals, &projection, false, pool)?;
         }
         let mut file = OpenOptions::new()
             .write(true)
@@ -845,7 +847,8 @@ mod tests {
                 )
                 .unwrap();
         }
-        let postings = writer.finish(analysis).unwrap().unwrap();
+        let (postings, pool) = writer.finish(analysis).unwrap();
+        let postings = postings.unwrap();
         let reader = TokenReader::open(&path, &analysis, &schema_id).unwrap();
         let hash = blake3::hash(&std::fs::read(&path).unwrap())
             .to_hex()
@@ -858,6 +861,7 @@ mod tests {
                     &analysis,
                     &schema_id,
                     &hash,
+                    Some(&pool),
                     &mut || true
                 )
                 .unwrap()
@@ -913,7 +917,8 @@ mod tests {
                     BoundTokenSentence::from_projected_values(&projection, 1, values).unwrap(),
                 )
                 .unwrap();
-            let postings = writer.finish(analysis).unwrap().unwrap();
+            let (postings, pool) = writer.finish(analysis).unwrap();
+            let postings = postings.unwrap();
             let reader = TokenReader::open(&path, &analysis, &schema_id).unwrap();
             let hash = blake3::hash(&std::fs::read(&path).unwrap())
                 .to_hex()
@@ -926,6 +931,7 @@ mod tests {
                         &analysis,
                         &schema_id,
                         &hash,
+                        Some(&pool),
                         &mut || true
                     )
                     .unwrap()
@@ -971,7 +977,8 @@ mod tests {
                 )
                 .unwrap();
         }
-        let postings = writer.finish(analysis).unwrap().unwrap();
+        let (postings, pool) = writer.finish(analysis).unwrap();
+        let postings = postings.unwrap();
         let reader = TokenReader::open(&path, &analysis, &schema_id).unwrap();
         let hash = blake3::hash(&std::fs::read(&path).unwrap())
             .to_hex()
@@ -984,6 +991,7 @@ mod tests {
                     &analysis,
                     &schema_id,
                     &hash,
+                    Some(&pool),
                     &mut || true
                 )
                 .unwrap()

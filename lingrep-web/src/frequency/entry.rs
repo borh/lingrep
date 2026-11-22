@@ -124,7 +124,8 @@ impl EntryMatcher {
             Some(filter) => artifact.filtered_sentence_source(catalog.bound.projection(), filter),
             None => artifact.bound_sentence_source(catalog.bound.projection()),
         }
-        .map_err(failed)?;
+        .map_err(failed)?
+        .with_decode_pool(Arc::clone(&self.ready.pool));
         if !catalog.division_kinds.is_empty() {
             source = artifact
                 .with_shared_lookaround_divisions(

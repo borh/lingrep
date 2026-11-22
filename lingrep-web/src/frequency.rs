@@ -518,7 +518,9 @@ impl FrequencyViews {
                 documents
             };
             let named = |message: String| format!("--count-table {}: {message}", path.display());
-            let table = CountTable::open(&path, &key).map_err(|error| named(error.to_string()))?;
+            let table = CountTable::open(&path, &key)
+                .map_err(|error| named(error.to_string()))?
+                .with_pool(Arc::clone(&documents.ready.pool));
             table.verify().map_err(|error| named(error.to_string()))?;
             tokio::task::yield_now().await;
             let mut reader = documents

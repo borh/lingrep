@@ -114,6 +114,7 @@ impl ScanWindows {
                     &self.ready.artifact,
                     self.bound.projection(),
                     self.division_kinds.clone(),
+                    Arc::clone(&self.ready.pool),
                 )
                 .map_err(|_| corrupt())?
                 .with_ordinal_range(range.clone())

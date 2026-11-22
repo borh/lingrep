@@ -49,6 +49,15 @@ pub(super) fn run(
             "--by-window requires a prepared corpus".into(),
         ));
     };
+    let pool = std::sync::Arc::new(
+        rayon::ThreadPoolBuilder::new()
+            .num_threads(config.workers)
+            .build()
+            .map_err(|error| CliError::CommandFailure {
+                code: FailureCode::Io,
+                message: format!("failed to create worker pool: {error}"),
+            })?,
+    );
     let ResolvedMatchingQuery {
         source,
         source_stats,
@@ -74,14 +83,8 @@ pub(super) fn run(
         None,
         false,
         false,
+        std::sync::Arc::clone(&pool),
     )?;
-    let pool = rayon::ThreadPoolBuilder::new()
-        .num_threads(config.workers)
-        .build()
-        .map_err(|error| CliError::CommandFailure {
-            code: FailureCode::Io,
-            message: format!("failed to create worker pool: {error}"),
-        })?;
     let RunCorpus::Prepared {
         source_identity,
         analysis_identity,

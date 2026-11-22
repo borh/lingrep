@@ -11,6 +11,7 @@ use std::fs::{self, File, OpenOptions};
 use std::io::{self, Read, Write};
 use std::ops::Range;
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
 
 use lingrep_core::analysis::{AnalysisView, NormalizationPolicy, ViewSpan};
 use lingrep_core::corpus::markdown_dialect::read_markdown_sentence_lines;
@@ -452,6 +453,7 @@ pub struct ReadingSidecarWriter<'a> {
     reader: MarkdownReaderConfig,
     normalization: NormalizationPolicy,
     destination: PathBuf,
+    pool: Option<Arc<rayon::ThreadPool>>,
 }
 
 impl<'a> ReadingSidecarWriter<'a> {
@@ -492,7 +494,15 @@ impl<'a> ReadingSidecarWriter<'a> {
             reader,
             normalization,
             destination: destination.to_path_buf(),
+            pool: None,
         })
+    }
+
+    /// Runs document rendering and compression on `pool` instead of Rayon's global pool.
+    #[must_use]
+    pub fn with_pool(mut self, pool: Arc<rayon::ThreadPool>) -> Self {
+        self.pool = Some(pool);
+        self
     }
 
     /// Renders every document and stages the sidecar.
@@ -575,24 +585,27 @@ impl<'a> ReadingSidecarWriter<'a> {
                 }
                 stored.push((texts, bytes));
             }
-            let frames: Vec<Result<(Vec<u8>, DocumentStats), ReadingSidecarError>> = batch
-                .par_iter()
-                .zip(stored)
-                .map(|((source_name, _), (texts, bytes))| {
-                    let record = self.document_record(source_name, &texts, &bytes)?;
-                    let stats = DocumentStats::of(&record, &texts);
-                    validate_rendered_size(&record)?;
-                    let json = serde_json::to_vec(&record)?;
-                    if json.len() > MAX_RECORD_BYTES {
-                        return Err(record_limit("decompressed"));
-                    }
-                    let frame = zstd::bulk::compress(&json, ZSTD_LEVEL)?;
-                    if frame.len() > MAX_RECORD_BYTES {
-                        return Err(record_limit("compressed"));
-                    }
-                    Ok((frame, stats))
-                })
-                .collect();
+            let frames: Vec<Result<(Vec<u8>, DocumentStats), ReadingSidecarError>> =
+                crate::in_pool(self.pool.as_deref(), || {
+                    batch
+                        .par_iter()
+                        .zip(stored)
+                        .map(|((source_name, _), (texts, bytes))| {
+                            let record = self.document_record(source_name, &texts, &bytes)?;
+                            let stats = DocumentStats::of(&record, &texts);
+                            validate_rendered_size(&record)?;
+                            let json = serde_json::to_vec(&record)?;
+                            if json.len() > MAX_RECORD_BYTES {
+                                return Err(record_limit("decompressed"));
+                            }
+                            let frame = zstd::bulk::compress(&json, ZSTD_LEVEL)?;
+                            if frame.len() > MAX_RECORD_BYTES {
+                                return Err(record_limit("compressed"));
+                            }
+                            Ok((frame, stats))
+                        })
+                        .collect()
+                });
             for frame in frames {
                 let (frame, document) = frame?;
                 records.write_all(&frame)?;

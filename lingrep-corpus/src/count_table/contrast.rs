@@ -303,20 +303,24 @@ impl CountTable {
         while at < end {
             check_cancellation(cancellation)?;
             let stop = at.saturating_add(CANCELLATION_INTERVAL).min(end);
-            let block = (at..stop)
-                .into_par_iter()
-                .with_min_len(4096)
-                .filter_map(|entry| {
-                    let entry = entry as u32;
-                    match self.contrasted(entry, &scopes.bits) {
-                        Ok((counts, _)) if counts.iter().all(|counted| counted.count == 0) => None,
-                        Ok((counts, shared)) => {
-                            Some(Ok(ContrastOrder::of(&row(entry, counts, shared, tokens))))
+            let block = crate::in_pool(self.pool.as_deref(), || {
+                (at..stop)
+                    .into_par_iter()
+                    .with_min_len(4096)
+                    .filter_map(|entry| {
+                        let entry = entry as u32;
+                        match self.contrasted(entry, &scopes.bits) {
+                            Ok((counts, _)) if counts.iter().all(|counted| counted.count == 0) => {
+                                None
+                            }
+                            Ok((counts, shared)) => {
+                                Some(Ok(ContrastOrder::of(&row(entry, counts, shared, tokens))))
+                            }
+                            Err(error) => Some(Err(error)),
                         }
-                        Err(error) => Some(Err(error)),
-                    }
-                })
-                .collect::<Result<Vec<_>, _>>()?;
+                    })
+                    .collect::<Result<Vec<_>, _>>()
+            })?;
             entries = entries.saturating_add(block.len() as u64);
             visit(block)?;
             at = stop;

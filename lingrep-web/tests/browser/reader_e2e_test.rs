@@ -106,7 +106,7 @@ fn markdown_words(fixture: &support::MarkdownFixture) -> Vec<Vec<Vec<String>>> {
         &ReadingSidecarKey::for_artifact(&artifact),
     )
     .unwrap();
-    let source = artifact.sentence_source().unwrap();
+    let reader = artifact.token_reader().unwrap();
     (0..sidecar.document_count())
         .map(|document| {
             sidecar
@@ -114,7 +114,7 @@ fn markdown_words(fixture: &support::MarkdownFixture) -> Vec<Vec<Vec<String>>> {
                 .unwrap()
                 .sentences
                 .map(|sentence| {
-                    source
+                    reader
                         .sentence_words_bounded(sentence, usize::MAX)
                         .unwrap()
                         .unwrap()

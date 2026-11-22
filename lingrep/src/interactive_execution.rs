@@ -140,7 +140,7 @@ impl InteractiveExecution {
                 "interactive execution requires a reopenable source".into(),
             ));
         }
-        let _validated_source = self.open_source(Vec::new())?;
+        let _validated_source = self.open_source(Vec::new(), None)?;
         Ok(())
     }
 
@@ -164,15 +164,17 @@ impl InteractiveExecution {
     where
         S: MatchSink,
     {
+        let pool = Arc::new(
+            ThreadPoolBuilder::new()
+                .num_threads(self.config.workers)
+                .build()
+                .map_err(|error| CliError::CommandFailure {
+                    code: FailureCode::Io,
+                    message: format!("failed to create worker pool: {error}"),
+                })?,
+        );
         let (source, plan, stored_schema) =
-            self.open_source(matcher.lookaround_division_kinds())?;
-        let pool = ThreadPoolBuilder::new()
-            .num_threads(self.config.workers)
-            .build()
-            .map_err(|error| CliError::CommandFailure {
-                code: FailureCode::Io,
-                message: format!("failed to create worker pool: {error}"),
-            })?;
+            self.open_source(matcher.lookaround_division_kinds(), Some(Arc::clone(&pool)))?;
         let limits = self.config.limits;
         // Named once and used twice: it binds the catalog, and — when there is
         // no tokenizer, which is how this surface says "prepared" — it is also
@@ -221,6 +223,7 @@ impl InteractiveExecution {
     fn open_source(
         &self,
         division_kinds: Vec<compact_str::CompactString>,
+        decode_pool: Option<Arc<rayon::ThreadPool>>,
     ) -> Result<
         (
             BoxSentenceSource,
@@ -234,6 +237,10 @@ impl InteractiveExecution {
                 let artifact = CorpusArtifact::open(artifact)?;
                 let stored_schema = artifact.token_schema()?;
                 let source = artifact.sentence_source()?;
+                let source = match decode_pool {
+                    Some(pool) => source.with_decode_pool(pool),
+                    None => source,
+                };
                 let source = if division_kinds.is_empty() {
                     source
                 } else {

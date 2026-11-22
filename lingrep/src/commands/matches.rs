@@ -258,11 +258,8 @@ pub fn run(
     )?;
     let selected_corpus = resolved_corpus.corpus.as_deref();
     let char_offsets_available = output != OutputMode::Tsv;
-    // Built here rather than at its use site so a prepared source can borrow it
-    // for deferred completion. Matching a partition finishes before that
-    // partition's completion begins, both on the one consumer thread, so the
-    // pool is idle exactly when completion runs — the sharing costs no threads
-    // and cannot contend with the decode pool the producer is using.
+    // Built here rather than at its use site so a prepared source shares the
+    // caller-owned pool for multi-block decode instead of spawning its own.
     let pool = Arc::new(
         ThreadPoolBuilder::new()
             .num_threads(config.workers)
@@ -332,6 +329,7 @@ pub fn run(
             && sample.is_none()
             && scope_clause.is_none(),
         false,
+        Arc::clone(&pool),
     )?;
     if args.publish_all_attributes {
         published_attributes.extend_from_slice(bound.projection().keys());

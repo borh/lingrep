@@ -94,7 +94,7 @@ fn export_run_attributes(fsm: &CompiledCatalog) -> Vec<AttributeKey> {
 fn run_export_scan(
     source: &str,
     artifact: &lingrep_corpus::CorpusArtifact,
-    pool: &rayon::ThreadPool,
+    pool: &Arc<rayon::ThreadPool>,
     cancel: &CancellationFlag,
 ) -> Result<ExportScanData, ExportScanError> {
     run_export_scan_with_compounds(
@@ -112,7 +112,7 @@ fn run_export_scan(
 fn run_export_scan_with_compounds(
     source: &str,
     artifact: &lingrep_corpus::CorpusArtifact,
-    pool: &rayon::ThreadPool,
+    pool: &Arc<rayon::ThreadPool>,
     cancel: &CancellationFlag,
     derive_compounds: bool,
     overlaps: lingrep_core::fsm::policy_program::Overlaps,
@@ -156,6 +156,7 @@ fn run_export_scan_with_compounds(
             artifact,
             bound.projection(),
             output.matcher.lookaround_division_kinds(),
+            Arc::clone(pool),
         )
         .map_err(|_| ExportScanError::CacheCorruption)?;
     let omissions = Arc::new(Mutex::new(OversizedSentenceOmissions::default()));

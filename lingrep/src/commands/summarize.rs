@@ -3,6 +3,7 @@
 use lingrep_core::fsm::metadata_projection::{MetadataPattern, PatternMetadataSelection};
 use std::collections::{BTreeMap, BTreeSet};
 use std::io::{self, Write};
+use std::sync::Arc;
 use std::time::Instant;
 
 use lingrep_core::execution::{
@@ -407,6 +408,15 @@ pub fn run(
                     .get(name)
                     .is_none_or(|entry| entry.key.is_empty())
         });
+    let pool = Arc::new(
+        ThreadPoolBuilder::new()
+            .num_threads(config.workers)
+            .build()
+            .map_err(|error| CliError::CommandFailure {
+                code: FailureCode::Io,
+                message: format!("failed to create worker pool: {error}"),
+            })?,
+    );
     let ResolvedMatchingQuery {
         source,
         source_stats,
@@ -441,6 +451,7 @@ pub fn run(
             && !args.by_section
             && args.by_metadata.is_none(),
         args.by_section || args.by_metadata.is_some(),
+        Arc::clone(&pool),
     )?;
     let provenance = || {
         provenance
@@ -550,13 +561,6 @@ pub fn run(
             }
         }
 
-        let pool = ThreadPoolBuilder::new()
-            .num_threads(config.workers)
-            .build()
-            .map_err(|error| CliError::CommandFailure {
-                code: FailureCode::Io,
-                message: format!("failed to create worker pool: {error}"),
-            })?;
         let limits = config.limits;
         let tallies = usize::from(sections.is_some())
             + usize::from(metadata_values.is_some())
@@ -813,6 +817,7 @@ pub fn run(
                 documents.take().unwrap_or_default(),
                 &pattern_ordinals,
                 &pattern_names,
+                Arc::clone(&pool),
                 terminal.cancellation(),
             ) {
                 Ok(staged) => staged_table = Some(staged),
@@ -1185,6 +1190,7 @@ fn fit_spill_layout(
     Ok(layout)
 }
 
+#[allow(clippy::too_many_arguments)]
 fn write_count_table(
     path: &std::path::Path,
     key: lingrep_corpus::CountTableKey,
@@ -1192,6 +1198,7 @@ fn write_count_table(
     documents: BTreeMap<u64, DocumentTally>,
     pattern_ordinals: &BTreeMap<String, u64>,
     pattern_names: &[&str],
+    pool: Arc<rayon::ThreadPool>,
     cancellation: &lingrep_core::execution::CancellationFlag,
 ) -> Result<(lingrep_corpus::StagedCountTable, u64), CliError> {
     let table_error = |error| CliError::from(error).at_path(path);
@@ -1230,7 +1237,8 @@ fn write_count_table(
         finalized.values(),
         &totals,
     )
-    .map_err(table_error)?;
+    .map_err(table_error)?
+    .with_pool(pool);
     let mut failure = None;
     let mut events = 0u64;
     let visited = finalized.visit(|event| {

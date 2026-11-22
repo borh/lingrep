@@ -88,12 +88,12 @@ async fn multi_record_jsonl_composes_v6_locations_and_metadata_per_document() {
 fn large_cache_sparse_page_characterization() {
     let path = std::env::var_os("LINGREP_PAGE_ARTIFACT_PATH").expect("LINGREP_PAGE_ARTIFACT_PATH");
     let artifact = lingrep_corpus::CorpusArtifact::open(std::path::Path::new(&path)).unwrap();
-    let source = artifact.sentence_source().unwrap();
+    let reader = artifact.token_reader().unwrap();
     let pool = rayon::ThreadPoolBuilder::new()
         .num_threads(8)
         .build()
         .unwrap();
-    let sentence_count = source.sentence_count();
+    let sentence_count = reader.sentence_count();
     assert!(sentence_count > 0);
     for page_size in [50_u64, 100, 250] {
         let stride = (sentence_count / page_size).max(1);
@@ -103,7 +103,7 @@ fn large_cache_sparse_page_characterization() {
         let mut elapsed = Vec::with_capacity(10);
         for _ in 0..10 {
             let started = std::time::Instant::now();
-            let decoded = source
+            let decoded = reader
                 .decode_sentences_with_attributes(&pool, &indices, &[TokenAttributeIndex::Orth])
                 .unwrap();
             std::hint::black_box(decoded);
@@ -113,7 +113,7 @@ fn large_cache_sparse_page_characterization() {
         eprintln!(
             "sentences={} blocks={} sparse_page_rows={} sparse_parallel_p50_us={} sparse_parallel_p95_us={}",
             sentence_count,
-            source.decoded_block_count(),
+            reader.decoded_block_count(),
             page_size,
             p50,
             p95,

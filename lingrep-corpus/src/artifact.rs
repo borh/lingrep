@@ -1321,7 +1321,7 @@ impl CorpusBuilder {
         let locations_path = self.staging.join(LOCATIONS_NAME);
         let provenance_path = self.staging.join(PROVENANCE_NAME);
         let enhanced_path = self.staging.join(ENHANCED_NAME);
-        let postings = self
+        let (postings, encoder_pool) = self
             .token_writer
             .take()
             .expect("token writer is open")
@@ -1374,6 +1374,7 @@ impl CorpusBuilder {
                 &analysis_identity,
                 &self.physical_token_schema,
                 &tokens_fact.blake3,
+                Some(&encoder_pool),
                 should_continue,
             ),
             None => Ok(false),

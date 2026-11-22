@@ -194,7 +194,7 @@ async fn build_corpus(path: &Path, text: &str, sentences: usize) {
         .unwrap();
 }
 
-fn projected_decode(artifact: &CorpusArtifact) -> usize {
+fn projected_decode(artifact: &CorpusArtifact, pool: &Arc<rayon::ThreadPool>) -> usize {
     let projection = artifact
         .token_schema()
         .unwrap()
@@ -203,7 +203,10 @@ fn projected_decode(artifact: &CorpusArtifact) -> usize {
             AttributeKey::new("upos").unwrap(),
         ])
         .unwrap();
-    let mut source = artifact.bound_sentence_source(&projection).unwrap();
+    let mut source = artifact
+        .bound_sentence_source(&projection)
+        .unwrap()
+        .with_decode_pool(Arc::clone(pool));
     let limits = ExecutionLimits::default();
     let mut tokens = 0;
     while let Some(batch) = source.next_batch(&limits).unwrap() {
@@ -221,12 +224,14 @@ fn projected_decode(artifact: &CorpusArtifact) -> usize {
 fn match_projected(
     artifact: &CorpusArtifact,
     matcher: &lingrep_core::fsm::CompiledCatalog,
+    pool: &Arc<rayon::ThreadPool>,
 ) -> usize {
     let schema = artifact.token_schema().unwrap();
     let matcher = matcher.bind(&schema).unwrap();
     let mut source = artifact
         .bound_sentence_source(matcher.projection())
-        .unwrap();
+        .unwrap()
+        .with_decode_pool(Arc::clone(pool));
     let limits = ExecutionLimits::default();
     let mut matches = 0;
     while let Some(batch) = source.next_batch(&limits).unwrap() {
@@ -251,6 +256,12 @@ fn prepared_tokens(c: &mut Criterion) {
     runtime.block_on(build_artifact(&path));
     let artifact = CorpusArtifact::open(&path).unwrap();
     let matcher = matcher();
+    let pool = Arc::new(
+        rayon::ThreadPoolBuilder::new()
+            .num_threads(8)
+            .build()
+            .unwrap(),
+    );
     let bytes = std::fs::metadata(path.join("tokens.v1.zst")).unwrap().len();
 
     let started = Instant::now();
@@ -260,7 +271,7 @@ fn prepared_tokens(c: &mut Criterion) {
     runtime.block_on(measured_open.verify_integrity()).unwrap();
     let verification_latency = started.elapsed();
     let started = Instant::now();
-    let matches = match_projected(&measured_open, &matcher);
+    let matches = match_projected(&measured_open, &matcher, &pool);
     let matching_latency = started.elapsed();
     assert_eq!(matches, SENTENCES);
     eprintln!(
@@ -284,12 +295,15 @@ fn prepared_tokens(c: &mut Criterion) {
     });
     group.bench_function("projected_decode", |b| {
         b.iter(|| {
-            assert_eq!(black_box(projected_decode(&artifact)), SENTENCES);
+            assert_eq!(black_box(projected_decode(&artifact, &pool)), SENTENCES);
         });
     });
     group.bench_function("matching_throughput", |b| {
         b.iter(|| {
-            assert_eq!(black_box(match_projected(&artifact, &matcher)), SENTENCES);
+            assert_eq!(
+                black_box(match_projected(&artifact, &matcher, &pool)),
+                SENTENCES
+            );
         });
     });
     group.finish();

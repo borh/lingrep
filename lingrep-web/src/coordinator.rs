@@ -592,6 +592,7 @@ fn run_scan_blocking_with_options(
             &ready.artifact,
             bound.projection(),
             output.matcher.lookaround_division_kinds(),
+            Arc::clone(&ready.pool),
         )
         .map_err(|error| {
             tracing::warn!(%error, "sentence source construction failed");

@@ -10,6 +10,7 @@ pub(crate) mod report;
 
 use std::io::{self, Write};
 use std::path::Path;
+use std::sync::Arc;
 
 use lingrep_core::corpus::{AdmittedCorpus, CorpusReadConfig, resolve_input_format};
 use lingrep_core::execution::{
@@ -31,7 +32,7 @@ use crate::direct_source::{
     BoxSentenceSource, FilesystemCorpusEvents, admitted_filesystem_events, boxed_direct_source,
     encode_digest, scoped, source_from_events,
 };
-use crate::error::CliError;
+use crate::error::{CliError, FailureCode};
 use crate::output::{AttributesTsvRow, write_attributes_tsv};
 use crate::presentation::{OutputMode, ResultDelivery};
 use crate::protocol::attributes::{
@@ -112,6 +113,20 @@ pub fn run(
                 .bound_sentence_source(&projection)?
                 .with_admission(admission)
                 .with_cancellation(terminal.cancellation().clone());
+            let source = if config.workers > 1 {
+                let pool = Arc::new(
+                    rayon::ThreadPoolBuilder::new()
+                        .num_threads(config.workers)
+                        .build()
+                        .map_err(|error| CliError::CommandFailure {
+                            code: FailureCode::Io,
+                            message: format!("failed to create worker pool: {error}"),
+                        })?,
+                );
+                source.with_decode_pool(pool)
+            } else {
+                source
+            };
             let documents = source.document_stats();
             (
                 (

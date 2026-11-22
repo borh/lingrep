@@ -210,6 +210,7 @@ pub(crate) fn resolve_matching_query(
     block_sample: Option<lingrep_core::execution::CorpusSample>,
     allow_selective: bool,
     needs_provenance: bool,
+    decode_pool: Arc<rayon::ThreadPool>,
 ) -> Result<ResolvedMatchingQuery, CliError> {
     if block_sample.is_some() && selected_corpus.is_none() {
         return Err(CliError::InvalidArgs(
@@ -309,6 +310,7 @@ pub(crate) fn resolve_matching_query(
             };
             Ok::<_, CliError>(
                 source
+                    .with_decode_pool(Arc::clone(&decode_pool))
                     .with_block_sample(block_sample)
                     .with_admission(admission.clone())
                     .with_cancellation(terminal.cancellation().clone()),

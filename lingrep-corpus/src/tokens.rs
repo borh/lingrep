@@ -141,16 +141,6 @@ const BLOCK_QUEUE_DEPTH: usize = 4;
 /// is already well under the caller's own 3.96 s.
 const BLOCK_ENCODERS: usize = 4;
 
-const BLOCK_DECODERS: usize = 8;
-
-fn block_decoder_pool() -> Option<rayon::ThreadPool> {
-    rayon::ThreadPoolBuilder::new()
-        .num_threads(BLOCK_DECODERS)
-        .thread_name(|index| format!("lingrep-block-decode-{index}"))
-        .build()
-        .ok()
-}
-
 /// One block, encoded, compressed and checksummed, awaiting its turn.
 struct EncodedBlock {
     residency: Vec<u64>,
@@ -500,10 +490,10 @@ impl TokenWriter {
     pub(crate) fn finish(
         mut self,
         analysis: AnalysisIdentity,
-    ) -> Result<Option<crate::postings::PostingsBuilder>, CorpusError> {
+    ) -> Result<(Option<crate::postings::PostingsBuilder>, rayon::ThreadPool), CorpusError> {
         self.flush_block()?;
         self.recorder.join()?.finish(analysis)?;
-        Ok(self.postings.take())
+        Ok((self.postings.take(), self.encoders))
     }
 
     /// Hands the buffered block to the recorder. Returns as soon as the queue
@@ -538,7 +528,6 @@ pub(crate) struct TokenReader {
     decoded_blocks: AtomicUsize,
     decoded_sentences: AtomicUsize,
     verified_blocks: AtomicUsize,
-    decoders: std::sync::OnceLock<Option<rayon::ThreadPool>>,
 }
 
 impl TokenReader {
@@ -627,7 +616,6 @@ impl TokenReader {
             decoded_blocks: AtomicUsize::new(0),
             decoded_sentences: AtomicUsize::new(0),
             verified_blocks: AtomicUsize::new(0),
-            decoders: std::sync::OnceLock::new(),
         })
     }
 
@@ -746,7 +734,7 @@ impl TokenReader {
             .bind_projection(self.schema.keys().iter().cloned())
             .map_err(|error| invalid(error.to_string()))?;
         Ok(self
-            .decode_bound_ordinals(&[ordinal], &projection, true)?
+            .decode_bound_ordinals(&[ordinal], &projection, true, None)?
             .pop())
     }
 
@@ -755,6 +743,7 @@ impl TokenReader {
         ordinals: &[u64],
         projection: &BoundProjection,
         char_offsets: bool,
+        pool: Option<&rayon::ThreadPool>,
     ) -> Result<Vec<BoundTokenSentence>, CorpusError> {
         if projection.schema_digest() != self.schema.digest() {
             return Err(invalid("requested projection belongs to another schema"));
@@ -792,10 +781,7 @@ impl TokenReader {
                 None,
             )
         };
-        let decoders = (blocks.len() > 1)
-            .then(|| self.decoders.get_or_init(block_decoder_pool).as_ref())
-            .flatten();
-        let decoded = match decoders {
+        let decoded = match pool.filter(|_| blocks.len() > 1) {
             Some(pool) => pool.install(|| blocks.par_iter().map(decode).collect::<Vec<_>>()),
             None => blocks.iter().map(decode).collect(),
         };
@@ -810,6 +796,7 @@ impl TokenReader {
 
     pub fn decode_sentences_with_attributes(
         &self,
+        pool: &rayon::ThreadPool,
         sentence_indices: &[u64],
         attributes: &[TokenAttributeIndex],
     ) -> Result<Vec<Option<TokenInfoSentence>>, CorpusError> {
@@ -821,7 +808,7 @@ impl TokenReader {
             .collect::<Vec<_>>();
         ordinals.sort_unstable();
         ordinals.dedup();
-        let decoded = self.decode_bound_ordinals(&ordinals, &projection, true)?;
+        let decoded = self.decode_bound_ordinals(&ordinals, &projection, true, Some(pool))?;
         let projected = ordinals
             .into_iter()
             .zip(decoded)
@@ -893,12 +880,12 @@ impl PreparedTokenReader {
 
     pub fn decode_sentences_with_attributes(
         &self,
-        _pool: &rayon::ThreadPool,
+        pool: &rayon::ThreadPool,
         sentence_indices: &[u64],
         attributes: &[TokenAttributeIndex],
     ) -> Result<Vec<Option<TokenInfoSentence>>, CorpusError> {
         self.reader
-            .decode_sentences_with_attributes(sentence_indices, attributes)
+            .decode_sentences_with_attributes(pool, sentence_indices, attributes)
     }
 
     pub fn decode_sentences(
@@ -987,7 +974,7 @@ impl PreparedTokenReader {
             .map_err(|error| invalid(error.to_string()))?;
         let sentences = self
             .reader
-            .decode_bound_ordinals(&[ordinal], &projection, true)?;
+            .decode_bound_ordinals(&[ordinal], &projection, true, None)?;
         let Some(sentence) = sentences.first() else {
             return Err(invalid("sentence is missing"));
         };
@@ -1035,6 +1022,7 @@ impl PreparedDocumentStats {
 
 pub struct PreparedSentenceSource {
     reader: TokenReader,
+    decode_pool: Option<Arc<rayon::ThreadPool>>,
     enhanced: Option<Arc<EnhancedReader>>,
     locations: MappedLocations,
     projection: SourceProjection,
@@ -1139,6 +1127,7 @@ impl PreparedSentenceSource {
         let end_ordinal = reader.sentence_count();
         Ok(Self {
             reader,
+            decode_pool: None,
             enhanced,
             locations,
             projection,
@@ -1205,6 +1194,15 @@ impl PreparedSentenceSource {
                 self.document_stats.0.fetch_add(1, Ordering::Relaxed);
             }
         }
+    }
+
+    /// Uses `pool` to decode multi-block batches in parallel.
+    ///
+    /// Without a pool, multi-block batches decode on the calling thread.
+    #[must_use]
+    pub fn with_decode_pool(mut self, pool: Arc<rayon::ThreadPool>) -> Self {
+        self.decode_pool = Some(pool);
+        self
     }
 
     /// Draws physical token blocks by their first corpus sentence ordinal, before decoding.
@@ -1497,7 +1495,12 @@ impl PreparedSentenceSource {
             };
             let mut decoded = self
                 .reader
-                .decode_bound_ordinals(&ordinals, &projection, self.char_offsets)
+                .decode_bound_ordinals(
+                    &ordinals,
+                    &projection,
+                    self.char_offsets,
+                    self.decode_pool.as_deref(),
+                )
                 .map_err(|error| self.fail(ordinals[0], error))?;
             let mut graph_observations = None;
             if let Some(logical) = &logical_projection {
@@ -2624,6 +2627,7 @@ mod tests {
                     &analysis,
                     &schema_id,
                     &hash,
+                    None,
                     &mut || true,
                 )
                 .unwrap_err();
@@ -2669,6 +2673,7 @@ mod tests {
                 &analysis,
                 &schema_id,
                 &hash,
+                None,
                 &mut || true,
             )
             .unwrap_err()
@@ -2705,6 +2710,7 @@ mod tests {
                 writer
                     .finish(AnalysisIdentity::from_bytes([9; 32]))
                     .unwrap()
+                    .0
                     .is_none()
             );
             assert_eq!(budget.used_bytes(), 0);
@@ -2939,7 +2945,9 @@ mod tests {
                 AttributeKey::new("feat.Number").unwrap(),
             ])
             .unwrap();
-        let decoded = reader.decode_bound_ordinals(&[0], &subset, true).unwrap();
+        let decoded = reader
+            .decode_bound_ordinals(&[0], &subset, true, None)
+            .unwrap();
         let token = decoded[0].token(0).unwrap();
         assert_eq!(
             token.value(AttributeOrdinal::new(0)),
@@ -3215,9 +3223,18 @@ mod tests {
         let reader = TokenReader::open(&paths[0], &analysis, &identity).unwrap();
         let locals = (0..sentences.len() as u64).collect::<Vec<_>>();
         let decoded = reader
-            .decode_bound_ordinals(&locals, &projection, true)
+            .decode_bound_ordinals(&locals, &projection, true, None)
             .unwrap();
         assert_eq!(decoded, sentences);
+        let pool = rayon::ThreadPoolBuilder::new()
+            .num_threads(2)
+            .thread_name(|index| format!("test-decode-pool-{index}"))
+            .build()
+            .unwrap();
+        let parallel = reader
+            .decode_bound_ordinals(&locals, &projection, true, Some(&pool))
+            .unwrap();
+        assert_eq!(parallel, sentences);
         reader.verify_integrity().unwrap();
     }
 
