@@ -376,11 +376,9 @@ const captureClasses = new Map([
 ]);
 
 // Definition and reference sites, read from the CST rather than matched out of
-// the text. This is not a style preference: a text scan of the checked-in
-// catalog finds 182 `@name` occurrences against the compiler's 84, because
-// `dm-annotations@c3db462c…` appears in the header comment and in the
-// `source:` annotation of nearly every definition. The CST places those
-// inside `comment` and `metadata_string`, so the query never sees them.
+// the text: an `@name` can also appear in a comment or a metadata string,
+// which a text scan would count as a reference. The CST places those inside
+// `comment` and `metadata_string`, so the query never sees them.
 //
 // `@reference.site` wraps the whole `pattern_reference` so the `@` is part of
 // the hit area; the inner `@reference` is the identifier we jump to.

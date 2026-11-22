@@ -329,9 +329,9 @@ fn mono_dearu_excludes_the_conjectural_aro_u_form() {
 // catalog and no other. `catalog_examples.rs` now checks every tracked
 // catalog through `verify_examples`; two implementations of one check drift.
 
-// --- Policy-stage semantics ---------------------------------------------------
+// --- Policy statement semantics -----------------------------------------------
 //
-// Each of these pins one upstream stage against a hand-built sentence. Tokens
+// Each of these pins one policy statement against a hand-built sentence. Tokens
 // are hand-built rather than tokenized because the assertion is about the
 // policy program, not about UniDic: a dictionary revision must not be able to
 // turn one of these red.
@@ -371,8 +371,8 @@ fn a_negated_teiru_is_not_published_but_a_bare_one_is() {
         published(&negated)
     );
 
-    // The same sentence without the negation. Upstream tests the *token* after
-    // the match, so removing it is the whole difference.
+    // The same sentence without the negation. The statement tests the token
+    // after the match, so removing it is the whole difference.
     let bare = [
         attributed("行っ", "行く"),
         attributed("て", "て"),
@@ -388,10 +388,9 @@ fn a_negated_teiru_is_not_published_but_a_bare_one_is() {
 /// The negation operand is its own fragment, and it reads `lemma`.
 ///
 /// `NAI` is a *wider* set (`ない 無い ず ぬ なかっ 無かっ ねえ`), read on `orth`,
-/// with an optional trailing `た`. Reusing it — the obvious economy, and the
-/// next reader's first instinct — would drop more `ている` records than
-/// upstream does. `lemma` is the analogue of spaCy's `norm_`, which is what
-/// upstream compares; `orth` is not, and would miss the inflected `なかっ`.
+/// with an optional trailing `た`. Reusing it would also drop a `ている` before
+/// the colloquial `ねえ`. The operand reads `lemma` because `orth` would miss
+/// the inflected `なかっ`.
 ///
 /// Both halves are asserted because they fail to different edits: the first to
 /// spelling the operand on `orth`, the second to pointing it at `NAI`.
@@ -410,8 +409,8 @@ fn the_negation_operand_reads_lemma_and_is_not_nai() {
         published(&inflected)
     );
 
-    // `ねえ` is in `NAI` and not in upstream's `_NEG_NORMS`, so a catalog that
-    // reused `NAI` would drop this record where upstream keeps it.
+    // `ねえ` is in `NAI` and not in `NEG`, so a catalog that reused `NAI`
+    // would drop this record.
     let outside = [
         attributed("行っ", "行く"),
         attributed("て", "て"),
@@ -420,27 +419,22 @@ fn the_negation_operand_reads_lemma_and_is_not_nai() {
     ];
     assert!(
         published(&outside).iter().any(|name| name == "ている"),
-        "`ねえ` is outside upstream's negation set: {:?}",
+        "`ねえ` is outside the `NEG` set: {:?}",
         published(&outside)
     );
 }
 
-/// Stage 3: the passive is dropped and the aspect it fed survives.
+/// The passive is dropped and the aspect that follows it is kept.
 ///
-/// This is the one row the design's own expressibility table gets backwards. It
-/// names `%aspect` as the subject and `@PASSIVE` as the operand with
-/// `relation: before`, which drops the **aspect** record. Upstream
-/// (`sf_experimental.py:1019`) drops the `される`:
-///
-/// ```python
-/// if not (vocab.strings[mid] == "される" and end in aspect_starts)
-/// ```
+/// The subject is `@される` and the operand `%aspect` with `relation: after`.
+/// The opposite assignment, `%aspect` before the passive, would drop the
+/// aspect record.
 ///
 /// Asserting only that "one record disappeared" would pass under either
 /// reading, so this asserts which — by comparing the complete published set,
 /// not by probing for one name.
 #[test]
-fn stage_three_drops_the_passive_and_keeps_the_aspect() {
+fn a_passive_before_an_aspect_is_dropped_and_the_aspect_is_kept() {
     // さ-れ-て-い: `される` spans さ-れ, and `ている` starts exactly where it ends.
     let consumed = [
         attributed("さ", "為る"),
@@ -471,11 +465,10 @@ fn stage_three_drops_the_passive_and_keeps_the_aspect() {
 /// A bare-S0 sentence publishes only the S0 patterns exempt from the
 /// upper-layer requirement.
 ///
-/// Upstream (`sf_experimental.py`, `filter_s0_requires_upper_layer`) keeps every
-/// S0 record when the sentence carries any non-S0 record, and otherwise keeps
-/// only the always-keep ones. It is a sentence-wide presence test, not an
-/// overlap contest, which is why `resolve` cannot express it and `require
-/// … relation: in_sentence` can.
+/// Every S0 record is kept when the sentence carries any non-S0 record;
+/// otherwise only the exempt ones are. It is a sentence-wide presence test,
+/// not an overlap contest, which is why `resolve` cannot express it and
+/// `require … relation: in_sentence` can.
 ///
 /// All three halves, because each pair alone is satisfied by a mistake. Keeping
 /// `ある` where an upper layer is present, and dropping it where none is, is
@@ -544,22 +537,14 @@ fn based(orth: &str, lemma: &str, orthbase: &str) -> lingrep_core::token_match::
 
 /// The potential 言える and the plain 言う are different patterns.
 ///
-/// Upstream writes all three against spaCy's `LEMMA` — `{言う, いう}` for
-/// という (`sf_experimental.py:189`) and `{言える, いえる}` for と言える and
-/// ともいえる (`:364`, `:372`) — and that works there because SudachiPy's
-/// dictionary form of 言える is 言える. **UniDic's lemma for 言える is 言う.**
-/// Translating `LEMMA` to `lemma` therefore collapsed the distinction: every
-/// 「という」 matched と言える as well, on the same two tokens, and every
-/// 「と言える」 matched という.
-///
-/// The cross-layer `resolve` makes the distinction consequential: S2 という
-/// outranks S1 と言える
-/// at equal length — so on the bench corpus 52 と言える records were dropped in
-/// favour of a という that should never have matched.
+/// UniDic's lemma for 言える is 言う, so a `lemma` test cannot tell them apart:
+/// written on `lemma`, every 「という」 matched と言える as well, on the same two
+/// tokens, and every 「と言える」 matched という. The patterns therefore test
+/// `orthbase`.
 ///
 /// Asserted as the complete published set in both directions, because a probe
 /// for one name passes while the *other* pattern is still over-matching, which
-/// is exactly the half of the defect a `resolve` hides.
+/// is the half of the defect a probe for the other name misses.
 #[test]
 fn the_potential_and_the_plain_verb_are_told_apart_by_orthbase() {
     // 努力-の-結果-と-言える. UniDic: orth 言える, lemma 言う, orthbase 言える.
@@ -576,8 +561,8 @@ fn the_potential_and_the_plain_verb_are_told_apart_by_orthbase() {
         "the potential publishes as と言える and not as という"
     );
 
-    // 特徴-で-ある-と-も-いえる. The kana spelling, which upstream lists
-    // beside the kanji one and which `orthbase` keeps distinct from いう.
+    // 特徴-で-ある-と-も-いえる. The kana spelling, which `orthbase` keeps
+    // distinct from いう.
     let kana = [
         based("特徴", "特徴", "特徴"),
         based("で", "だ", "だ"),
@@ -619,13 +604,11 @@ fn the_potential_and_the_plain_verb_are_told_apart_by_orthbase() {
 /// 「…と言えるのである」 and 「…と言えることだ」 are not contrived. They were
 /// published as `というのである` and `ということだ`.
 ///
-/// The second half is the guard against the plausible wrong fix. Upstream
-/// writes these against `NORM="言う"`, which is spelling-normalizing, so the
-/// analogue must admit the kana spelling too: `orthbase` is `いう` for a kana
-/// 「いい」 and `言う` only for the kanji. A single-valued `orthbase=言う` would
-/// pass every negative assertion here and silently stop matching
-/// 「十分であるとはいいがたい」, which is upstream's own second example
-/// (`sf_experimental.py:609`).
+/// The second half is the guard against the plausible wrong fix. `orthbase`
+/// is `いう` for a kana 「いい」 and `言う` only for the kanji, so the test must
+/// admit both. A single-valued `orthbase=言う` would pass every negative
+/// assertion here and stop matching 「十分であるとはいいがたい」, the second
+/// example of `とは言い難い`.
 #[test]
 fn no_iu_pattern_admits_the_potential_and_all_admit_both_spellings() {
     // 圧倒-さ-れ-て-しまう-と-言える-の-で-ある.
@@ -682,7 +665,7 @@ fn no_iu_pattern_admits_the_potential_and_all_admit_both_spellings() {
         published(&kana_gatai)
             .iter()
             .any(|name| name == "とは言い難い"),
-        "the kana spelling is upstream's own example and must still match: {:?}",
+        "the kana spelling is a catalog example and must still match: {:?}",
         published(&kana_gatai)
     );
 

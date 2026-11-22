@@ -74,44 +74,15 @@ fn every_tracked_catalog_example_matches_its_own_definition() {
     );
 }
 
-/// Examples in `patterns/sf-experimental.lx` whose definition matches and
-/// result policy never publishes.
-///
-/// `こと`, `だろう`, `としておく`, `とみられる` and `のだ` match every span that
-/// `ことも`, `であろう`, `としておこう`, `と見られる` and `のである` match, in the
-/// same layer, and `resolve all partition: layer` ranks equal spans by
-/// pattern name.
-const SHADOWED_EXAMPLES: [(&str, &str); 7] = [
-    ("ことも", "創建時の植物系葺材に価値を求めることも可能である"),
-    ("であろう", "そうであろう"),
-    ("であろう", "可能性が高いであろう"),
-    ("としておこう", "仮定としておこう"),
-    ("と見られる", "このように変更がなされたと見られる"),
-    ("と見られる", "宝珠を失ったと見られる"),
-    ("のである", "それが結論のである"),
-];
-
 #[test]
-fn every_tracked_catalog_example_is_published_except_the_shadowed_ones() {
+fn every_tracked_catalog_example_is_published() {
     let mut unpublished = Vec::new();
     for (name, text) in tracked_catalog_sources() {
         for failure in report_for(&name, &text).post_policy_failures {
             unpublished.push((name.clone(), failure.definition, failure.example));
         }
     }
-    unpublished.sort();
-
-    let expected: Vec<(String, String, String)> = SHADOWED_EXAMPLES
-        .iter()
-        .map(|(definition, example)| {
-            (
-                "patterns/sf-experimental.lx".to_owned(),
-                (*definition).to_owned(),
-                (*example).to_owned(),
-            )
-        })
-        .collect();
-    assert_eq!(unpublished, expected);
+    assert_eq!(unpublished, Vec::<(String, String, String)>::new());
 }
 
 #[test]

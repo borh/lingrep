@@ -1129,14 +1129,14 @@ carries `overlaps` when the value is not `catalog`.
 analysis. Its `resolve all partition: alternation` keeps a negation record from
 deleting the conditional record it overlaps.
 
-`patterns/sf-experimental.lx` declares eight:
+`patterns/sf-experimental.lx` declares six and no `resolve`, so overlapping
+definitions are all counted and `--overlaps longest` selects one record per
+overlapping set:
 
 ```pattern
 policy
-  resolve all partition: layer, rank: [longest, start, end, pattern].
   exclude @ている with: @NEG, relation: after, evidence: raw.
   exclude @される with: %aspect, relation: after, evidence: current.
-  resolve patterns rank: [longest, priority_order, start, end, pattern].
   detach %trailing_copula with: @DA, relation: at_end, evidence: raw.
   admit all terminal: {within: 5, anchor: propositional_end}.
   admit @という terminal: {exact: true, anchor: propositional_end}.

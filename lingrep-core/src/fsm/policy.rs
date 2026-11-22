@@ -300,8 +300,8 @@ pub struct PatternPolicy {
     /// `rank: [priority_order, …]`.
     ///
     /// Order dominates length wherever both appear, and the criterion list is
-    /// where the author specifies this ordering. This differs from JAPE's `appelt` and
-    /// dm-annotations' `suppress_inner_layers`, which put length first.
+    /// where the author specifies this ordering. This differs from JAPE's `appelt`,
+    /// which puts length first.
     pub priority_order: Option<i64>,
     /// Group and count this record by an ordered projection.
     ///
@@ -675,8 +675,7 @@ impl AnchorPositions {
 /// Written `…|…`: a single `|` marks the token boundary the anchor is expected
 /// to land on. The claim therefore carries its input and its expected outcome
 /// in one string and needs no token indices, which would be tokenizer-dependent
-/// — the portability failure the upstream differential recorded for
-/// `filter_sentence_final`'s five-token window.
+/// and so would not hold under another tokenizer.
 ///
 /// Constructed only by the compiler's crate-internal parse, so the sentinel is
 /// always a valid char offset into the sentence and the verifier has no
