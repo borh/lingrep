@@ -3,6 +3,7 @@
 use std::collections::{BTreeMap, BTreeSet};
 
 use compact_str::CompactString;
+use indexmap::IndexMap;
 use serde_json::Value;
 
 use super::bind::{definition_nullability, location};
@@ -19,7 +20,10 @@ use crate::fsm::policy::{
     MAX_NESTING_KEY, NestingClaim, NestingEntry, POLICY_KEYS, PatternPolicy, RENDERER_REGISTRY,
     SubstituteTarget, TagSource, TransformOp, TransformStep, is_hidden, suggest_policy_key,
 };
-use crate::fsm::policy_program::{BindError, BindErrorKind, Op, Operand};
+use crate::fsm::policy_program::{
+    BindError, BindErrorKind, BoundProgram as BoundPolicyProgram, DefinitionDomain, GroupIndex, Op,
+    Operand,
+};
 use crate::fsm::types::{AttrValueType, PositionAssertion};
 use crate::token_match::AttributeKey;
 
@@ -59,6 +63,48 @@ pub(super) fn quoted_list(names: &[&str]) -> String {
 /// its own correct spelling reports as a typo of itself.
 const NON_POLICY_KEYS: &[&str] = &["examples", "counterexamples", ANCHOR_KEY, MAX_NESTING_KEY];
 
+/// Pre-finalization policy declarations extracted from a [`ParsedProgram`].
+///
+/// Holds per-definition policy entries and anchor declarations until every
+/// post-synthesis, post-bind, and post-materialization pass has completed, so
+/// [`CatalogPolicy`] is constructed once as a complete immutable value.
+pub(crate) struct CatalogPolicyDraft {
+    builder: CatalogPolicyBuilder,
+}
+
+impl CatalogPolicyDraft {
+    pub(crate) fn anchors(&self) -> &BTreeMap<CompactString, CompactString> {
+        &self.builder.anchors
+    }
+
+    pub(crate) fn entries(&self) -> &IndexMap<CompactString, PatternPolicy> {
+        self.builder.entries()
+    }
+
+    pub(crate) fn entries_mut(&mut self) -> &mut IndexMap<CompactString, PatternPolicy> {
+        self.builder.entries_mut()
+    }
+
+    pub(crate) fn finish(
+        self,
+        hidden: IndexMap<CompactString, CompactString>,
+        group_index: GroupIndex,
+        definitions: DefinitionDomain,
+        program: BoundPolicyProgram,
+        anchor_digest: AnchorSetDigest,
+        nesting_claims: BTreeMap<CompactString, NestingClaim>,
+    ) -> CatalogPolicy {
+        self.builder.build_complete(
+            hidden,
+            group_index,
+            definitions,
+            program,
+            anchor_digest,
+            nesting_claims,
+        )
+    }
+}
+
 /// Reads every declared policy decision, reporting what cannot be honored.
 ///
 /// Returned diagnostics carry their own severity: an unusable value or an
@@ -68,7 +114,7 @@ const NON_POLICY_KEYS: &[&str] = &["examples", "counterexamples", ANCHOR_KEY, MA
 /// declaration). Splitting them is the caller's job.
 pub(crate) fn extract_policy(
     program: &ParsedProgram,
-) -> (CatalogPolicy, Vec<Vec<CompactString>>, Vec<Diagnostic>) {
+) -> (CatalogPolicyDraft, Vec<Vec<CompactString>>, Vec<Diagnostic>) {
     let mut policy = CatalogPolicyBuilder::default();
     let mut diagnostics = Vec::new();
     // One entry per authored definition, in definition order, so the slice
@@ -114,7 +160,11 @@ pub(crate) fn extract_policy(
 
     resolve_anchor_references(program, &policy, &declaration_spans, &mut diagnostics);
 
-    (policy.build(), authored_groups, diagnostics)
+    (
+        CatalogPolicyDraft { builder: policy },
+        authored_groups,
+        diagnostics,
+    )
 }
 
 /// Two `group` declarations with one name, reported at the second and naming
@@ -1245,38 +1295,35 @@ impl PolicyReader<'_> {
 ///
 /// This runs before `bind`, so the minted definitions are bound, materialized,
 /// and lowered with the rest of the program in one pass.
-/// Builds the catalog's [`GroupIndex`] over the **complete** definition list
-/// and installs it.
+/// Builds the catalog's [`GroupIndex`] over the **complete** definition list.
 ///
 /// Called after [`synthesize_hidden_emitters`], which appends. A synthesized
-/// emitter joins no group, which is what the `None` padding says.
+/// emitter joins no group, which is what the `Vec::new()` padding says.
 ///
 /// Building after synthesis keeps the index and definition table on the same
 /// domain and makes the size assertion below meaningful.
 ///
 /// [`DefId`]: crate::fsm::policy_program::DefId
-pub(crate) fn install_group_index(
+pub(crate) fn build_group_index(
     program: &ParsedProgram,
-    policy: &mut CatalogPolicy,
     mut authored_groups: Vec<Vec<CompactString>>,
-) {
+) -> GroupIndex {
     debug_assert!(
         authored_groups.len() <= program.definitions.len(),
         "synthesis only ever appends"
     );
     authored_groups.resize(program.definitions.len(), Vec::new());
-    let mut index =
-        crate::fsm::policy_program::GroupIndex::from_definition_groups(&authored_groups);
+    let mut index = GroupIndex::from_definition_groups(&authored_groups);
     for declaration in &program.groups {
         index.declare(&declaration.name);
     }
-    policy.install_group_index(index);
+    index
 }
 
 /// Builds the catalog's [`DefinitionDomain`] over the **complete** definition
-/// list and installs it.
+/// list.
 ///
-/// A sibling of [`install_group_index`] rather than part of it: both index the
+/// A sibling of [`build_group_index`] rather than part of it: both index the
 /// post-synthesis list and neither can run before it, but one answers what a
 /// `%group` selects and the other what a record's name resolves to, and a
 /// single call named for one of them would hide the other.
@@ -1289,18 +1336,15 @@ pub(crate) fn install_group_index(
 /// holds every name, eligible or not.
 ///
 /// [`DefinitionDomain`]: crate::fsm::policy_program::DefinitionDomain
-pub(crate) fn install_definition_domain(program: &ParsedProgram, policy: &mut CatalogPolicy) {
-    policy.install_definitions(crate::fsm::policy_program::DefinitionDomain::new(
-        program.definitions.iter().map(|definition| {
-            let eligible =
-                definition.is_emitting() && !crate::fsm::policy::is_hidden(&definition.name);
-            (
-                definition.name.as_str(),
-                eligible,
-                definition.is_ordinary_pattern(),
-            )
-        }),
-    ));
+pub(crate) fn build_definition_domain(program: &ParsedProgram) -> DefinitionDomain {
+    DefinitionDomain::new(program.definitions.iter().map(|definition| {
+        let eligible = definition.is_emitting() && !crate::fsm::policy::is_hidden(&definition.name);
+        (
+            definition.name.as_str(),
+            eligible,
+            definition.is_ordinary_pattern(),
+        )
+    }))
 }
 
 /// Lexicons preserve authored member identity, so span/unit rewrites are not a
@@ -1327,10 +1371,11 @@ pub(crate) fn lexicon_definition_policy_errors(program: &ParsedProgram) -> Vec<D
 
 pub(crate) fn bind_policy_program(
     program: &ParsedProgram,
-    policy: &mut CatalogPolicy,
-) -> Result<Vec<Diagnostic>, Vec<Diagnostic>> {
+    group_index: &GroupIndex,
+    definitions: &DefinitionDomain,
+) -> Result<(BoundPolicyProgram, Vec<Diagnostic>), Vec<Diagnostic>> {
     let Some(authored) = program.policy.as_ref() else {
-        return Ok(Vec::new());
+        return Ok((BoundPolicyProgram::default(), Vec::new()));
     };
     let names: Vec<CompactString> = program
         .definitions
@@ -1341,21 +1386,19 @@ pub(crate) fn bind_policy_program(
     // `program.sets` is the accumulated catalog's table by the time policy
     // binds, not just this document's, which is what lets the note point into
     // the lexicon file a set was declared in.
-    let mut bound = authored
-        .bind(&names, policy.group_index())
-        .map_err(|errors| {
-            let sets: BTreeMap<CompactString, SourceSpan> = program
-                .sets
-                .iter()
-                .map(|set| (set.name.clone(), set.span))
-                .collect();
-            errors
-                .into_iter()
-                .map(|error| bind_diagnostic(&program.sources, &sets, &error))
-                .collect::<Vec<_>>()
-        })?;
+    let mut bound = authored.bind(&names, group_index).map_err(|errors| {
+        let sets: BTreeMap<CompactString, SourceSpan> = program
+            .sets
+            .iter()
+            .map(|set| (set.name.clone(), set.span))
+            .collect();
+        errors
+            .into_iter()
+            .map(|error| bind_diagnostic(&program.sources, &sets, &error))
+            .collect::<Vec<_>>()
+    })?;
     let (partition_errors, partition_warnings): (Vec<_>, Vec<_>) =
-        resolve_partitions(authored, &mut bound, program, policy)
+        resolve_partitions(authored, &mut bound, program, group_index, definitions)
             .into_iter()
             .partition(|diagnostic| diagnostic.severity() == DiagnosticSeverity::Error);
     if !partition_errors.is_empty() {
@@ -1371,11 +1414,10 @@ pub(crate) fn bind_policy_program(
                 span,
                 ..
             } => {
-                let selected = policy
-                    .group_index()
-                    .expand_subject(*subject, policy.definitions().eligible_for(*subject));
+                let selected =
+                    group_index.expand_subject(*subject, definitions.eligible_for(*subject));
                 let reaches_lexicon = selected.into_iter().any(|id| {
-                    let name = policy.definitions().name(id);
+                    let name = definitions.name(id);
                     program.definitions[id.index()].expr().is_none()
                         && partition
                             .as_ref()
@@ -1394,9 +1436,8 @@ pub(crate) fn bind_policy_program(
             } => (*subject, *span, "detach"),
             _ => continue,
         };
-        if policy
-            .group_index()
-            .expand_subject(subject, policy.definitions().eligible_for(subject))
+        if group_index
+            .expand_subject(subject, definitions.eligible_for(subject))
             .into_iter()
             .any(|id| program.definitions[id.index()].expr().is_none())
         {
@@ -1412,8 +1453,8 @@ pub(crate) fn bind_policy_program(
     let (errors, check_warnings): (Vec<_>, Vec<_>) = super::policy_program::check_policy_program(
         &bound,
         &program.definitions,
-        policy.group_index(),
-        policy.definitions(),
+        group_index,
+        definitions,
         &program.sources,
     )
     .into_iter()
@@ -1424,15 +1465,15 @@ pub(crate) fn bind_policy_program(
 
     let mut warnings = partition_warnings;
     warnings.extend(check_warnings);
-    policy.install_program(bound);
-    Ok(warnings)
+    Ok((bound, warnings))
 }
 
 fn resolve_partitions(
     authored: &crate::fsm::policy_program::Program,
-    bound: &mut crate::fsm::policy_program::BoundProgram,
+    bound: &mut BoundPolicyProgram,
     program: &ParsedProgram,
-    policy: &CatalogPolicy,
+    group_index: &GroupIndex,
+    definitions: &DefinitionDomain,
 ) -> Vec<Diagnostic> {
     use crate::fsm::policy_program::{BoundOp, PartitionMap};
 
@@ -1460,9 +1501,7 @@ fn resolve_partitions(
             continue;
         };
         let reported_before = diagnostics.len();
-        let selected = policy
-            .group_index()
-            .expand_subject(*subject, policy.definitions().eligible_for(*subject));
+        let selected = group_index.expand_subject(*subject, definitions.eligible_for(*subject));
         let mut classes = PartitionMap::new();
         for definition in &selected {
             let parsed = &program.definitions[definition.index()];
@@ -1571,9 +1610,8 @@ fn bind_diagnostic(
 
 pub(crate) fn synthesize_hidden_emitters(
     program: &mut ParsedProgram,
-    policy: &mut CatalogPolicy,
     authored_groups: &[Vec<CompactString>],
-) {
+) -> IndexMap<CompactString, CompactString> {
     let fragments: BTreeMap<CompactString, SourceSpan> = program
         .definitions
         .iter()
@@ -1621,6 +1659,7 @@ pub(crate) fn synthesize_hidden_emitters(
         }
     }
 
+    let mut hidden_emitters = IndexMap::with_capacity(referenced.len());
     for fragment in referenced {
         let span = fragments[&fragment];
         let hidden = CompactString::new(format!("{HIDDEN_PREFIX}{fragment}"));
@@ -1644,17 +1683,18 @@ pub(crate) fn synthesize_hidden_emitters(
             skip_test: None,
             span,
         });
-        policy.hidden.insert(hidden, fragment);
+        hidden_emitters.insert(hidden, fragment);
     }
+    hidden_emitters
 }
 
 pub(crate) fn resolve_anchors(
-    policy: &CatalogPolicy,
+    anchors: &BTreeMap<CompactString, CompactString>,
     bound: &BoundProgram,
 ) -> Result<BTreeMap<CompactString, DefinitionId>, Vec<Diagnostic>> {
     // Declaring nothing costs nothing: the nullability table is a walk over
     // every definition, and a catalog with no anchors has no question for it.
-    if policy.anchors.is_empty() {
+    if anchors.is_empty() {
         return Ok(BTreeMap::new());
     }
 
@@ -1662,7 +1702,7 @@ pub(crate) fn resolve_anchors(
     let mut resolved = BTreeMap::new();
     let nullable = definition_nullability(bound);
 
-    for (anchor, exclude) in &policy.anchors {
+    for (anchor, exclude) in anchors {
         let definition = find_definition(bound, exclude)
             .expect("a declared anchor's exclude names a fragment, checked before binding");
         resolved.insert(anchor.clone(), definition.id);
@@ -1723,7 +1763,7 @@ pub(crate) fn resolve_anchors(
 }
 
 pub(crate) fn read_nesting_claims(
-    policy: &CatalogPolicy,
+    anchors: &BTreeMap<CompactString, CompactString>,
     bound: &BoundProgram,
 ) -> Result<BTreeMap<CompactString, NestingClaim>, Vec<Diagnostic>> {
     let carriers: Vec<&BoundDefinition> = bound
@@ -1732,7 +1772,7 @@ pub(crate) fn read_nesting_claims(
         .filter(|definition| definition.metadata.contains_key(MAX_NESTING_KEY))
         .collect();
     // With neither anchors nor claims, neither validation loop has work.
-    if policy.anchors.is_empty() && carriers.is_empty() {
+    if anchors.is_empty() && carriers.is_empty() {
         return Ok(BTreeMap::new());
     }
 
@@ -1750,12 +1790,11 @@ pub(crate) fn read_nesting_claims(
     // same thing wherever they are written, while a claim's subject is the
     // definition carrying it.
 
-    let excludes: BTreeSet<&str> = policy.anchors.values().map(CompactString::as_str).collect();
+    let excludes: BTreeSet<&str> = anchors.values().map(CompactString::as_str).collect();
     for exclude in excludes.iter().copied() {
         let definition = find_definition(bound, exclude)
             .expect("a declared anchor's exclude names a fragment, checked before binding");
-        let anchor = policy
-            .anchors
+        let anchor = anchors
             .iter()
             .find(|(_, named)| named.as_str() == exclude)
             .map(|(anchor, _)| anchor.as_str())
@@ -1805,8 +1844,7 @@ pub(crate) fn read_nesting_claims(
     if !diagnostics.is_empty() {
         return Err(diagnostics);
     }
-    Ok(policy
-        .anchors
+    Ok(anchors
         .iter()
         .filter_map(|(anchor, exclude)| {
             parsed
@@ -2228,10 +2266,12 @@ pub(crate) fn reserved_name_errors(program: &ParsedProgram) -> Vec<Diagnostic> {
 }
 
 pub(crate) fn check_detach_widths(
-    policy: &CatalogPolicy,
+    program: &BoundPolicyProgram,
+    group_index: &GroupIndex,
+    definitions: &DefinitionDomain,
     bound: &BoundProgram,
 ) -> Result<(), Vec<Diagnostic>> {
-    if policy.program().ops.is_empty() {
+    if program.ops.is_empty() {
         return Ok(());
     }
     let widths = super::policy_program::definition_widths(&bound.definitions);
@@ -2242,9 +2282,9 @@ pub(crate) fn check_detach_widths(
             .map_or_else(|| CompactString::new("?"), |held| held.name.clone())
     };
     let diagnostics = super::policy_program::check_detach_non_emptiness(
-        policy.program(),
-        policy.group_index(),
-        policy.definitions(),
+        program,
+        group_index,
+        definitions,
         &widths,
         &bound.sources,
         &names,
@@ -2273,8 +2313,8 @@ mod tests {
     /// `lingrep-core/tests/suite/policy_group_test.rs`, where the index is built
     /// over the complete post-synthesis definition list.
     fn extract(text: &str) -> (CatalogPolicy, Vec<Diagnostic>) {
-        let (policy, _groups, diagnostics) = extract_policy(&parse(text));
-        (policy, diagnostics)
+        let (draft, _groups, diagnostics) = extract_policy(&parse(text));
+        (draft.builder.build(), diagnostics)
     }
 
     fn messages(diagnostics: &[Diagnostic]) -> Vec<String> {

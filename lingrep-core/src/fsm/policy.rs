@@ -796,32 +796,53 @@ pub struct CatalogPolicy {
     pub hidden: IndexMap<CompactString, CompactString>,
     /// Group membership over the catalog's **complete** definition list.
     ///
-    /// Private, unlike the four `pub` fields above — those are a recorded
-    /// defect rather than a pattern to follow. Installed exactly once by
-    /// `compiler::policy::install_group_index`, after synthesis has appended
-    /// its evidence emitters, because [`DefId`] indexes the complete list.
+    /// Built over the post-synthesis definition list because [`DefId`] indexes
+    /// the complete list, then passed once into [`Self::from_parts`].
     ///
     /// [`DefId`]: crate::fsm::policy_program::DefId
     group_index: crate::fsm::policy_program::GroupIndex,
     /// The catalog's definitions, for resolving a record's authored name to
     /// the [`DefId`] every program lookup keys on.
     ///
-    /// Installed beside [`Self::group_index`] and under the same constraint:
-    /// both index the **complete** definition list, so both wait for synthesis
-    /// to finish appending.
+    /// Built beside [`Self::group_index`] over the post-synthesis definition
+    /// list and passed once into [`Self::from_parts`].
     ///
     /// [`DefId`]: crate::fsm::policy_program::DefId
     definitions: crate::fsm::policy_program::DefinitionDomain,
     /// The ordered policy program, empty when none is declared.
     ///
-    /// Private and write-once for the same reason `entries` is: a second
-    /// writer would be a second thing to keep in step. Installed by the
-    /// compiler after the group index, because binding resolves `%name`
-    /// through it.
+    /// Bound after [`Self::group_index`] so `%name` resolves through it, then
+    /// passed once into [`Self::from_parts`].
     program: crate::fsm::policy_program::BoundProgram,
 }
 
+/// Complete inputs for constructing an immutable [`CatalogPolicy`] in one step.
+pub(crate) struct CatalogPolicyParts {
+    pub(crate) entries: IndexMap<CompactString, PatternPolicy>,
+    pub(crate) anchors: BTreeMap<CompactString, CompactString>,
+    pub(crate) anchor_digest: AnchorSetDigest,
+    pub(crate) nesting_claims: BTreeMap<CompactString, NestingClaim>,
+    pub(crate) hidden: IndexMap<CompactString, CompactString>,
+    pub(crate) group_index: crate::fsm::policy_program::GroupIndex,
+    pub(crate) definitions: crate::fsm::policy_program::DefinitionDomain,
+    pub(crate) program: crate::fsm::policy_program::BoundProgram,
+}
+
 impl CatalogPolicy {
+    /// Constructs a complete, immutable [`CatalogPolicy`] from its validated parts.
+    pub(crate) fn from_parts(parts: CatalogPolicyParts) -> Self {
+        Self {
+            entries: parts.entries,
+            anchors: parts.anchors,
+            anchor_digest: parts.anchor_digest,
+            nesting_claims: parts.nesting_claims,
+            hidden: parts.hidden,
+            group_index: parts.group_index,
+            definitions: parts.definitions,
+            program: parts.program,
+        }
+    }
+
     /// The ordered policy program, in authored order.
     ///
     /// Empty for a catalog declaring no `policy` block.
@@ -836,15 +857,6 @@ impl CatalogPolicy {
         self
     }
 
-    /// Installs the bound program. Called once, after the group index.
-    pub(crate) fn install_program(&mut self, program: crate::fsm::policy_program::BoundProgram) {
-        debug_assert!(
-            self.program.ops.is_empty(),
-            "the policy program is installed exactly once"
-        );
-        self.program = program;
-    }
-
     /// Group membership, for resolving `%name`.
     ///
     /// Empty for a catalog declaring no `groups:` anywhere. Today that is every
@@ -855,35 +867,12 @@ impl CatalogPolicy {
         &self.group_index
     }
 
-    /// Installs the group index. Called once, after synthesis appends.
-    pub(crate) fn install_group_index(&mut self, index: crate::fsm::policy_program::GroupIndex) {
-        debug_assert!(
-            self.group_index == crate::fsm::policy_program::GroupIndex::empty(),
-            "the group index is installed exactly once"
-        );
-        self.group_index = index;
-    }
-
     /// The catalog's definitions, for resolving an authored name.
     ///
-    /// Empty for a catalog declaring no policy at all: it is installed only
-    /// where the program needs it, and building one per compilation for a
-    /// catalog that will never consult it is work with no reader.
+    /// Empty for a catalog declaring no policy at all.
     #[must_use]
     pub fn definitions(&self) -> &crate::fsm::policy_program::DefinitionDomain {
         &self.definitions
-    }
-
-    /// Installs the definition domain. Called once, after synthesis appends.
-    pub(crate) fn install_definitions(
-        &mut self,
-        domain: crate::fsm::policy_program::DefinitionDomain,
-    ) {
-        debug_assert!(
-            self.definitions == crate::fsm::policy_program::DefinitionDomain::empty(),
-            "the definition domain is installed exactly once"
-        );
-        self.definitions = domain;
     }
 }
 
@@ -906,10 +895,6 @@ impl CatalogPolicy {
     #[must_use]
     pub fn get(&self, name: &str) -> Option<&PatternPolicy> {
         self.entries.get(name)
-    }
-
-    pub(crate) fn get_mut(&mut self, name: &str) -> Option<&mut PatternPolicy> {
-        self.entries.get_mut(name)
     }
 
     /// Every declared entry, by definition name, in declaration order.
@@ -1163,21 +1148,44 @@ impl CatalogPolicyBuilder {
         &self.entries
     }
 
+    pub(crate) fn entries_mut(&mut self) -> &mut IndexMap<CompactString, PatternPolicy> {
+        &mut self.entries
+    }
+
+    pub(crate) fn build_complete(
+        self,
+        hidden: IndexMap<CompactString, CompactString>,
+        group_index: crate::fsm::policy_program::GroupIndex,
+        definitions: crate::fsm::policy_program::DefinitionDomain,
+        program: crate::fsm::policy_program::BoundProgram,
+        anchor_digest: AnchorSetDigest,
+        nesting_claims: BTreeMap<CompactString, NestingClaim>,
+    ) -> CatalogPolicy {
+        CatalogPolicy::from_parts(CatalogPolicyParts {
+            entries: self.entries,
+            anchors: self.anchors,
+            anchor_digest,
+            nesting_claims,
+            hidden,
+            group_index,
+            definitions,
+            program,
+        })
+    }
+
     /// Freezes this into a [`CatalogPolicy`].
     #[must_use]
     pub fn build(self) -> CatalogPolicy {
-        CatalogPolicy {
+        CatalogPolicy::from_parts(CatalogPolicyParts {
             entries: self.entries,
             anchors: self.anchors,
             anchor_digest: self.anchor_digest,
             nesting_claims: self.nesting_claims,
             hidden: self.hidden,
             group_index: crate::fsm::policy_program::GroupIndex::empty(),
-            // Empty for the same reason, and installed at the same point.
             definitions: crate::fsm::policy_program::DefinitionDomain::empty(),
-            // Installed last because binding needs the post-synthesis group index.
             program: crate::fsm::policy_program::BoundProgram::default(),
-        }
+        })
     }
 }
 

@@ -81,9 +81,9 @@ use model::{
 };
 use nfa::lower_to_nfa;
 
+use crate::fsm::CompiledCatalog;
 use crate::fsm::CompiledLexiconDefinition;
 use crate::fsm::matcher::CompiledLexicons;
-use crate::fsm::{CatalogPolicy, CompiledCatalog};
 
 /// lingrep patterns text supplied by an application.
 ///
@@ -509,8 +509,7 @@ fn compile_program(
     // body error to be seen.
     let mut policy_errors = policy::reserved_name_errors(&program);
     policy_errors.extend(policy::lexicon_definition_policy_errors(&program));
-    let (mut catalog_policy, authored_groups, policy_diagnostics) =
-        policy::extract_policy(&program);
+    let (mut policy_draft, authored_groups, policy_diagnostics) = policy::extract_policy(&program);
     let mut policy_warnings = Vec::new();
     for diagnostic in policy_diagnostics {
         if diagnostic.severity() == DiagnosticSeverity::Error {
@@ -529,19 +528,19 @@ fn compile_program(
     // decide which fragments need an emitter, and the `GroupIndex` that would
     // normally do that cannot exist yet: it is built over the definition list
     // this call appends to.
-    policy::synthesize_hidden_emitters(&mut program, &mut catalog_policy, &authored_groups);
+    let hidden_emitters = policy::synthesize_hidden_emitters(&mut program, &authored_groups);
 
     // After synthesis, never before: `DefId` indexes the complete definition
-    // list and synthesis appends to it. Written exactly once.
-    policy::install_group_index(&program, &mut catalog_policy, authored_groups);
-    policy::install_definition_domain(&program, &mut catalog_policy);
+    // list and synthesis appends to it.
+    let group_index = policy::build_group_index(&program, authored_groups);
+    let definition_domain = policy::build_definition_domain(&program);
 
     // After the index, because `%name` resolves through it. Both `DefId` and
     // `GroupId` are therefore assigned over the post-synthesis catalog.
-    policy_warnings.extend(
-        policy::bind_policy_program(&program, &mut catalog_policy)
-            .map_err(CompileError::from_diagnostics)?,
-    );
+    let (bound_policy_program, program_warnings) =
+        policy::bind_policy_program(&program, &group_index, &definition_domain)
+            .map_err(CompileError::from_diagnostics)?;
+    policy_warnings.extend(program_warnings);
 
     let bound = bind(program, limits)?;
     let compiled_lexicon_definitions = bound
@@ -572,29 +571,34 @@ fn compile_program(
     // body: until then the reference inside it is a name. This is the one
     // policy-program rule that cannot live with the others in
     // `bind_policy_program`, which runs before the expressions exist.
-    policy::check_detach_widths(&catalog_policy, &bound).map_err(CompileError::from_diagnostics)?;
+    policy::check_detach_widths(
+        &bound_policy_program,
+        &group_index,
+        &definition_domain,
+        &bound,
+    )
+    .map_err(CompileError::from_diagnostics)?;
     // After binding, because whether an `exclude` fragment is nullable or names
-    // a capture is a property of its resolved body. The digest is installed here
+    // a capture is a property of its resolved body. The digest is computed here
     // for the same reason: it hashes the transitive expansion, which only the
     // bound program has.
     // Resolved once, here, and carried: the digest and the assertion compiler
     // both need each `exclude`'s body, and taking a `DefinitionId` is what stops
     // them looking it up by name again.
-    let anchors =
-        policy::resolve_anchors(&catalog_policy, &bound).map_err(CompileError::from_diagnostics)?;
-    catalog_policy.anchor_digest = policy::anchor_set_digest(&anchors, &bound);
+    let anchors = policy::resolve_anchors(policy_draft.anchors(), &bound)
+        .map_err(CompileError::from_diagnostics)?;
+    let anchor_digest = policy::anchor_set_digest(&anchors, &bound);
     // After `resolve_anchors` and not merged into it: an `exclude` that cannot
     // work at all — nullable, or naming a capture — is the diagnostic its author
     // needs, and being told to document the depth of a recognizer that will
     // never be built is advice about the wrong mistake. Nothing here reads what
     // binding produced; the placement buys the ordering, not information.
-    catalog_policy.nesting_claims = policy::read_nesting_claims(&catalog_policy, &bound)
+    let nesting_claims = policy::read_nesting_claims(policy_draft.anchors(), &bound)
         .map_err(CompileError::from_diagnostics)?;
 
-    // Computed before the policy is installed, which moves it. Reachability is a
-    // question about the bound program and the declarations over it, so nothing
-    // downstream of here can change the answer.
-    let (mut diagnostics, evaluated) = unused_fragment_warnings(&bound, &catalog_policy);
+    // Reachability is a question about the bound program and the declarations
+    // over it, so nothing downstream of here can change the answer.
+    let (mut diagnostics, evaluated) = unused_fragment_warnings(&bound, policy_draft.anchors());
     let analysis = analysis::analyze(&bound, &evaluated);
     let label_declarations = label_check::label_declarations(&parsed_labels, &bound);
     let label_errors = label_check::literal_errors(&parsed_labels, &label_declarations, &bound);
@@ -602,8 +606,11 @@ fn compile_program(
         return Err(CompileError::from_diagnostics(label_errors));
     }
 
-    let match_projection_errors =
-        capture_key::match_projection_errors(&catalog_policy, &bound.definitions, &bound.sources);
+    let match_projection_errors = capture_key::match_projection_errors(
+        policy_draft.entries(),
+        &bound.definitions,
+        &bound.sources,
+    );
     if !match_projection_errors.is_empty() {
         return Err(CompileError::from_diagnostics(match_projection_errors));
     }
@@ -621,10 +628,18 @@ fn compile_program(
     // After materialization: the checks need expanded capture occurrences and
     // their paths, which binding alone does not provide.
     let reference_errors =
-        capture_key::key_projection_errors(&mut catalog_policy, &execution, &bound.sources);
+        capture_key::key_projection_errors(policy_draft.entries_mut(), &execution, &bound.sources);
     if !reference_errors.is_empty() {
         return Err(CompileError::from_diagnostics(reference_errors));
     }
+    let catalog_policy = policy_draft.finish(
+        hidden_emitters,
+        group_index,
+        definition_domain,
+        bound_policy_program,
+        anchor_digest,
+        nesting_claims,
+    );
     let capture_key_edits =
         capture_key::editable_capture_keys(&catalog_policy, &execution, &bound.sources);
     analyze_program(&mut execution, &bound.sources)?;
@@ -735,7 +750,7 @@ fn compile_program(
 /// would answer `false` for every pattern.
 fn unused_fragment_warnings(
     bound: &BoundProgram,
-    catalog_policy: &CatalogPolicy,
+    anchors: &std::collections::BTreeMap<CompactString, CompactString>,
 ) -> (Vec<Diagnostic>, BTreeSet<DefinitionId>) {
     // Seeding from *every* definition — as this once did — lets an unreferenced
     // fragment keep its own callees alive, so a deletion surfaces one link of
@@ -759,7 +774,7 @@ fn unused_fragment_warnings(
             collect_references(expr, &mut seed);
         }
     }
-    for exclude in catalog_policy.anchors.values() {
+    for exclude in anchors.values() {
         if let Some(id) = by_name.get(exclude.as_str()) {
             seed.insert(*id);
         }

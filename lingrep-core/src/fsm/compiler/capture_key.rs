@@ -18,21 +18,22 @@
 //! would look exactly like one projected off the right one.
 
 use compact_str::CompactString;
+use indexmap::IndexMap;
 
 use super::model::{
     BoundDefinition, BoundExpr, DependencyLayer, ExecutionDefinition, ExecutionEnhancedEndpoint,
     ExecutionExpr, ExecutionGraphBindingDecl, RelationPolarity, SourceRegistry,
 };
 use super::{Diagnostic, DiagnosticCode, RelatedDiagnosticLocation};
-use crate::fsm::policy::{CatalogPolicy, KeyComponent, KeyTarget, TagSource};
+use crate::fsm::policy::{CatalogPolicy, KeyComponent, KeyTarget, PatternPolicy, TagSource};
 
 pub(crate) fn match_projection_errors(
-    policy: &CatalogPolicy,
+    entries: &IndexMap<CompactString, PatternPolicy>,
     definitions: &[BoundDefinition],
     sources: &SourceRegistry,
 ) -> Vec<Diagnostic> {
     let kind_errors = definitions.iter().filter_map(|definition| {
-        let entry = policy.get(&definition.name)?;
+        let entry = entries.get(&definition.name)?;
         if entry.key.is_empty() { return None; }
         let lexical_definition = definition.expr().is_none();
         let has_lexical_projection = entry.key.iter().any(|field| matches!(field.target, KeyTarget::LexicalTerm | KeyTarget::LexicalSegments));
@@ -51,7 +52,7 @@ pub(crate) fn match_projection_errors(
         .iter()
         .filter_map(|definition| {
             let expr = definition.expr()?;
-            let entry = policy.get(&definition.name)?;
+            let entry = entries.get(&definition.name)?;
             let field = entry
                 .key
                 .iter()
@@ -90,13 +91,13 @@ pub(crate) fn match_projection_errors(
 /// Reports every policy capture reference that cannot be projected
 /// unambiguously.
 pub(crate) fn key_projection_errors(
-    policy: &mut CatalogPolicy,
+    entries: &mut IndexMap<CompactString, PatternPolicy>,
     execution: &[ExecutionDefinition],
     sources: &SourceRegistry,
 ) -> Vec<Diagnostic> {
     let mut diagnostics = Vec::new();
     for definition in execution {
-        let Some(entry) = policy.get_mut(&definition.name) else {
+        let Some(entry) = entries.get_mut(&definition.name) else {
             continue;
         };
         for field in &mut entry.key {
