@@ -1828,6 +1828,14 @@ if (typeof document !== "undefined") {
       return;
     }
 
+    const compared = event.target.closest("[data-compare-read]");
+    if (compared) {
+      event.preventDefault();
+      const url = readerUrl(compared.dataset.compareRead, "document");
+      addressReader(url);
+      openAddressedReader(readerAddress(new URL(url, location.href).hash));
+      return;
+    }
     const debugSentence = event.target.closest("[data-debug-sentence]");
     if (debugSentence) {
       const corpus = document.querySelector("[data-corpus-search] input[name=corpus]")?.value;

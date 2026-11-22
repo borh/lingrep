@@ -51,6 +51,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `--propose-counterexamples FILE` reads one sentence per line and lists, per
   definition and constraint, sentences the definition does not match and
   would match without that constraint, with the number of sentences scanned.
+- `ling diff A.jsonl B.jsonl` compares two `ling --json matches` runs over
+  one corpus and reports, per definition, the occurrences both runs have and
+  those only one has, with the first differing sentences. It compares two
+  catalog revisions by definition name, or two named definitions.
+  `--level span|roles|record` states what identifies an occurrence and is
+  repeated in the report. A run stopped at `--limit` is compared over the
+  sentences it completed, and the report states the sentences compared; with
+  no difference it reports `no difference in N sentences scanned`.
+  `ling --json diff` writes `lingrep.diff/v1`.
+- The Workbench pattern editor has "Compare with the last search": it runs
+  the last searched pattern and the editor's pattern over the selected corpus
+  and scope, lists the occurrences only one of them has at the chosen level,
+  states whether every sentence or a prefix was compared, and links each
+  listed occurrence to the reader.
 - A Workbench hit opens its sentence in the Sample debugger with the analysis
   stored in the corpus, so a pattern that reads attributes the sample
   tokenizer does not supply, such as a dependency `where` clause over a

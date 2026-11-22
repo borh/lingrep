@@ -1033,6 +1033,13 @@ td.neighbors-similarity { display: flex; align-items: center; gap: var(--space-3
   background: var(--surface-muted);
 }
 .pattern-diagram { margin-block-start: 0.5rem; }
+.pattern-compare { margin-block-start: 0.5rem; }
+.pattern-compare-controls { display: flex; flex-wrap: wrap; gap: 0.5rem 0.75rem; align-items: center; margin-block: 0.35rem; }
+.pattern-compare-controls label { display: inline-flex; gap: 0.35rem; align-items: center; }
+.pattern-compare-definition h4 { margin-block: 0.75rem 0.25rem; font-size: 1rem; }
+.pattern-compare-occurrences { list-style: none; margin: 0; padding: 0; display: grid; gap: 0.2rem; }
+.pattern-compare-occurrences li { display: flex; flex-wrap: wrap; gap: 0.25rem 0.6rem; align-items: baseline; }
+.pattern-compare-side { font-size: 0.85rem; font-variant-numeric: tabular-nums; min-inline-size: 9.5em; }
 .pattern-diagram-body { overflow-x: auto; }
 .pattern-diagram[data-stale] .pattern-diagram-body { opacity: 0.45; }
 .pattern-diagram-expand { display: inline-flex; gap: 0.35rem; align-items: center; margin-block: 0.35rem; }

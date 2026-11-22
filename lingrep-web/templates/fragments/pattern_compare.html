@@ -1,0 +1,41 @@
+{% match outcome %}
+{% when Outcome::Failed with (key, text) %}
+<p class="alert alert-error" role="status" data-compare-error data-i18n="{{ key }}">{{ text }}</p>
+{% when Outcome::Compared with (comparison) %}
+<div class="pattern-compare-result" data-compare-result data-compare-level="{{ comparison.level }}">
+  <p class="pattern-compare-basis">
+    {% if comparison.level == "span" %}<span data-i18n="diff.by_span">Occurrences compared by token span.</span>{% else if comparison.level == "roles" %}<span data-i18n="diff.by_roles">Occurrences compared by the tokens each shared capture occupies.</span>{% else %}<span data-i18n="diff.by_record">Occurrences compared by published record: span, captures, graph bindings and key.</span>{% endif %}
+    {% match comparison.sentences_scanned %}{% when Some with (count) %}<span data-compare-coverage="full" data-i18n="diff.coverage_full" data-i18n-args='{"count": {{ count }}}'>{{ count }} sentences scanned.</span>{% when None %}{% endmatch %}
+    {% match comparison.before_corpus_sentence %}{% when Some with (bound) %}<span data-compare-coverage="prefix" data-i18n="diff.coverage_prefix" data-i18n-args='{"bound": {{ bound }}}'>A run reached the record limit, so only the sentences before corpus sentence {{ bound }} were compared.</span>{% when None %}{% endmatch %}
+    {% if comparison.scoped %}<span data-i18n="diff.scoped">Within the current search scope.</span>{% endif %}
+  </p>
+  {% if comparison.differences_found %}
+  <p data-compare-summary="differs"><span data-i18n="diff.differs" data-i18n-args='{"a": {{ comparison.a_only }}, "b": {{ comparison.b_only }}}'>{{ comparison.a_only }} occurrence(s) only in the last search and {{ comparison.b_only }} only in the editor's pattern, in the sentences compared.</span></p>
+  {% else %}
+  <p data-compare-summary="none"><span data-i18n="diff.no_difference">No difference in the sentences compared. Sentences outside them, and other comparison levels, were not checked.</span></p>
+  {% endif %}
+  {% for pair in comparison.pairs %}
+  <section class="pattern-compare-definition" data-compare-definition="{{ pair.name }}">
+    <h4><code>{{ pair.name }}</code> <span class="muted" data-i18n="diff.counts" data-i18n-args='{"shared": {{ pair.shared }}, "a": {{ pair.a_only }}, "b": {{ pair.b_only }}}'>shared {{ pair.shared }}, only last search {{ pair.a_only }}, only editor {{ pair.b_only }}</span></h4>
+    {% if !pair.occurrences.is_empty() %}
+    <ul class="pattern-compare-occurrences">
+      {% for occurrence in pair.occurrences %}
+      <li data-compare-side="{% if occurrence.a_only %}a_only{% else %}b_only{% endif %}">
+        {% if occurrence.a_only %}<span class="pattern-compare-side" data-i18n="diff.side_a">only last search</span>{% else %}<span class="pattern-compare-side" data-i18n="diff.side_b">only editor</span>{% endif %}
+        {% match occurrence.read %}{% when Some with (read) %}<a href="#read={{ read }}&amp;scope=document" data-compare-read="{{ read }}" lang="ja">{{ occurrence.surface }}</a>{% when None %}<span lang="ja">{{ occurrence.surface }}</span>{% endmatch %}
+        <span class="muted">{{ occurrence.source_name }} · <code>{{ occurrence.unit }}</code></span>
+      </li>
+      {% endfor %}
+    </ul>
+    {% endif %}
+  </section>
+  {% endfor %}
+  {% for (name, records) in comparison.a_only_definitions %}
+  <p data-compare-unpaired="a"><code>{{ name }}</code> <span data-i18n="diff.only_defined_a" data-i18n-args='{"records": {{ records }}}'>is defined only in the last search: {{ records }} record(s).</span></p>
+  {% endfor %}
+  {% for (name, records) in comparison.b_only_definitions %}
+  <p data-compare-unpaired="b"><code>{{ name }}</code> <span data-i18n="diff.only_defined_b" data-i18n-args='{"records": {{ records }}}'>is defined only in the editor's pattern: {{ records }} record(s).</span></p>
+  {% endfor %}
+  <p class="muted" data-i18n="diff.examples_note">At most 20 differing occurrences are listed per definition and side, the first in corpus order.</p>
+</div>
+{% endmatch %}

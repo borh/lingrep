@@ -977,6 +977,42 @@ export function definitionAtOffset(source, offset) {
 // The diagram panel named by `data-pattern-diagram="<textarea id>"`. It loads
 // only while open. Returns the function to call when the source or the cursor
 // changes.
+/**
+ * The Workbench panel that compares the editor's pattern with the pattern of
+ * the last search over the selected corpus.
+ */
+function patternCompare(state, textarea) {
+  const panel = document.querySelector(`[data-pattern-compare="${textarea.id}"]`);
+  if (!panel) return;
+  const body = panel.querySelector("[data-compare-body]");
+  const note = panel.querySelector("[data-compare-note]");
+  const say = (key) => {
+    note.dataset.i18n = key;
+    note.textContent = t(key);
+  };
+  panel.querySelector("[data-compare-run]").addEventListener("click", () => {
+    const source = state.source();
+    if (state.submittedSource === undefined) return say("diff.no_search");
+    if (state.submittedSource === source) return say("diff.same");
+    const form = textarea.closest("form");
+    const field = (name) => form?.querySelector(`[name="${name}"]`)?.value ?? "";
+    say("diff.running");
+    body.replaceChildren();
+    void globalThis.htmx.ajax("POST", "api/pattern/compare", {
+      target: body,
+      swap: "innerHTML",
+      values: {
+        a: state.submittedSource,
+        b: source,
+        corpus: field("corpus"),
+        level: panel.querySelector("[data-compare-level]").value,
+        search_scope: field("search_scope"),
+        overlaps: field("overlaps"),
+      },
+    }).then(() => say("diff.help"), () => say("diff.failed"));
+  });
+}
+
 function patternDiagram(state, textarea) {
   const panel = document.querySelector(`[data-pattern-diagram="${textarea.id}"]`);
   if (!panel) return () => {};
@@ -2016,6 +2052,7 @@ async function enhance(textarea, grammar, cm, options = {}) {
   }
   states.set(textarea, state);
   state.refreshDiagram = patternDiagram(state, textarea);
+  patternCompare(state, textarea);
   textarea.addEventListener("sample:source", (event) => {
     state.sampleSource = event.detail?.ranges ?? [];
     if (!state.view) return;

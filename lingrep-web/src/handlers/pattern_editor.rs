@@ -20,6 +20,7 @@ use crate::state::RequestStore;
 pub fn routes() -> Router<RequestStore> {
     Router::new()
         .merge(super::live_summary::routes())
+        .merge(super::pattern_compare::routes())
         .route("/check", post(check))
         .route("/format", post(format))
         .route("/diagram", post(diagram))

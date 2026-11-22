@@ -697,6 +697,114 @@ async fn a_hit_opens_in_the_sample_debugger_with_stored_tokens_until_the_text_is
     result
 }
 
+#[tokio::test]
+async fn the_comparison_panel_posts_the_last_searched_and_the_edited_pattern() -> WebDriverResult<()>
+{
+    let Some(driver) = driver().await? else {
+        return Ok(());
+    };
+    let served = serve().await;
+    let index = format!("{}workbench", served.base.trim_end_matches("sample"));
+    let note = "return document.querySelector('[data-compare-note]').dataset.i18n";
+    let press = "document.querySelector('[data-pattern-compare]').open = true; \
+                 document.querySelector('[data-compare-run]').click();";
+    let set = "const pattern = document.querySelector('#corpus-pattern'); \
+               pattern.value = arguments[0]; \
+               pattern.dispatchEvent(new Event('input', {bubbles: true}));";
+    let result: WebDriverResult<()> = async {
+        driver.goto(&index).await?;
+        wait_for(
+            &driver,
+            "return !!document.querySelector('.pattern-editor .cm-content')",
+            "the editor on Corpus Search",
+        )
+        .await?;
+        driver
+            .execute(
+                "window.__compare = []; \
+                 document.addEventListener('htmx:configRequest', (event) => { \
+                   if (event.detail.path.includes('api/pattern/compare')) __compare.push(event.detail.parameters); });",
+                vec![],
+            )
+            .await?;
+        driver.execute(press, vec![]).await?;
+        wait_for(
+            &driver,
+            &format!("{note} === 'diff.no_search'"),
+            "the note that no search has run",
+        )
+        .await?;
+
+        driver.execute(set, vec![json!("kept := [text=x].\n")]).await?;
+        driver
+            .execute(
+                "document.querySelector('[data-corpus-search]').requestSubmit();",
+                vec![],
+            )
+            .await?;
+        wait_for(
+            &driver,
+            "return !!document.querySelector('#pattern-table tbody tr')",
+            "the search results",
+        )
+        .await?;
+        driver.execute(press, vec![]).await?;
+        wait_for(
+            &driver,
+            &format!("{note} === 'diff.same'"),
+            "the note that the editor holds the searched pattern",
+        )
+        .await?;
+
+        driver.execute(set, vec![json!("kept := [].\n")]).await?;
+        driver
+            .execute(
+                "document.querySelector('[data-compare-level]').value = 'record';",
+                vec![],
+            )
+            .await?;
+        driver.execute(press, vec![]).await?;
+        // The test server has no `ling` binary beside it, so the run itself
+        // fails; the request and the swapped answer are what is checked.
+        wait_for(
+            &driver,
+            "return !!document.querySelector('[data-compare-body] [data-compare-error]')",
+            "the comparison's answer in the panel",
+        )
+        .await?;
+        observed(
+            &driver,
+            "const sent = __compare[0]; \
+             return JSON.stringify([__compare.length, sent.a, sent.b, sent.level, !!sent.corpus])",
+            json!(r#"[1,"kept := [text=x].\n","kept := [].\n","record",true]"#),
+            "the compared patterns and level",
+        )
+        .await?;
+
+        // A one-sided occurrence of a comparison opens the reader on its sentence.
+        driver
+            .execute(
+                "document.querySelector('[data-compare-body]').innerHTML = \
+                   '<a href=\"#read=0.0.1&amp;scope=document\" data-compare-read=\"0.0.1\">x</a>'; \
+                 document.querySelector('[data-compare-read]').click();",
+                vec![],
+            )
+            .await?;
+        wait_for(
+            &driver,
+            "return !!document.querySelector('[data-addressed-reader]')?.open \
+               && location.hash.includes('read=0.0.1')",
+            "the reader on the compared sentence",
+        )
+        .await?;
+        Ok(())
+    }
+    .await;
+    driver.quit().await?;
+    served.server.abort();
+    result
+}
+
 const JAPANESE: &str = "try { localStorage.setItem('lingrep-web:locale:v1', 'ja'); } catch {}";
 
 #[tokio::test]

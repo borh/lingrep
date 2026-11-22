@@ -36,6 +36,21 @@
           <p class="pattern-diagram-note muted" role="status" data-diagram-note></p>
           <div class="pattern-diagram-body" data-diagram-body></div>
         </details>
+        <details class="pattern-compare" data-pattern-compare="corpus-pattern">
+          <summary><span data-i18n="diff.title">Compare with the last search</span></summary>
+          <div class="pattern-compare-controls">
+            <label><span data-i18n="diff.level">Compare occurrences by</span>
+              <select data-compare-level>
+                <option value="span" data-i18n="diff.level_span">token span</option>
+                <option value="roles" data-i18n="diff.level_roles">capture tokens</option>
+                <option value="record" data-i18n="diff.level_record">published record</option>
+              </select>
+            </label>
+            <button type="button" class="btn btn-secondary" data-compare-run><span data-i18n="diff.run">Compare</span></button>
+          </div>
+          <p class="pattern-compare-note muted" role="status" data-compare-note data-i18n="diff.help">Runs the last searched pattern and the editor's pattern over this corpus and lists the occurrences only one of them has.</p>
+          <div class="pattern-compare-body" data-compare-body aria-live="polite"></div>
+        </details>
     </div>
     <details class="search-scope" data-search-scope data-imrad-labels="{{ self.imrad_labels_json() }}">
       <summary><span data-i18n="scope.title">Search scope</span>: <span data-scope-summary data-i18n="scope.all">All text</span></summary>
