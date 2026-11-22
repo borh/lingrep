@@ -36,28 +36,36 @@ impl std::fmt::Display for SpanStreamError {
     }
 }
 
+use super::producer::ChannelSource;
+
 /// Yields events until the `End` sentinel, which it reports as `Ok(None)`.
 ///
-/// Implementations may block: the sweep runs on the scan's blocking thread and
-/// the production source is a bounded channel drained with `blocking_recv`.
-pub trait SpanSource {
-    /// # Errors
-    ///
-    /// Returns an error when the underlying stream failed, was truncated, or
-    /// the caller's own validation rejected the event.
-    fn next(&mut self) -> Result<Option<SpanEvent>, SpanStreamError>;
+/// The production variant drains a bounded channel with `blocking_recv`; the
+/// `Vec` variant backs [`SpanEvents::from_events`] and unit tests without heap
+/// boxing or dynamic dispatch.
+pub(super) enum SpanSource {
+    Channel(ChannelSource),
+    Vec(VecSpanSource),
+}
+
+impl SpanSource {
+    fn next(&mut self) -> Result<Option<SpanEvent>, SpanStreamError> {
+        match self {
+            Self::Channel(source) => source.next(),
+            Self::Vec(source) => source.next(),
+        }
+    }
 }
 
 pub struct SpanEvents {
-    source: Box<dyn SpanSource + Send>,
+    source: SpanSource,
     peeked: Option<SpanEvent>,
     ended: bool,
     previous_first: Option<u64>,
     poisoned: Option<SpanStreamError>,
 }
 
-// `Box<dyn SpanSource>` is not `Debug`, and the whole point of the type is that
-// its contents are a stream position rather than a value. Report the position.
+// Report stream position rather than the underlying channel receiver.
 impl std::fmt::Debug for SpanEvents {
     fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         formatter
@@ -71,7 +79,7 @@ impl std::fmt::Debug for SpanEvents {
 }
 
 impl SpanEvents {
-    pub fn new(source: Box<dyn SpanSource + Send>) -> Self {
+    pub(super) fn new(source: SpanSource) -> Self {
         Self {
             source,
             peeked: None,
@@ -140,13 +148,13 @@ impl SpanEvents {
     /// constructor is a smaller public surface than an exported source type.
     #[must_use]
     pub fn from_events(events: Vec<SpanEvent>) -> Self {
-        Self::new(Box::new(VecSpanSource::new(events)))
+        Self::new(SpanSource::Vec(VecSpanSource::new(events)))
     }
 }
 
 /// Backs `SpanEvents::from_events`. `truncated` omits the `End` sentinel and is
 /// test-only, since no caller outside this crate needs to forge a truncation.
-struct VecSpanSource {
+pub(super) struct VecSpanSource {
     events: std::collections::VecDeque<SpanEvent>,
     ends: bool,
 }
@@ -166,9 +174,7 @@ impl VecSpanSource {
             ends: false,
         }
     }
-}
 
-impl SpanSource for VecSpanSource {
     fn next(&mut self) -> Result<Option<SpanEvent>, SpanStreamError> {
         match self.events.pop_front() {
             Some(event) => Ok(Some(event)),
@@ -213,7 +219,9 @@ mod tests {
 
     #[test]
     fn a_stream_closed_without_end_is_truncated() {
-        let mut events = SpanEvents::new(Box::new(VecSpanSource::truncated(vec![event(0, 0, 5)])));
+        let mut events = SpanEvents::new(SpanSource::Vec(VecSpanSource::truncated(vec![event(
+            0, 0, 5,
+        )])));
         events.peek().unwrap();
         events.take();
         assert!(matches!(events.peek(), Err(SpanStreamError::Truncated)));

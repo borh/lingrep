@@ -5,25 +5,26 @@ use futures::StreamExt as _;
 use lingrep_corpus::ProvenanceView;
 use tokio::sync::mpsc;
 
-use super::{SpanEvent, SpanEvents, SpanSource, SpanStreamError};
+use super::span_events::SpanSource;
+use super::{SpanEvent, SpanEvents, SpanStreamError};
 
 /// Bounded so a fast producer cannot outrun the sweep. 1024 × 32 B ≈ 32 KB.
 pub(crate) const CHANNEL_CAPACITY: usize = 1024;
 
-enum Message {
+pub(super) enum Message {
     Event(SpanEvent),
     /// The sentinel that distinguishes clean EOF from a dropped sender.
     End,
     Failed(String),
 }
 
-struct ChannelSource {
+pub(super) struct ChannelSource {
     receiver: mpsc::Receiver<Message>,
     ended: bool,
 }
 
-impl SpanSource for ChannelSource {
-    fn next(&mut self) -> Result<Option<SpanEvent>, SpanStreamError> {
+impl ChannelSource {
+    pub(super) fn next(&mut self) -> Result<Option<SpanEvent>, SpanStreamError> {
         if self.ended {
             return Ok(None);
         }
@@ -87,7 +88,7 @@ pub fn spawn_span_producer(
     });
     (
         handle,
-        SpanEvents::new(Box::new(ChannelSource {
+        SpanEvents::new(SpanSource::Channel(ChannelSource {
             receiver,
             ended: false,
         })),
@@ -122,7 +123,7 @@ mod tests {
         });
         (
             handle,
-            SpanEvents::new(Box::new(ChannelSource {
+            SpanEvents::new(SpanSource::Channel(ChannelSource {
                 receiver,
                 ended: false,
             })),
@@ -193,7 +194,7 @@ mod tests {
                 }))
                 .await;
         });
-        let mut stream = SpanEvents::new(Box::new(ChannelSource {
+        let mut stream = SpanEvents::new(SpanSource::Channel(ChannelSource {
             receiver,
             ended: false,
         }));
