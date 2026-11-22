@@ -51,7 +51,7 @@ pub enum TokenizedAdmission {
 }
 
 /// Omissions recorded by a source running under [`TokenizedAdmission::Omit`].
-#[derive(Debug, Clone, Default, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct OversizedSentenceOmissions {
     /// Sentences omitted as oversized.
     pub count: u64,
@@ -64,6 +64,18 @@ pub struct OversizedSentenceOmissions {
     pub first_actual: usize,
     /// The bound it exceeded.
     pub limit: usize,
+}
+
+impl Default for OversizedSentenceOmissions {
+    fn default() -> Self {
+        Self {
+            count: 0,
+            first_ordinal: u64::MAX,
+            first_source_name: None,
+            first_actual: 0,
+            limit: 0,
+        }
+    }
 }
 
 impl OversizedSentenceOmissions {
@@ -694,5 +706,24 @@ mod bound_sentence_input_tests {
                 .map(compact_str::CompactString::as_str),
             Some("猫")
         );
+    }
+
+    #[test]
+    fn oversized_sentence_omissions_default_uses_max_ordinal_placeholder() {
+        let mut omissions = OversizedSentenceOmissions::default();
+        assert_eq!(omissions.count, 0);
+        assert_eq!(omissions.first_ordinal, u64::MAX);
+        assert_eq!(omissions.first_source_name, None);
+        assert_eq!(omissions.first_actual, 0);
+        assert_eq!(omissions.limit, 0);
+        assert_eq!(omissions.summary(), None);
+
+        omissions.record(0, Some(Arc::from("doc.md")), 2048, 1024);
+        assert_eq!(omissions.count, 1);
+        assert_eq!(omissions.first_ordinal, 0);
+        assert_eq!(omissions.first_source_name.as_deref(), Some("doc.md"));
+        assert_eq!(omissions.first_actual, 2048);
+        assert_eq!(omissions.limit, 1024);
+        assert_eq!(omissions.summary(), Some(omissions.clone()));
     }
 }

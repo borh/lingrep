@@ -82,14 +82,6 @@ impl MatchBudget {
         steps: usize,
         bytes: usize,
     ) -> Result<(), MatchResourceError> {
-        if self
-            .output
-            .cancel
-            .as_ref()
-            .is_some_and(crate::execution::CancellationFlag::is_cancelled)
-        {
-            return Err(MatchResourceError::Cancelled);
-        }
         self.output.check()?;
         Self::charge(
             &mut self.steps,
@@ -211,7 +203,13 @@ impl OutputBudget {
     }
 
     pub(crate) fn check(&self) -> Result<(), MatchResourceError> {
-        if self.exhausted.load(std::sync::atomic::Ordering::Relaxed) {
+        if self
+            .cancel
+            .as_ref()
+            .is_some_and(crate::execution::CancellationFlag::is_cancelled)
+        {
+            Err(MatchResourceError::Cancelled)
+        } else if self.exhausted.load(std::sync::atomic::Ordering::Relaxed) {
             Err(self.fail())
         } else {
             Ok(())
@@ -392,5 +390,19 @@ mod tests {
         ));
         assert_eq!(values.capacity(), 0);
         assert_eq!(budget.allocated_bytes(), 0);
+    }
+
+    #[test]
+    fn output_budget_check_and_reserve_observe_cancellation() {
+        let cancel = crate::execution::CancellationFlag::new();
+        let budget = OutputBudget::new(1024).with_cancellation(Some(&cancel));
+        assert_eq!(budget.check(), Ok(()));
+        assert_eq!(budget.reserve(8), Ok(()));
+        assert_eq!(budget.allocated_bytes(), 8);
+
+        cancel.cancel();
+        assert_eq!(budget.check(), Err(MatchResourceError::Cancelled));
+        assert_eq!(budget.reserve(8), Err(MatchResourceError::Cancelled));
+        assert_eq!(budget.allocated_bytes(), 8);
     }
 }

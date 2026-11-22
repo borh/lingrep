@@ -1727,6 +1727,10 @@ mod tests {
             std::sync::Arc::new(super::OutputBudget::default().with_cancellation(Some(&cancel)));
         cancel.cancel();
         assert_eq!(
+            plain.try_find_matches_with_context_and_output(&input, None, &cancellable),
+            Err(super::MatchResourceError::Cancelled)
+        );
+        assert_eq!(
             interpreted.try_find_matches_with_context_and_output(&input, None, &cancellable),
             Err(super::MatchResourceError::Cancelled)
         );

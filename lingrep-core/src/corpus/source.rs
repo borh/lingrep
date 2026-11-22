@@ -439,25 +439,19 @@ impl CorpusFileIter {
         match self {
             Self::Files(files) => Ok(files.next()),
             Self::Discovery(discovery) => {
-                if discovery.is_none() {
-                    return Ok(None);
-                }
-                let next = {
-                    let state = discovery.as_mut();
-                    let discovery = state
-                        .as_mut()
-                        .expect("discovery presence was checked")
-                        .as_mut()
-                        .map_err(|error| io::Error::new(error.kind(), error.to_string()))?;
-                    discovery
-                        .next_document()
-                        .map_err(super::discovery::DiscoveryError::into_io)?
+                let mut state = match discovery.take() {
+                    Some(Ok(state)) => state,
+                    Some(Err(error)) => return Err(error),
+                    None => return Ok(None),
                 };
-                if let Some(document) = next {
+                if let Some(document) = state
+                    .next_document()
+                    .map_err(super::discovery::DiscoveryError::into_io)?
+                {
+                    **discovery = Some(Ok(state));
                     Ok(Some(document.path))
                 } else {
-                    let discovery = discovery.take().expect("discovery presence was checked")?;
-                    discovery
+                    state
                         .finish()
                         .map_err(super::discovery::DiscoveryError::into_io)?;
                     Ok(None)
@@ -515,5 +509,33 @@ impl Iterator for CorpusRawIter {
                 diagnostics,
             ));
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn discovery_error_fuses_stream_instead_of_repeating_forever() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let corpus_dir = dir.path().join("corpus");
+        fs::create_dir(&corpus_dir).expect("create corpus dir");
+        fs::write(corpus_dir.join("doc.txt"), "猫が走る。\n").expect("write doc");
+
+        let source =
+            CorpusSource::discover(&corpus_dir, CorpusReadConfig::Plain).expect("discover");
+
+        fs::remove_dir_all(&corpus_dir).expect("remove corpus dir");
+
+        let mut stream = source.structured_stream();
+        assert!(
+            matches!(stream.next(), Some(Err(_))),
+            "first poll must surface the discovery error"
+        );
+        assert!(
+            stream.next().is_none(),
+            "subsequent polls must fuse to None rather than repeating the error"
+        );
     }
 }
