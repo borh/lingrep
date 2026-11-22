@@ -374,6 +374,10 @@
                 "vibrato-rkyv-0.7.18" = "sha256-3xirbGNxZBKAaow51pRH1IGpHEvoEQPilsEsFEel/Po=";
               };
             };
+            # zstd-sys links the system libzstd through pkg-config; newer nixpkgs
+            # Rust builds no longer fall back to the vendored copy without it.
+            nativeBuildInputs = [ pkgs.pkg-config ];
+            buildInputs = [ pkgs.zstd ];
             buildFeatures = [ "vibrato-export" ];
             cargoTestFlags = [
               "--features"
