@@ -26,6 +26,12 @@
                     spellcheck="false" autocapitalize="off" autocorrect="off" autocomplete="off"
                     placeholder="test := [upos=VERB]." required>{{ seed_pattern }}</textarea>
         </div>
+        <details class="pattern-diagram" data-pattern-diagram="sample-pattern">
+          <summary><span data-i18n="editor.diagram_title">Recognition diagram of the definition at the cursor</span> <code data-diagram-name></code></summary>
+          <label class="pattern-diagram-expand"><input type="checkbox" data-diagram-expand> <span data-i18n="editor.diagram_expand">Expand references</span></label>
+          <p class="pattern-diagram-note muted" role="status" data-diagram-note></p>
+          <div class="pattern-diagram-body" data-diagram-body></div>
+        </details>
       </div>
       <div class="sample-text-field">
         <label for="sample-text"><span data-i18n="sample.label">Sample text</span> <span class="muted"><span data-i18n="sample.hint">(one sentence per line)</span></span></label>

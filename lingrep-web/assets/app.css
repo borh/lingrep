@@ -1032,6 +1032,10 @@ td.neighbors-similarity { display: flex; align-items: center; gap: var(--space-3
   border-radius: 4px;
   background: var(--surface-muted);
 }
+.pattern-diagram { margin-block-start: 0.5rem; }
+.pattern-diagram-body { overflow-x: auto; }
+.pattern-diagram[data-stale] .pattern-diagram-body { opacity: 0.45; }
+.pattern-diagram-expand { display: inline-flex; gap: 0.35rem; align-items: center; margin-block: 0.35rem; }
 .pattern-fsm-svg {
   display: block;
   font-family: var(--font-mono);

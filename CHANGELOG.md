@@ -39,6 +39,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `CompileOutput::consumed_tokens` is the library entry point. It reports one
   derivation of the body and nothing for a body with an any-order group,
   `same_as`, a `within=` lookaround or `skip:`.
+- The Workbench editor and the Sample debugger show the recognition diagram
+  of the pattern or fragment at the cursor, from the text being edited and
+  before any corpus run. It is the drawing `ling check --diagram` produces,
+  with the same option to expand references. When the text stops compiling,
+  the last diagram stays and is marked as out of date.
 
 ### Changed
 

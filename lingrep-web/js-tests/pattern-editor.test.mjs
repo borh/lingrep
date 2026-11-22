@@ -677,3 +677,14 @@ test("a local syntax error names an unprefixed attribute outside the portable se
     assert.deepEqual(localSyntaxMessage(text), { key: "editor.diag_syntax_local", args: null }, text);
   }
 });
+
+test("the definition at an offset is the pattern or fragment whose line is the last before it", async () => {
+  const { definitionAtOffset } = await import("../assets/editor/pattern-editor.js");
+  const source = "set S := {猫}.\nfragment 動物 := [text in S].\n\nexamples: [\"猫\"]\npattern p := @動物 [text=だ].\n";
+  const at = (needle) => source.indexOf(needle);
+  assert.equal(definitionAtOffset(source, 0), null, "a set has no diagram");
+  assert.equal(definitionAtOffset(source, at("[text in S]")), "動物");
+  assert.equal(definitionAtOffset(source, at("@動物 [text=だ]")), "p");
+  assert.equal(definitionAtOffset(source, source.length), "p");
+  assert.equal(definitionAtOffset("", 0), null);
+});

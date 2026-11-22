@@ -789,5 +789,11 @@
   "frequency.legend_share": "検索した文書のうち、その項目が 1 回以上現れる文書の割合です。",
   "frequency.legend_per_million": "出現数を、検索した文書の 100 万トークンあたりに換算した値です。大きさの違うコーパスを比べられます。",
   "editor.diag_attribute_unavailable": "このコーパスのトークン属性（{schema}）には `{attribute}` がありません（参照する定義: {definitions}）。この属性を使う条件はどのトークンにも一致せず、`!(…)` の否定だけが成り立ちます。",
+  "editor.diagram_title": "カーソル位置の定義の認識図",
+  "editor.diagram_expand": "参照を展開",
+  "editor.diagram_stale": "パターンをコンパイルできません。この図は最後にコンパイルできた版のものです。",
+  "editor.diagram_invalid": "パターンをコンパイルできないため、図はありません。",
+  "editor.diagram_none": "パターンまたはフラグメントの定義にカーソルを置いてください。",
+  "editor.diagram_failed": "図を読み込めませんでした。",
   "editor.diag_schema_bind": "このパターンはコーパスのトークン属性（{schema}）に結び付けられません: {error}。"
 }

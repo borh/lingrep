@@ -947,6 +947,89 @@ export function patternDefinitions(source, { includeDuplicates = false } = {}) {
   return definitions;
 }
 
+/** The name of the pattern or fragment whose `:=` line is the last at or before `offset`, or null. */
+export function definitionAtOffset(source, offset) {
+  const re = /(?:^|\n)[ \t]*(?:(pattern|fragment|set|lexicon)\s+)?([^\s:=#()[\]{},.|&@$]+)(?:\s+by\s+\[[^\]]+\])?\s*:=/g;
+  let found = null;
+  let match;
+  while ((match = re.exec(source)) !== null) {
+    const lineStart = match.index + (match[0].startsWith("\n") ? 1 : 0);
+    if (lineStart > offset && found !== null) break;
+    found = { name: match[2], kind: match[1] ?? "pattern" };
+  }
+  return found && ["pattern", "fragment"].includes(found.kind) ? found.name : null;
+}
+
+// The diagram panel named by `data-pattern-diagram="<textarea id>"`. It loads
+// only while open. Returns the function to call when the source or the cursor
+// changes.
+function patternDiagram(state, textarea) {
+  const panel = document.querySelector(`[data-pattern-diagram="${textarea.id}"]`);
+  if (!panel) return () => {};
+  const body = panel.querySelector("[data-diagram-body]");
+  const note = panel.querySelector("[data-diagram-note]");
+  const nameNode = panel.querySelector("[data-diagram-name]");
+  const expand = panel.querySelector("[data-diagram-expand]");
+  let controller = null;
+  let timer = null;
+  let shown = null;
+  const say = (key) => {
+    if (key) note.dataset.i18n = key;
+    else delete note.dataset.i18n;
+    note.textContent = key ? t(key) : "";
+  };
+  const load = async () => {
+    if (!panel.open) return;
+    const source = state.source();
+    const offset = state.view?.state.selection.main.head ?? textarea.selectionStart ?? 0;
+    const definition = definitionAtOffset(source, offset);
+    if (definition === null) {
+      if (!body.firstChild) say("editor.diagram_none");
+      return;
+    }
+    const key = JSON.stringify([source, definition, expand.checked]);
+    if (key === shown) return;
+    controller?.abort();
+    controller = new AbortController();
+    try {
+      const response = await fetch("api/pattern/diagram", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ source, definition, expand: expand.checked }),
+        signal: controller.signal,
+      });
+      const result = await response.json();
+      if (result.status === "rendered") {
+        const svg = new DOMParser().parseFromString(result.svg, "image/svg+xml").documentElement;
+        body.replaceChildren(document.importNode(svg, true));
+        nameNode.textContent = definition;
+        panel.removeAttribute("data-stale");
+        shown = key;
+        say(null);
+      } else if (result.status === "invalid") {
+        panel.toggleAttribute("data-stale", Boolean(body.firstChild));
+        say(body.firstChild ? "editor.diagram_stale" : "editor.diagram_invalid");
+      } else if (result.status === "unavailable") {
+        body.replaceChildren();
+        nameNode.textContent = definition;
+        panel.removeAttribute("data-stale");
+        delete note.dataset.i18n;
+        note.textContent = result.reason;
+      } else {
+        say("editor.diagram_failed");
+      }
+    } catch (error) {
+      if (error?.name !== "AbortError") say("editor.diagram_failed");
+    }
+  };
+  panel.addEventListener("toggle", load);
+  expand.addEventListener("change", load);
+  return () => {
+    clearTimeout(timer);
+    timer = setTimeout(load, CHECK_DELAY_MS);
+  };
+}
+
 /// One-line preview of a lingrep patterns source for folded UI chrome: the first actual
 /// pattern name. Grammar-level statements everyone ships (`defaults`,
 /// `set NAME := {…}`, `fragment NAME := …`) explain nothing to a researcher,
@@ -1918,6 +2001,7 @@ async function enhance(textarea, grammar, cm, options = {}) {
     });
   }
   states.set(textarea, state);
+  state.refreshDiagram = patternDiagram(state, textarea);
   textarea.addEventListener("sample:source", (event) => {
     state.sampleSource = event.detail?.ranges ?? [];
     if (!state.view) return;
@@ -1947,6 +2031,7 @@ async function enhance(textarea, grammar, cm, options = {}) {
       sampleSourceMarks(state, cm),
       cm.EditorView.updateListener.of((update) => {
         if (!update.selectionSet && !update.docChanged) return;
+        state.refreshDiagram();
         textarea.dispatchEvent(new CustomEvent("pattern:cursor", {
           bubbles: true,
           detail: { offset: update.docChanged ? null : update.state.selection.main.head },

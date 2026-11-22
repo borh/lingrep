@@ -789,5 +789,11 @@
   "frequency.legend_share": "The share of the searched documents in which the entry occurs at least once.",
   "frequency.legend_per_million": "Occurrences per million tokens of the searched documents, so corpora of different sizes compare.",
   "editor.diag_attribute_unavailable": "This corpus's token schema ({schema}) does not carry `{attribute}`, which {definitions} references; tests over it match nothing, and only `!(…)` complements hold.",
+  "editor.diagram_title": "Recognition diagram of the definition at the cursor",
+  "editor.diagram_expand": "Expand references",
+  "editor.diagram_stale": "The pattern does not compile. This diagram shows the last version that did.",
+  "editor.diagram_invalid": "The pattern does not compile, so there is no diagram.",
+  "editor.diagram_none": "Place the cursor in a pattern or fragment definition.",
+  "editor.diagram_failed": "The diagram could not be loaded.",
   "editor.diag_schema_bind": "The pattern cannot bind to this corpus's token schema ({schema}): {error}."
 }

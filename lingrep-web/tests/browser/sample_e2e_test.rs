@@ -390,6 +390,84 @@ async fn a_match_token_and_the_pattern_element_that_consumed_it_highlight_each_o
 }
 
 #[tokio::test]
+async fn the_editor_shows_the_diagram_of_the_definition_at_the_cursor() -> WebDriverResult<()> {
+    let Some(driver) = driver().await? else {
+        return Ok(());
+    };
+    let served = serve().await;
+    let set = "const field = document.querySelector(arguments[0]); field.value = arguments[1]; \
+               field.dispatchEvent(new Event('input', {bubbles: true}));";
+    let pattern = "fragment N := [text=猫].\npattern p := @N [text=だ].\n";
+    let place_cursor = "return import(new URL('assets/editor/pattern-editor.js', document.baseURI).href) \
+        .then((editor) => { editor.selectSource(document.querySelector('#sample-pattern'), arguments[0]); return true; })";
+    // The definition named, whether the drawing spells out the fragment's
+    // test, and whether the panel is marked stale.
+    let shows = |name: &str, fragment_body: bool, stale: bool| {
+        format!(
+            "const panel = document.querySelector('[data-pattern-diagram]'); \
+             const svg = panel.querySelector('svg.pattern-fsm-svg'); \
+             return !!svg && panel.querySelector('[data-diagram-name]').textContent === '{name}' \
+               && svg.textContent.includes('猫') === {fragment_body} \
+               && panel.hasAttribute('data-stale') === {stale}"
+        )
+    };
+    let result: WebDriverResult<()> = async {
+        driver.goto(&served.base).await?;
+        wait_for(&driver, CHECKED, "the editor's first check").await?;
+        driver
+            .execute(set, vec![json!("#sample-pattern"), json!(pattern)])
+            .await?;
+        driver
+            .execute(
+                "document.querySelector('[data-pattern-diagram]').open = true",
+                vec![],
+            )
+            .await?;
+
+        driver
+            .execute(
+                place_cursor,
+                vec![json!(pattern.encode_utf16().count() - 4)],
+            )
+            .await?;
+        wait_for(&driver, &shows("p", false, false), "the diagram of p").await?;
+        driver
+            .execute(
+                "document.querySelector('[data-diagram-expand]').click()",
+                vec![],
+            )
+            .await?;
+        wait_for(
+            &driver,
+            &shows("p", true, false),
+            "the expanded diagram of p",
+        )
+        .await?;
+
+        driver.execute(place_cursor, vec![json!(12)]).await?;
+        wait_for(&driver, &shows("N", true, false), "the diagram of N").await?;
+
+        driver
+            .execute(
+                set,
+                vec![json!("#sample-pattern"), json!("fragment N := [text=猫.")],
+            )
+            .await?;
+        wait_for(
+            &driver,
+            &shows("N", true, true),
+            "the previous diagram, stale",
+        )
+        .await?;
+        Ok(())
+    }
+    .await;
+    driver.quit().await?;
+    served.server.abort();
+    result
+}
+
+#[tokio::test]
 async fn a_failed_sample_run_shows_the_servers_reason_but_not_a_gateway_page() -> WebDriverResult<()>
 {
     let Some(driver) = driver().await? else {

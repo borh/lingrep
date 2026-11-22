@@ -30,6 +30,12 @@
                       spellcheck="false" autocapitalize="off" autocorrect="off" autocomplete="off"
                       placeholder="test := [upos=VERB]." required>{{ seed_pattern }}</textarea>
         </div>
+        <details class="pattern-diagram" data-pattern-diagram="corpus-pattern">
+          <summary><span data-i18n="editor.diagram_title">Recognition diagram of the definition at the cursor</span> <code data-diagram-name></code></summary>
+          <label class="pattern-diagram-expand"><input type="checkbox" data-diagram-expand> <span data-i18n="editor.diagram_expand">Expand references</span></label>
+          <p class="pattern-diagram-note muted" role="status" data-diagram-note></p>
+          <div class="pattern-diagram-body" data-diagram-body></div>
+        </details>
     </div>
     <details class="search-scope" data-search-scope data-imrad-labels="{{ self.imrad_labels_json() }}">
       <summary><span data-i18n="scope.title">Search scope</span>: <span data-scope-summary data-i18n="scope.all">All text</span></summary>
