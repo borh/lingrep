@@ -114,6 +114,13 @@ definition when the definition does not write it, and the sample runs again.
 No action is offered when the list already holds the sentence or when the
 definition inherits the list from `defaults` or a bundle.
 
+A hit's detail in the Workbench links to the Sample debugger with that corpus
+sentence and the Workbench's pattern. The sentence is then explained with the
+tokens stored in the corpus artifact, under the corpus's token schema, and the
+results name the corpus's analyzer; the catalog's claims are not checked in
+that state, and enhanced dependency relations are not evaluated. Editing the
+text returns the page to the sample tokenizer.
+
 A counterexample passes whenever its definition does not match it, including
 when the sentence is unrelated to the definition. Verification therefore also
 evaluates each passing counterexample against its definition once per

@@ -554,3 +554,65 @@ fn a_counterexample_that_no_single_relaxation_matches_is_listed_as_vacuous() {
         }]
     );
 }
+
+#[test]
+fn a_stored_dependency_sentence_matches_a_where_clause_the_sample_tokenizer_cannot_bind() {
+    use lingrep_web::sample::{
+        SampleAnalysis, SampleBinding, WhyNotOutcome, analyze_stored_sentence,
+    };
+    let schema = lingrep_core::corpus::conllu::token_schema();
+    let projection = schema
+        .bind_projection(schema.keys().iter().cloned())
+        .expect("the schema projects itself");
+    let stored = |relation: &str| {
+        let conllu = format!(
+            "1\t猫\t猫\tNOUN\t_\t_\t2\t{relation}\t_\t_\n2\t鳴く\t鳴く\tVERB\t_\t_\t0\troot\t_\t_\n"
+        );
+        lingrep_core::corpus::conllu::Reader::new(
+            std::io::BufReader::new(conllu.as_bytes()),
+            "stored-sentence-test",
+        )
+        .next()
+        .expect("one sentence")
+        .expect("parses")
+        .project(&projection)
+        .expect("projects")
+    };
+    let source = "p := (?<n> [upos=NOUN]) (?<v> [upos=VERB]) where $v -[nsubj]-> $n.";
+
+    let report = analyze_stored_sentence(source, &schema, &stored("nsubj"), "conllu".into());
+    let run = report.run.expect("the pattern compiles");
+    assert!(run.stored);
+    assert_eq!(run.analyzer, "conllu");
+    assert_eq!(
+        run.binding,
+        SampleBinding::Bound {
+            unavailable: Vec::new()
+        }
+    );
+    let SampleAnalysis::Matched {
+        tokens, matches, ..
+    } = report.analysis
+    else {
+        panic!("the where clause holds on the stored dependency edge");
+    };
+    assert_eq!(
+        tokens
+            .iter()
+            .map(|token| token.orth.as_str())
+            .collect::<Vec<_>>(),
+        ["猫", "鳴く"]
+    );
+    assert_eq!((matches[0].start, matches[0].end), (0, 2));
+    assert_eq!(matches[0].captures.len(), 2);
+
+    let report = analyze_stored_sentence(source, &schema, &stored("obj"), "conllu".into());
+    assert!(matches!(report.analysis, SampleAnalysis::NoMatches { .. }));
+    let unmatched = report.run.expect("the pattern compiles").unmatched;
+    assert_eq!(
+        unmatched[0].definitions[0].outcome,
+        WhyNotOutcome::WhereRejected {
+            spans: "0..2".into()
+        }
+    );
+}

@@ -255,6 +255,7 @@ fn a_run_names_its_tokenizer_its_missing_attributes_and_each_failed_claim() {
             run: Some(SampleRun {
                 unmatched: unmatched.clone(),
                 analyzer: "vibrato morphology · unidic.dic".into(),
+                stored: false,
                 corpus_analyzer: Some("conllu pretokenized".into()),
                 binding,
                 claims,

@@ -151,6 +151,8 @@ export function transitionPageState(state, action) {
   };
 }
 
+const PATTERN_HANDOFF_KEY = "lingrep:sample-pattern-handoff";
+
 function loadKwicPageSize(storage = localStorage) {
   try {
     return parseKwicPageSize(storage.getItem(KWIC_PAGE_SIZE_KEY));
@@ -1720,6 +1722,19 @@ if (typeof document !== "undefined") {
   });
 
   document.addEventListener("pattern:cursor", (event) => markTokensConsumedAt(event.detail?.offset ?? null));
+  // An edited corpus sentence is no longer the sentence the corpus stores.
+  document.addEventListener("input", (event) => {
+    if (event.target.id !== "sample-text") return;
+    const stored = document.querySelector("[data-corpus-sentence]:not([disabled])");
+    if (!stored) return;
+    stored.disabled = true;
+    const note = document.querySelector("[data-corpus-sentence-note] [data-i18n]");
+    if (note) {
+      note.dataset.i18n = "sample.opened_edited";
+      delete note.dataset.i18nArgs;
+      note.textContent = t("sample.opened_edited");
+    }
+  }, true);
   document.addEventListener("click", (event) => {
     const fullscreen = event.target.closest("[data-dendrogram-fullscreen]");
     if (fullscreen) {
@@ -1809,6 +1824,23 @@ if (typeof document !== "undefined") {
       if (!lines.includes(text)) {
         input.value = [text, ...lines.filter(Boolean)].join("\n");
         input.dispatchEvent(new Event("input", { bubbles: true }));
+      }
+      return;
+    }
+
+    const debugSentence = event.target.closest("[data-debug-sentence]");
+    if (debugSentence) {
+      const corpus = document.querySelector("[data-corpus-search] input[name=corpus]")?.value;
+      const [sentence] = debugSentence.dataset.debugSentence.split(".");
+      const url = new URL("sample", document.baseURI);
+      url.searchParams.set("sentence", sentence);
+      if (corpus) url.searchParams.set("corpus", corpus);
+      debugSentence.href = url.href;
+      // The Sample page opens with the pattern that produced this hit list.
+      const pattern = document.getElementById("corpus-pattern")?.value;
+      try {
+        if (pattern) sessionStorage.setItem(PATTERN_HANDOFF_KEY, pattern);
+      } catch (_error) {
       }
       return;
     }

@@ -337,7 +337,8 @@ async fn a_match_token_and_the_pattern_element_that_consumed_it_highlight_each_o
     let offset = |needle: &str| {
         pattern
             .find(needle)
-            .map(|byte| pattern[..byte].encode_utf16().count())
+            .and_then(|byte| pattern.get(..byte))
+            .map(|before| before.encode_utf16().count())
     };
     let place_cursor = "return import(new URL('assets/editor/pattern-editor.js', document.baseURI).href) \
         .then((editor) => { editor.selectSource(document.querySelector('#sample-pattern'), arguments[0]); return true; })";
@@ -619,6 +620,75 @@ async fn the_overlapping_matches_option_changes_which_patterns_are_counted() -> 
             )
             .await?;
         }
+        Ok(())
+    }
+    .await;
+    driver.quit().await?;
+    served.server.abort();
+    result
+}
+
+#[tokio::test]
+async fn a_hit_opens_in_the_sample_debugger_with_stored_tokens_until_the_text_is_edited()
+-> WebDriverResult<()> {
+    let Some(driver) = driver().await? else {
+        return Ok(());
+    };
+    let served = serve().await;
+    let index = format!("{}workbench", served.base.trim_end_matches("sample"));
+    let result: WebDriverResult<()> = async {
+        driver.goto(&index).await?;
+        wait_for(
+            &driver,
+            "return !!document.querySelector('.pattern-editor .cm-content')",
+            "the editor on Corpus Search",
+        )
+        .await?;
+        // The link a hit's detail renders, clicked with the Workbench's pattern.
+        driver
+            .execute(
+                "const pattern = document.querySelector('#corpus-pattern'); \
+                 pattern.value = 'handed := [text=x].\\n'; \
+                 const link = document.createElement('a'); \
+                 link.dataset.debugSentence = '0.0.1'; \
+                 link.href = 'sample'; \
+                 document.body.append(link); \
+                 link.click();",
+                vec![],
+            )
+            .await?;
+        wait_for(
+            &driver,
+            "return location.pathname.endsWith('/sample') \
+               && new URLSearchParams(location.search).get('sentence') === '0' \
+               && !!document.querySelector('[data-sample-stored]')",
+            "the stored sentence in the Sample debugger",
+        )
+        .await?;
+        wait_for(
+            &driver,
+            "return document.querySelector('#sample-pattern').value === 'handed := [text=x].\\n' \
+               && document.querySelectorAll('.sample-match').length === 1 \
+               && document.querySelector('#sample-text').value === 'x'",
+            "the Workbench pattern matching the stored sentence",
+        )
+        .await?;
+        driver
+            .execute(
+                "const text = document.querySelector('#sample-text'); \
+                 text.value = 'x x'; \
+                 text.dispatchEvent(new Event('input', {bubbles: true}));",
+                vec![],
+            )
+            .await?;
+        wait_for(
+            &driver,
+            "return !document.querySelector('[data-sample-stored]') \
+               && !!document.querySelector('[data-sample-run] [data-i18n=\"sample.tokenized_by\"]') \
+               && document.querySelector('[data-corpus-sentence-note] [data-i18n]').dataset.i18n === 'sample.opened_edited'",
+            "the sample tokenizer after the text is edited",
+        )
+        .await?;
         Ok(())
     }
     .await;

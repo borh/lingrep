@@ -1,7 +1,7 @@
 {% import "macros.html" as macros %}
 <section class="sample-results" aria-live="polite">
 {% match run %}{% when Some with (run) %}
-  <p class="sample-run" data-sample-run><span data-i18n="sample.tokenized_by">Sample tokenized by</span> <code>{{ run.analyzer }}</code>{% match run.corpus_analyzer %}{% when Some with (corpus) %} <span class="sample-run-warning" data-sample-corpus-differs><span data-i18n="sample.corpus_differs">The selected corpus uses a different token schema. Its analyzer is</span> <code>{{ corpus }}</code><span data-i18n="sample.corpus_differs_note">. Corpus searches can return different matches.</span></span>{% when None %}{% endmatch %}</p>
+  <p class="sample-run" data-sample-run>{% if run.stored %}<span data-sample-stored data-i18n="sample.stored_tokens">Tokens read from the corpus artifact, analyzed by</span>{% else %}<span data-i18n="sample.tokenized_by">Sample tokenized by</span>{% endif %} <code>{{ run.analyzer }}</code>{% match run.corpus_analyzer %}{% when Some with (corpus) %} <span class="sample-run-warning" data-sample-corpus-differs><span data-i18n="sample.corpus_differs">The selected corpus uses a different token schema. Its analyzer is</span> <code>{{ corpus }}</code><span data-i18n="sample.corpus_differs_note">. Corpus searches can return different matches.</span></span>{% when None %}{% endmatch %}</p>
   {% match run.binding %}
   {% when SampleBinding::Bound with { unavailable } %}
   {% if unavailable.len() > 0 %}

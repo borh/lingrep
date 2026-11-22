@@ -208,9 +208,12 @@ struct LineAnalysis {
 // any view is built. Reporting that as "Rendering failed" would name the wrong
 // stage, and reporting it as an empty match list would show the researcher a
 // sample that matched nothing.
-fn build_line_analysis<'a>(
-    line: &'a [TokenInfo],
-    context: &'a lingrep_core::fsm::LookaroundContext<'a, [TokenInfo]>,
+/// `line` holds the tokens as displayed, `sequence` the same tokens as the
+/// matcher read them, and `explanation` what the matcher found on `sequence`.
+fn build_line_analysis<S: lingrep_core::token_match::TokenSequence + ?Sized>(
+    line: &[TokenInfo],
+    sequence: &S,
+    explanation: lingrep_core::fsm::SentenceExplanation,
     output: &CompileOutput,
     pattern_source: &str,
     base_index: usize,
@@ -219,14 +222,6 @@ fn build_line_analysis<'a>(
     let matcher = &output.matcher;
     let sentence = surface_text(line);
     let mut out = Vec::new();
-    // The editor needs both raw candidates and what policy publishes. The
-    // matcher owns that one policy application so this view cannot drift from
-    // normal publication behavior.
-    let explanation = matcher
-        .try_explain_sentence_in_context(line, context)
-        .map_err(|error| SampleAnalysisError {
-            message: format!("Could not inspect this sentence: {error}"),
-        })?;
     for m in explanation
         .candidates
         .iter()
@@ -248,7 +243,7 @@ fn build_line_analysis<'a>(
                 .map(|before| before.encode_utf16().count())
         };
         for consumed in output
-            .consumed_tokens(&m.pattern, line, m.start, m.end)
+            .consumed_tokens(&m.pattern, sequence, m.start, m.end)
             .unwrap_or_default()
         {
             let Some(view) = consumed
@@ -355,9 +350,24 @@ fn analyze_compiled(
             )]),
         };
         let base_index = all_tokens.len();
+        // The editor needs both raw candidates and what policy publishes. The
+        // matcher owns that one policy application so this view cannot drift
+        // from normal publication behavior.
+        let explanation = match matcher.try_explain_sentence_in_context(line, &context) {
+            Ok(explanation) => explanation,
+            Err(error) => {
+                return (
+                    SampleAnalysis::Failed(SampleAnalysisError {
+                        message: format!("Could not inspect this sentence: {error}"),
+                    }),
+                    Vec::new(),
+                );
+            }
+        };
         match build_line_analysis(
             line,
-            &context,
+            line,
+            explanation,
             output,
             pattern_source,
             base_index,
@@ -611,10 +621,29 @@ fn why_not(
     tokens: &[TokenInfo],
     candidates: &[lingrep_core::fsm::ExplainedMatch],
 ) -> Option<WhyNot> {
+    why_not_over(
+        output,
+        pattern_source,
+        definition,
+        tokens,
+        tokens,
+        candidates,
+    )
+}
+
+/// [`why_not`] with the tokens as displayed apart from the tokens as matched.
+fn why_not_over<S: lingrep_core::token_match::TokenSequence + ?Sized>(
+    output: &CompileOutput,
+    pattern_source: &str,
+    definition: &str,
+    tokens: &[TokenInfo],
+    sequence: &S,
+    candidates: &[lingrep_core::fsm::ExplainedMatch],
+) -> Option<WhyNot> {
     use lingrep_core::fsm::{DefinitionOutcome, StopReason};
     let explanation = output
         .no_match
-        .explain_definition(definition, tokens, candidates);
+        .explain_definition(definition, sequence, candidates);
     let spans = |spans: Vec<(usize, usize)>| {
         spans
             .iter()
@@ -750,6 +779,9 @@ pub struct SampleRun {
     pub unmatched: Vec<UnmatchedLine>,
     /// The analyzer and dictionary that tokenized the sample.
     pub analyzer: String,
+    /// The tokens are a corpus sentence's stored analysis, and `analyzer`
+    /// names the corpus's analyzer.
+    pub stored: bool,
     /// The selected corpus's analyzer, when its token schema differs from the
     /// sample tokenizer's.
     pub corpus_analyzer: Option<String>,
@@ -766,7 +798,12 @@ pub fn sample_run(
     analyzer: String,
     tokenize: &dyn Fn(&str) -> Vec<TokenInfo>,
 ) -> SampleRun {
-    let binding = match output
+    let binding = sample_binding(output, schema);
+    sample_run_bound(output, pattern_source, analyzer, binding, tokenize)
+}
+
+fn sample_binding(output: &CompileOutput, schema: &TokenSchema) -> SampleBinding {
+    match output
         .matcher
         .bind_with_projection(schema, output.matcher.execution_attributes())
     {
@@ -787,7 +824,16 @@ pub fn sample_run(
                 .collect(),
         },
         Err(error) => SampleBinding::Refused(error.to_string()),
-    };
+    }
+}
+
+fn sample_run_bound(
+    output: &CompileOutput,
+    pattern_source: &str,
+    analyzer: String,
+    binding: SampleBinding,
+    tokenize: &dyn Fn(&str) -> Vec<TokenInfo>,
+) -> SampleRun {
     let declared = output.matcher.patterns().iter().any(|(_, pattern)| {
         pattern.metadata.contains_key("examples")
             || pattern.metadata.contains_key("counterexamples")
@@ -850,6 +896,7 @@ pub fn sample_run(
         unmatched: Vec::new(),
         analyzer,
         corpus_analyzer: None,
+        stored: false,
         binding,
         claims,
     }
@@ -935,4 +982,188 @@ pub fn analyze_sample(
         analysis,
         run: Some(run),
     }
+}
+
+/// A corpus sentence explained with its stored analysis: the catalog is bound
+/// to the corpus's token schema and reads the stored tokens, including the
+/// attributes the sample tokenizer cannot supply.
+///
+/// The catalog's examples and counterexamples are not checked, because the
+/// corpus's analyzer is not available to analyze them.
+pub fn analyze_stored_sentence(
+    pattern_source: &str,
+    schema: &TokenSchema,
+    sentence: &lingrep_core::token_match::BoundTokenSentence,
+    analyzer: String,
+) -> SampleReport {
+    let failed = |message: String, run| SampleReport {
+        analysis: SampleAnalysis::Failed(SampleAnalysisError { message }),
+        run,
+    };
+    let output = match compile_web_pattern(pattern_source) {
+        Ok(output) => output,
+        Err(error) => return failed(format_pattern_compile_error(&error), None),
+    };
+    let run = SampleRun {
+        unmatched: Vec::new(),
+        analyzer,
+        corpus_analyzer: None,
+        stored: true,
+        binding: sample_binding(&output, schema),
+        claims: SampleClaims::Undeclared,
+    };
+    let tokens = match (0..sentence.len())
+        .map(|index| stored_token(schema, sentence, index))
+        .collect::<Option<Vec<_>>>()
+    {
+        Some(tokens) => tokens,
+        None => {
+            return failed(
+                "Could not read this sentence's tokens.".to_owned(),
+                Some(run),
+            );
+        }
+    };
+    let views = |tokens: &[TokenInfo]| {
+        tokens
+            .iter()
+            .enumerate()
+            .map(|(index, token)| TokenView::from_token_info(token, index))
+            .collect::<Result<Vec<_>, _>>()
+            .map_err(rendering_failed)
+    };
+    let bound = match output
+        .matcher
+        .bind_with_projection(schema, schema.keys().iter().cloned())
+    {
+        Ok(bound) => bound,
+        // `run.binding` carries the refusal.
+        Err(_) => {
+            return match views(&tokens) {
+                Ok(tokens) => SampleReport {
+                    analysis: SampleAnalysis::NoMatches { tokens },
+                    run: Some(run),
+                },
+                Err(error) => SampleReport {
+                    analysis: SampleAnalysis::Failed(error),
+                    run: Some(run),
+                },
+            };
+        }
+    };
+    let explanation = match bound.explain_input_in_windows(
+        &lingrep_core::execution::BoundSentenceInput::new(
+            sentence.clone(),
+            lingrep_core::execution::EnhancedGraphInput::NotRequested,
+        ),
+        &[],
+    ) {
+        Ok(explanation) => explanation,
+        Err(error) => {
+            return failed(
+                format!("Could not inspect this sentence: {error}"),
+                Some(run),
+            );
+        }
+    };
+    let analysis = match build_line_analysis(
+        &tokens,
+        sentence,
+        explanation,
+        &output,
+        pattern_source,
+        0,
+        0,
+    ) {
+        Ok(analysis) => analysis,
+        Err(error) => {
+            return SampleReport {
+                analysis: SampleAnalysis::Failed(error),
+                run: Some(run),
+            };
+        }
+    };
+    let mut run = run;
+    if analysis.matches.is_empty() {
+        run.unmatched.push(UnmatchedLine {
+            text: surface_text(&tokens),
+            definitions: output
+                .matcher
+                .patterns()
+                .iter()
+                .take(UNMATCHED_DEFINITION_LIMIT)
+                .filter_map(|(name, _)| {
+                    why_not_over(
+                        &output,
+                        pattern_source,
+                        name,
+                        &tokens,
+                        sentence,
+                        &analysis.candidates,
+                    )
+                })
+                .collect(),
+        });
+    }
+    let token_views = match views(&tokens) {
+        Ok(views) => views,
+        Err(error) => {
+            return SampleReport {
+                analysis: SampleAnalysis::Failed(error),
+                run: Some(run),
+            };
+        }
+    };
+    let analysis = if output.matcher.patterns().is_empty() {
+        SampleAnalysis::FragmentsOnly {
+            tokens: token_views,
+        }
+    } else if analysis.constellation.groups.is_empty() {
+        SampleAnalysis::NoMatches {
+            tokens: token_views,
+        }
+    } else {
+        SampleAnalysis::Matched {
+            tokens: token_views,
+            matches: analysis.matches,
+            constellations: vec![analysis.constellation],
+        }
+    };
+    SampleReport {
+        analysis,
+        run: Some(run),
+    }
+}
+
+/// The stored token at `index` as the sample view displays one.
+fn stored_token(
+    schema: &TokenSchema,
+    sentence: &lingrep_core::token_match::BoundTokenSentence,
+    index: usize,
+) -> Option<TokenInfo> {
+    use lingrep_core::token_match::{AttributeValueRef, TokenAttributeIndex, TokenSequence};
+    let mut token = TokenInfo::from_sequence(sentence, index)?;
+    let scalar = |name: &str| {
+        let key = schema.keys().iter().find(|key| key.as_str() == name)?;
+        match sentence.value_key(index, key)? {
+            AttributeValueRef::Scalar(value) => Some(value.to_owned()),
+            AttributeValueRef::StringSet(_) => None,
+        }
+    };
+    if token.surface().or(token.orth()).is_none()
+        && let Some(text) = scalar("surface").or_else(|| scalar("text"))
+    {
+        token.set(TokenAttributeIndex::Orth, text.into());
+    }
+    if token.lemma().is_none()
+        && let Some(lemma) = scalar("lemma")
+    {
+        token.set(TokenAttributeIndex::Lemma, lemma.into());
+    }
+    if token.pos().is_none()
+        && let Some(pos) = scalar("upos")
+    {
+        token.set(TokenAttributeIndex::Pos, pos.into());
+    }
+    Some(token)
 }

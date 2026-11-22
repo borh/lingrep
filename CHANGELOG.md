@@ -51,6 +51,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `--propose-counterexamples FILE` reads one sentence per line and lists, per
   definition and constraint, sentences the definition does not match and
   would match without that constraint, with the number of sentences scanned.
+- A Workbench hit opens its sentence in the Sample debugger with the analysis
+  stored in the corpus, so a pattern that reads attributes the sample
+  tokenizer does not supply, such as a dependency `where` clause over a
+  CoNLL-U corpus, is explained on the tokens it searched. The results state
+  that the tokens come from the corpus artifact and name its analyzer. Editing
+  the text switches to the sample tokenizer, and the page says so. Enhanced
+  dependency relations are not evaluated there.
 
 ### Changed
 
