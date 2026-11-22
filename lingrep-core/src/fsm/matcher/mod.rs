@@ -30,6 +30,7 @@ pub use contract::{canonical_matches, canonicalize_matches};
 #[cfg(feature = "bench-instrumentation")]
 pub use assertion::AssertionMetrics;
 pub use builder::FsmBuilder;
+pub(crate) use compiled::CompiledCatalogParts;
 #[cfg(feature = "bench-instrumentation")]
 pub use compiled::ExecutionMetrics;
 pub use compiled::{

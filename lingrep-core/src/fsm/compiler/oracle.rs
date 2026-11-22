@@ -1615,10 +1615,14 @@ mod tests {
         let assertions =
             super::super::assertion::compile_assertions(program, &limits, &BTreeMap::new())
                 .expect("bounded test program must compile assertions");
-        let mut lowered = lower_to_nfa(program, &limits, &[], &assertions.occurrences)
+        let lowered = lower_to_nfa(program, &limits, &[], &assertions.occurrences)
             .expect("bounded test program must lower");
-        lowered.matcher.install_assertions(assertions.catalog);
-        lowered.matcher.find_matches(tokens)
+        crate::fsm::CompiledCatalog::from_nfa_for_test(
+            lowered.patterns,
+            lowered.state_machine,
+            assertions.catalog,
+        )
+        .find_matches(tokens)
     }
 
     fn spans(program: &BoundProgram, values: &[&str]) -> Vec<(usize, usize)> {
@@ -2036,14 +2040,21 @@ mod tests {
         };
 
         let expected = oracle_matches(&program, &tokens);
-        let actual = lower_to_nfa(
+        let lowered = lower_to_nfa(
             &program,
             &CompileLimits::default(),
             &[],
             &Default::default(),
         )
-        .expect("bounded generated program must lower")
-        .matcher
+        .expect("bounded generated program must lower");
+        let actual = crate::fsm::CompiledCatalog::from_nfa_for_test(
+            lowered.patterns,
+            lowered.state_machine,
+            crate::fsm::matcher::assertion::AssertionCatalog {
+                programs: Box::default(),
+                occurrences: Box::default(),
+            },
+        )
         .find_matches(&tokens);
 
         assert_eq!(actual, expected);

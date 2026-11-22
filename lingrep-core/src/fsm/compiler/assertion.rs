@@ -59,7 +59,7 @@ pub(super) fn compile_assertions(
     // because an anchor is a position and never a record. Sharing the assertion
     // catalog gives them compiled predicates, dependency rows for any nested
     // lookaround, and — the reason this cannot be skipped — a place in the
-    // assertion contribution to `finalize_required_attributes`, which unions
+    // assertion contribution to `CompiledCatalog::from_parts`, which unions
     // over *installed programs* alongside the recognition NFA, the capture plans
     // and the span-equality plans. A fragment named only by an `anchor:`
     // declaration is referenced by no pattern, so without this it reaches
@@ -344,7 +344,7 @@ impl Compiler<'_> {
         let union_members = dependencies.clone();
         // Empty by construction: `required_attributes` reads consume and
         // previous-token edges, and a union has neither. Each branch charges
-        // its own, and `finalize_required_attributes` unions over installed
+        // its own, and `CompiledCatalog::from_parts` unions over installed
         // programs — so nothing is lost by this one contributing none.
         let required_attributes = required_attributes(&automaton);
         self.charge_program(span, &dependencies, &required_attributes)?;

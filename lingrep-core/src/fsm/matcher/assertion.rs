@@ -150,13 +150,6 @@ pub(crate) struct CompiledAssertionCatalog {
 }
 
 impl CompiledAssertionCatalog {
-    pub(crate) fn empty() -> Self {
-        Self {
-            programs: Box::default(),
-            occurrences: Box::default(),
-        }
-    }
-
     #[cfg(test)]
     pub(crate) fn program_count_for_test(&self) -> usize {
         self.programs.len()

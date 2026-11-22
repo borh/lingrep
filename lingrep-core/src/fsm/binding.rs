@@ -189,17 +189,14 @@ impl CompiledCatalog {
         let projection = schema
             .bind_projection(available)
             .expect("all projected attributes were checked against this schema");
-        let mut compiled = self.clone();
-        compiled.bind_attributes(&projection);
-        if self.sentence_filter.as_ref().is_some_and(|filter| {
-            self.catalog_policy().declared()
+        let keep_sentence_filter = self.sentence_filter.as_ref().is_some_and(|filter| {
+            !(self.catalog_policy().declared()
                 || !self.lexicons().is_empty()
                 || filter.clauses().iter().flatten().any(|term| {
                     schema.kind_for_key(term.attribute()) != Some(AttributeKind::Scalar)
-                })
-        }) {
-            compiled.sentence_filter = None;
-        }
+                }))
+        });
+        let compiled = self.bind_for_schema(&projection, keep_sentence_filter);
         Ok(BoundCatalog {
             compiled,
             projection,

@@ -119,16 +119,11 @@ impl ExecutionMetrics {
     }
 }
 
-/// Immutable compiled lingrep patterns artifact produced by [`super::FsmBuilder`].
+/// Schema-independent immutable catalog data shared across schema bindings.
 #[derive(Clone)]
-pub struct CompiledCatalog {
-    pub(crate) sentence_filter: Option<crate::fsm::SentenceFilter>,
+struct CatalogStatic {
     patterns: Patterns,
     lexicons: Option<super::CompiledLexicons>,
-    dense: DenseMachine,
-    predicates: PredicateCatalog,
-    capture_plans: IndexMap<CompactString, CapturePlan>,
-    evaluated_plans: Box<[EvaluatedPlan]>,
     /// Per definition, the capture name at each token position; `None` unless
     /// every execution definition is a run of unconstrained tokens.
     window_captures: Option<IndexMap<CompactString, Box<[Option<CompactString>]>>>,
@@ -152,6 +147,32 @@ pub struct CompiledCatalog {
     near_tests: Box<[crate::fsm::NearTest]>,
     label_declarations: Box<[crate::fsm::LabelDeclaration]>,
     span_constraint_kinds: BTreeMap<String, Vec<CompactString>>,
+}
+
+/// Complete inputs for constructing an immutable [`CompiledCatalog`] in one step.
+pub(crate) struct CompiledCatalogParts {
+    pub(crate) patterns: Patterns,
+    pub(crate) state_machine: StateMachineData,
+    pub(crate) assertions: AssertionCatalog,
+    pub(crate) anchor_programs: BTreeMap<CompactString, AssertionProgramId>,
+    pub(crate) execution: Vec<ExecutionDefinition>,
+    pub(crate) lexicons: Option<super::CompiledLexicons>,
+    pub(crate) catalog_policy: crate::fsm::policy::CatalogPolicy,
+    pub(crate) analyzer_constraints: Vec<CatalogAnalyzerConstraint>,
+    pub(crate) vectors: Vec<crate::fsm::CatalogVectors>,
+    pub(crate) near_tests: Vec<crate::fsm::NearTest>,
+    pub(crate) label_declarations: Vec<crate::fsm::LabelDeclaration>,
+}
+
+/// Immutable compiled lingrep patterns artifact produced by [`super::FsmBuilder`].
+#[derive(Clone)]
+pub struct CompiledCatalog {
+    pub(crate) sentence_filter: Option<crate::fsm::SentenceFilter>,
+    dense: DenseMachine,
+    predicates: PredicateCatalog,
+    capture_plans: IndexMap<CompactString, CapturePlan>,
+    evaluated_plans: Box<[EvaluatedPlan]>,
+    shared: Arc<CatalogStatic>,
 }
 
 /// One definition of a catalog [`CompiledCatalog::token_windows`] describes.
@@ -338,54 +359,147 @@ fn merge_catalog_matches(
 }
 
 impl CompiledCatalog {
-    pub(crate) fn new(patterns: Patterns, state_machine: StateMachineData) -> Self {
+    /// Constructs a complete, immutable [`CompiledCatalog`] in one step.
+    ///
+    /// Ordering invariants enforced here:
+    /// 1. Predicate interning runs in deterministic order: recognition NFA,
+    ///    assertion catalog, then execution plans (preserving [`Self::predicate_digest`]).
+    /// 2. `required_attributes` unions every execution context (recognition NFA,
+    ///    capture plans, evaluated plans, assertions, and lexicons).
+    /// 3. Synthesized `__policy__*` emitters are removed from the public
+    ///    [`Self::patterns`] map after all matching structures are derived.
+    pub(crate) fn from_parts(parts: CompiledCatalogParts) -> Self {
         let mut predicates = PredicateCatalog::default();
         let dense = DenseMachine::build(
-            &state_machine.state_transitions,
-            &state_machine.final_states,
-            &state_machine.state_patterns,
+            &parts.state_machine.state_transitions,
+            &parts.state_machine.final_states,
+            &parts.state_machine.state_patterns,
             &mut predicates,
         );
-        Self {
+        let assertion_catalog = parts.assertions.compile(&mut predicates);
+
+        let sentence_filter = crate::fsm::compiler::derive_sentence_filter(&parts.execution);
+        let execution_queries_lookaround = parts
+            .execution
+            .iter()
+            .any(|definition| definition.expr.queries_lookaround());
+        let window_captures = parts
+            .execution
+            .iter()
+            .map(|definition| Some((definition.name.clone(), window_captures(definition)?)))
+            .collect();
+        let mut span_constraint_kinds: BTreeMap<String, Vec<CompactString>> = BTreeMap::new();
+        for definition in &parts.execution {
+            for constraint in &definition.span_constraints {
+                let names = span_constraint_kinds
+                    .entry(constraint.kind.clone())
+                    .or_default();
+                if names.last() != Some(&definition.name) {
+                    names.push(definition.name.clone());
+                }
+            }
+        }
+        let mut capture_plans = IndexMap::new();
+        let mut evaluated = Vec::new();
+        for definition in parts.execution {
+            match definition.capability {
+                ExecutionCapability::Plain => {}
+                ExecutionCapability::Captures => {
+                    capture_plans.insert(
+                        definition.name.clone(),
+                        CapturePlan(Program::new(definition, &mut predicates)),
+                    );
+                }
+                ExecutionCapability::SpanEquality
+                | ExecutionCapability::Intersection
+                | ExecutionCapability::AnyOrder
+                | ExecutionCapability::Relations => {
+                    evaluated.push(EvaluatedPlan(Program::new(definition, &mut predicates)));
+                }
+            }
+        }
+        let evaluated_plans = evaluated.into_boxed_slice();
+
+        let lexicon_descriptors = parts
+            .lexicons
+            .as_ref()
+            .map_or(&[][..], super::CompiledLexicons::descriptors);
+        let required_attributes = dense
+            .required_attributes()
+            .chain(
+                capture_plans
+                    .values()
+                    .flat_map(|plan| plan.0.required_attributes()),
+            )
+            .chain(
+                evaluated_plans
+                    .iter()
+                    .flat_map(|plan| plan.0.required_attributes()),
+            )
+            .chain(assertion_catalog.required_attributes())
+            .chain(
+                lexicon_descriptors
+                    .iter()
+                    .flat_map(|lexicon| lexicon.by.iter().cloned()),
+            )
+            .collect::<BTreeSet<_>>()
+            .into_iter()
+            .collect();
+
+        // Removes synthesized policy emitters from the *public* catalog.
+        // They must keep matching — the engine needs their records as evidence
+        // for a fragment operand — so only `patterns` is filtered, and the
+        // state machine is untouched.
+        let mut patterns = parts.patterns;
+        patterns
+            .0
+            .retain(|name, _| !crate::fsm::policy::is_hidden(name));
+
+        let shared = Arc::new(CatalogStatic {
             patterns,
-            sentence_filter: None,
-            lexicons: None,
+            lexicons: parts.lexicons,
+            window_captures,
+            assertion_catalog,
+            execution_queries_lookaround,
+            anchor_programs: parts.anchor_programs,
+            required_attributes,
+            catalog_policy: parts.catalog_policy,
+            analyzer_constraints: parts.analyzer_constraints.into_boxed_slice(),
+            vectors: parts.vectors.into_boxed_slice(),
+            near_tests: parts.near_tests.into_boxed_slice(),
+            label_declarations: parts.label_declarations.into_boxed_slice(),
+            span_constraint_kinds,
+        });
+
+        Self {
+            sentence_filter,
             dense,
             predicates,
-            capture_plans: IndexMap::new(),
-            evaluated_plans: Box::default(),
-            window_captures: None,
-            assertion_catalog: CompiledAssertionCatalog::empty(),
-            execution_queries_lookaround: false,
-            anchor_programs: BTreeMap::new(),
-            required_attributes: Box::default(),
-            catalog_policy: crate::fsm::policy::CatalogPolicy::default(),
-            analyzer_constraints: Box::default(),
-            vectors: Box::default(),
-            near_tests: Box::default(),
-            label_declarations: Box::default(),
-            span_constraint_kinds: BTreeMap::new(),
+            capture_plans,
+            evaluated_plans,
+            shared,
         }
     }
 
-    pub(crate) fn install_assertions(&mut self, catalog: AssertionCatalog) {
-        self.assertion_catalog = catalog.compile(&mut self.predicates);
-    }
-
-    /// Records which assertion program recognizes each declared anchor.
-    ///
-    /// A pure name-to-id record. The ids index the catalog
-    /// [`Self::install_assertions`] installs, and that catalog is also what
-    /// carries an `exclude` fragment's attributes into the projection — so this
-    /// map is not on the path to [`Self::finalize_required_attributes`] and
-    /// imposes no ordering against it. Installing it after the projection is
-    /// frozen would change nothing; it sits beside `install_assertions` because
-    /// that is what its values mean, not because it must.
-    pub(crate) fn install_anchor_programs(
-        &mut self,
-        programs: BTreeMap<CompactString, AssertionProgramId>,
-    ) {
-        self.anchor_programs = programs;
+    #[cfg(test)]
+    pub(crate) fn from_nfa_for_test(
+        patterns: Patterns,
+        state_machine: StateMachineData,
+        assertions: AssertionCatalog,
+    ) -> Self {
+        Self::from_parts(CompiledCatalogParts {
+            patterns,
+            state_machine,
+            assertions,
+            anchor_programs: BTreeMap::new(),
+            execution: Vec::new(),
+            lexicons: None,
+            catalog_policy: crate::fsm::policy::CatalogPolicy::default(),
+            analyzer_constraints: Vec::new(),
+            vectors: Vec::new(),
+            near_tests: Vec::new(),
+            label_declarations: Vec::new(),
+        })
     }
 
     /// The assertion program recognizing each declared anchor's `exclude`, by
@@ -400,54 +514,27 @@ impl CompiledCatalog {
     /// about themselves.
     #[cfg(test)]
     pub(crate) fn anchor_programs_for_test(&self) -> &BTreeMap<CompactString, AssertionProgramId> {
-        &self.anchor_programs
+        &self.shared.anchor_programs
     }
 
     /// The compiled assertion catalog every [`AssertionProgramId`] indexes.
     #[cfg(test)]
     pub(crate) fn assertion_catalog_for_test(&self) -> &CompiledAssertionCatalog {
-        &self.assertion_catalog
-    }
-
-    pub(crate) fn install_catalog_policy(&mut self, policy: crate::fsm::policy::CatalogPolicy) {
-        self.catalog_policy = policy;
-    }
-
-    pub(crate) fn install_vectors(
-        &mut self,
-        vectors: Vec<crate::fsm::CatalogVectors>,
-        near_tests: Vec<crate::fsm::NearTest>,
-    ) {
-        self.vectors = vectors.into_boxed_slice();
-        self.near_tests = near_tests.into_boxed_slice();
+        &self.shared.assertion_catalog
     }
 
     /// The catalog's distinct `near` tests in first-appearance order, each
     /// with the values it was resolved to. Empty when the catalog has none.
     #[must_use]
     pub fn near_tests(&self) -> &[crate::fsm::NearTest] {
-        &self.near_tests
+        &self.shared.near_tests
     }
 
     /// The catalog's `vectors:` entries, in source order. Empty when the
     /// catalog declares none.
     #[must_use]
     pub fn vectors(&self) -> &[crate::fsm::CatalogVectors] {
-        &self.vectors
-    }
-
-    pub(crate) fn install_analyzer_constraints(
-        &mut self,
-        constraints: Vec<CatalogAnalyzerConstraint>,
-    ) {
-        self.analyzer_constraints = constraints.into_boxed_slice();
-    }
-
-    pub(crate) fn install_label_declarations(
-        &mut self,
-        declarations: Vec<crate::fsm::LabelDeclaration>,
-    ) {
-        self.label_declarations = declarations.into_boxed_slice();
+        &self.shared.vectors
     }
 
     /// The sentence-span kinds that `where span(…)`, `within_span` and
@@ -455,16 +542,16 @@ impl CompiledCatalog {
     /// carry such a constraint, in catalog order. A definition matches nothing
     /// in a sentence without a span of a kind it names.
     pub fn span_constraint_kinds(&self) -> &BTreeMap<String, Vec<CompactString>> {
-        &self.span_constraint_kinds
+        &self.shared.span_constraint_kinds
     }
 
     /// The catalog's `labels:` fields, in source order.
     pub fn label_declarations(&self) -> &[crate::fsm::LabelDeclaration] {
-        &self.label_declarations
+        &self.shared.label_declarations
     }
 
     pub fn analyzer_constraints(&self) -> &[CatalogAnalyzerConstraint] {
-        &self.analyzer_constraints
+        &self.shared.analyzer_constraints
     }
 
     pub fn analyzer_compatibility(
@@ -474,9 +561,10 @@ impl CompiledCatalog {
         split: Option<&str>,
         segmentation: &str,
     ) -> AnalyzerCompatibility {
-        if self.analyzer_constraints.is_empty() {
+        if self.shared.analyzer_constraints.is_empty() {
             AnalyzerCompatibility::Unspecified
         } else if self
+            .shared
             .analyzer_constraints
             .iter()
             .any(|constraint| constraint.matches(family, resource, split, segmentation))
@@ -487,27 +575,13 @@ impl CompiledCatalog {
         }
     }
 
-    /// Removes synthesized policy emitters from the *public* catalog.
-    ///
-    /// They must keep matching — the engine needs their records as evidence for
-    /// a fragment operand — so only [`Self::patterns`] is filtered, and
-    /// the state machine is untouched. Everything matching depends on is
-    /// derived before this runs: `dense` carries its own state-to-name map
-    /// (`exec.rs` emits from it, never from this map), and the attribute
-    /// projection is already frozen. Callers of `patterns()` — check
-    /// descriptors, projections, example verification — therefore never see a
-    /// definition no researcher wrote.
-    pub(crate) fn hide_synthesized_patterns(&mut self) {
-        self.patterns
-            .0
-            .retain(|name, _| !crate::fsm::policy::is_hidden(name));
-    }
-
     /// Adjusts publication and policy explanations for `overlaps` without
     /// changing the candidates matched by each definition.
     #[must_use]
     pub fn with_overlaps(mut self, overlaps: crate::fsm::policy_program::Overlaps) -> Self {
-        self.catalog_policy = self.catalog_policy.with_overlaps(overlaps);
+        let shared = Arc::make_mut(&mut self.shared);
+        let policy = std::mem::take(&mut shared.catalog_policy);
+        shared.catalog_policy = policy.with_overlaps(overlaps);
         self
     }
 
@@ -515,7 +589,7 @@ impl CompiledCatalog {
     /// adjustment; [`crate::fsm::policy::CatalogPolicy::declared`] reports
     /// whether it contains statements.
     pub fn catalog_policy(&self) -> &crate::fsm::policy::CatalogPolicy {
-        &self.catalog_policy
+        &self.shared.catalog_policy
     }
 
     /// Structural identity of the anchor set this catalog declares.
@@ -524,7 +598,7 @@ impl CompiledCatalog {
     /// [`AnchorPositions::get`]. [`AnchorSetDigest::default`] for a catalog
     /// declaring no anchor.
     pub fn anchor_digest(&self) -> &AnchorSetDigest {
-        &self.catalog_policy.anchor_digest
+        &self.shared.catalog_policy.anchor_digest
     }
 
     /// Each declared anchor's `max_nesting` claim, by anchor name.
@@ -536,7 +610,7 @@ impl CompiledCatalog {
     ///
     /// [`CatalogPolicy::anchors`]: crate::fsm::CatalogPolicy::anchors
     pub fn nesting_claims(&self) -> &BTreeMap<CompactString, NestingClaim> {
-        &self.catalog_policy.nesting_claims
+        &self.shared.catalog_policy.nesting_claims
     }
 
     /// A borrowed view of everything the anchor pre-pass needs.
@@ -552,10 +626,10 @@ impl CompiledCatalog {
     /// [`Self::anchor_positions`] is the one-shot spelling for everyone else.
     pub fn anchor_evaluator(&self) -> AnchorEvaluator<'_> {
         AnchorEvaluator {
-            programs: &self.anchor_programs,
-            assertions: &self.assertion_catalog,
+            programs: &self.shared.anchor_programs,
+            assertions: &self.shared.assertion_catalog,
             predicates: &self.predicates,
-            digest: self.catalog_policy.anchor_digest,
+            digest: self.shared.catalog_policy.anchor_digest,
         }
     }
 
@@ -601,11 +675,11 @@ impl CompiledCatalog {
         tokens: &S,
     ) -> Result<Vec<Match>, crate::fsm::MatchPublicationError> {
         let canonical = self.try_find_matches(tokens)?;
-        if self.catalog_policy.declared() {
+        if self.shared.catalog_policy.declared() {
             let anchors = self.anchor_positions(tokens);
             let mut stats = crate::fsm::policy::PolicyStats::default();
             crate::fsm::policy::apply_policy(
-                &self.catalog_policy,
+                &self.shared.catalog_policy,
                 &canonical,
                 tokens,
                 &anchors,
@@ -701,15 +775,16 @@ impl CompiledCatalog {
         context: Option<&'t super::LookaroundContext<'t, S>>,
     ) -> Result<SentenceExplanation, crate::fsm::MatchPublicationError> {
         let canonical = self.try_find_matches_with_context(tokens, context)?;
-        let policy_declared = self.catalog_policy.declared();
+        let policy = &self.shared.catalog_policy;
+        let policy_declared = policy.declared();
         let mut published_by_raw = std::collections::HashMap::<Match, Vec<Match>>::new();
 
         if policy_declared {
             let anchors = self.anchor_positions(tokens);
             let mut stats = PolicyStats::default();
-            let mut program = ProgramStats::for_program(self.catalog_policy.program());
+            let mut program = ProgramStats::for_program(policy.program());
             for record in apply_policy_records(
-                &self.catalog_policy,
+                policy,
                 &canonical,
                 tokens,
                 &anchors,
@@ -755,93 +830,16 @@ impl CompiledCatalog {
     /// moved a whole catalog onto the session path on the strength of a
     /// declaration that changes no result.
     ///
-    /// Each executor answers for itself, so no ordering between
-    /// [`Self::install_execution`] and [`Self::new`] is load-bearing and neither
-    /// half has to be argued to cover the other. That matters: the execution
-    /// oracle in `compiler/oracle.rs` builds a matcher from a lowered NFA with
-    /// no execution at all.
+    /// Each executor answers for itself, so neither half has to be argued to
+    /// cover the other. That matters: the execution oracle in
+    /// `compiler/oracle.rs` builds a matcher from a lowered NFA with no
+    /// execution plans at all.
     ///
     /// [`crate::fsm::compiler`] reads this too, for the `spawn_decline` gate, so
     /// that the compile-time limit and the per-sentence path answer one question
     /// rather than two that can drift apart.
     pub(crate) fn requires_assertion_session(&self) -> bool {
-        self.dense.queries_lookaround() || self.execution_queries_lookaround
-    }
-
-    pub(crate) fn install_execution(&mut self, definitions: Vec<ExecutionDefinition>) {
-        self.sentence_filter = crate::fsm::compiler::derive_sentence_filter(&definitions);
-        self.execution_queries_lookaround = definitions
-            .iter()
-            .any(|definition| definition.expr.queries_lookaround());
-        self.window_captures = definitions
-            .iter()
-            .map(|definition| Some((definition.name.clone(), window_captures(definition)?)))
-            .collect();
-        self.span_constraint_kinds = BTreeMap::new();
-        for definition in &definitions {
-            for constraint in &definition.span_constraints {
-                let names = self
-                    .span_constraint_kinds
-                    .entry(constraint.kind.clone())
-                    .or_default();
-                if names.last() != Some(&definition.name) {
-                    names.push(definition.name.clone());
-                }
-            }
-        }
-        let mut captures = IndexMap::new();
-        let mut evaluated = Vec::new();
-        for definition in definitions {
-            match definition.capability {
-                ExecutionCapability::Plain => {}
-                ExecutionCapability::Captures => {
-                    captures.insert(
-                        definition.name.clone(),
-                        CapturePlan(Program::new(definition, &mut self.predicates)),
-                    );
-                }
-                ExecutionCapability::SpanEquality
-                | ExecutionCapability::Intersection
-                | ExecutionCapability::AnyOrder
-                | ExecutionCapability::Relations => {
-                    evaluated.push(EvaluatedPlan(Program::new(
-                        definition,
-                        &mut self.predicates,
-                    )));
-                }
-            }
-        }
-        self.capture_plans = captures;
-        self.evaluated_plans = evaluated.into_boxed_slice();
-    }
-
-    /// Freezes the attribute projection after every execution context is installed.
-    ///
-    /// Executes after both assertion and execution installation because either
-    /// can introduce attributes not present on the recognition NFA.
-    pub(crate) fn finalize_required_attributes(&mut self) {
-        self.required_attributes = self
-            .dense
-            .required_attributes()
-            .chain(
-                self.capture_plans
-                    .values()
-                    .flat_map(|plan| plan.0.required_attributes()),
-            )
-            .chain(
-                self.evaluated_plans
-                    .iter()
-                    .flat_map(|plan| plan.0.required_attributes()),
-            )
-            .chain(self.assertion_catalog.required_attributes())
-            .chain(
-                self.lexicons()
-                    .iter()
-                    .flat_map(|lexicon| lexicon.by.iter().cloned()),
-            )
-            .collect::<BTreeSet<_>>()
-            .into_iter()
-            .collect();
+        self.dense.queries_lookaround() || self.shared.execution_queries_lookaround
     }
 
     #[cfg(test)]
@@ -898,7 +896,7 @@ impl CompiledCatalog {
     pub fn lookaround_reach(
         &self,
     ) -> BTreeMap<crate::fsm::LookaroundScope, super::LookaroundReach> {
-        self.assertion_catalog.lookaround_reach()
+        self.shared.assertion_catalog.lookaround_reach()
     }
 
     /// The division kinds that `within=` lookarounds name, in
@@ -951,8 +949,9 @@ impl CompiledCatalog {
             return self.finish_catalog_matches(tokens, canonical_matches(matches), &budget.output);
         }
 
-        let mut session = AssertionSession::new(&self.assertion_catalog, &predicates, tokens)
-            .with_context(context);
+        let mut session =
+            AssertionSession::new(&self.shared.assertion_catalog, &predicates, tokens)
+                .with_context(context);
         let mut matches = Matcher::try_find_matches_dense_with_assertions(
             &budget.output,
             &self.dense,
@@ -1064,8 +1063,9 @@ impl CompiledCatalog {
             return self.finish_catalog_matches(tokens, canonical_matches(matches), &budget.output);
         }
 
-        let mut session = AssertionSession::new(&self.assertion_catalog, &predicates, tokens)
-            .with_context(context);
+        let mut session =
+            AssertionSession::new(&self.shared.assertion_catalog, &predicates, tokens)
+                .with_context(context);
         let mut matches = Matcher::try_find_matches_dense_with_assertions(
             &budget.output,
             &self.dense,
@@ -1110,7 +1110,8 @@ impl CompiledCatalog {
 
         let mut budget = MatchBudget::default();
         let predicates = PredicateSession::new(&self.predicates);
-        let mut session = AssertionSession::new(&self.assertion_catalog, &predicates, tokens);
+        let mut session =
+            AssertionSession::new(&self.shared.assertion_catalog, &predicates, tokens);
         let mut matches = Matcher::try_find_matches_dense_with_assertions(
             &budget.output,
             &self.dense,
@@ -1240,7 +1241,8 @@ impl CompiledCatalog {
             );
         }
 
-        let mut session = AssertionSession::new(&self.assertion_catalog, &predicates, tokens);
+        let mut session =
+            AssertionSession::new(&self.shared.assertion_catalog, &predicates, tokens);
         let nfa_started = Instant::now();
         let mut matches = Matcher::try_find_matches_dense_with_assertions(
             &budget.output,
@@ -1309,7 +1311,8 @@ impl CompiledCatalog {
         let mut budget = MatchBudget::default();
         let predicates = PredicateSession::new(&self.predicates);
         let mut trace = if self.requires_assertion_session() {
-            let mut session = AssertionSession::new(&self.assertion_catalog, &predicates, tokens);
+            let mut session =
+                AssertionSession::new(&self.shared.assertion_catalog, &predicates, tokens);
             let mut trace = Matcher::try_find_matches_with_trace_dense_with_assertions(
                 &budget.output,
                 &self.dense,
@@ -1380,7 +1383,7 @@ impl CompiledCatalog {
     }
 
     pub fn patterns(&self) -> &IndexMap<CompactString, Pattern> {
-        &self.patterns.0
+        &self.shared.patterns.0
     }
 
     /// The catalog as token windows, when its published records are exactly
@@ -1391,17 +1394,18 @@ impl CompiledCatalog {
     /// than `key:`, or publishes a definition without a key.
     #[must_use]
     pub fn token_windows(&self) -> Option<Vec<TokenWindow>> {
-        let policy = &self.catalog_policy;
-        if self.lexicons.is_some()
+        let policy = &self.shared.catalog_policy;
+        if self.shared.lexicons.is_some()
             || self.sentence_filter.is_some()
             || !policy.hidden.is_empty()
             || !policy.program().ops.is_empty()
-            || self.patterns.0.is_empty()
+            || self.shared.patterns.0.is_empty()
         {
             return None;
         }
-        let captures = self.window_captures.as_ref()?;
-        self.patterns
+        let captures = self.shared.window_captures.as_ref()?;
+        self.shared
+            .patterns
             .0
             .keys()
             .map(|name| {
@@ -1444,7 +1448,8 @@ impl CompiledCatalog {
     /// Inline lexical definitions in catalog order.
     #[must_use]
     pub fn lexicons(&self) -> &[CompiledLexiconDefinition] {
-        self.lexicons
+        self.shared
+            .lexicons
             .as_ref()
             .map_or(&[], super::CompiledLexicons::descriptors)
     }
@@ -1455,32 +1460,30 @@ impl CompiledCatalog {
         ordinary: Vec<Match>,
         output: &Arc<OutputBudget>,
     ) -> Result<Vec<Match>, MatchResourceError> {
-        let Some(lexicons) = &self.lexicons else {
+        let Some(lexicons) = &self.shared.lexicons else {
             return Ok(ordinary);
         };
         merge_catalog_matches(ordinary, lexicons.try_find_matches(output, tokens)?, output)
     }
 
-    pub(crate) fn install_lexicons(&mut self, lexicons: Option<super::CompiledLexicons>) {
-        self.lexicons = lexicons;
-    }
-
     /// Attributes that can affect this compiled matcher's results.
     /// Cache-backed callers can use this to avoid rebuilding unrelated columns.
     pub fn required_attributes(&self) -> Vec<AttributeKey> {
-        self.required_attributes.to_vec()
+        self.shared.required_attributes.to_vec()
     }
 
     /// Attributes that matching, compiled catalog policy, or the label-set count
     /// can read.
     #[must_use]
     pub fn execution_attributes(&self) -> Vec<AttributeKey> {
-        self.required_attributes
+        self.shared
+            .required_attributes
             .iter()
             .cloned()
-            .chain(self.catalog_policy.projected_attributes())
+            .chain(self.shared.catalog_policy.projected_attributes())
             .chain(
-                self.label_declarations
+                self.shared
+                    .label_declarations
                     .iter()
                     .map(|declaration| declaration.attribute().clone()),
             )
@@ -1575,7 +1578,7 @@ impl CompiledCatalog {
                     })
                     .map(|key| (key, AttributeKind::Scalar)),
             )
-            .chain(self.catalog_policy.required_attribute_kinds())
+            .chain(self.shared.catalog_policy.required_attribute_kinds())
             .chain(self.lexicons().iter().flat_map(|lexicon| {
                 lexicon
                     .by
@@ -1588,7 +1591,26 @@ impl CompiledCatalog {
             .collect()
     }
 
-    pub(crate) fn bind_attributes(&mut self, projection: &crate::token_match::BoundProjection) {
+    pub(crate) fn bind_for_schema(
+        &self,
+        projection: &crate::token_match::BoundProjection,
+        keep_sentence_filter: bool,
+    ) -> Self {
+        let mut compiled = Self {
+            sentence_filter: keep_sentence_filter
+                .then(|| self.sentence_filter.clone())
+                .flatten(),
+            dense: self.dense.clone(),
+            predicates: self.predicates.clone(),
+            capture_plans: self.capture_plans.clone(),
+            evaluated_plans: self.evaluated_plans.clone(),
+            shared: Arc::clone(&self.shared),
+        };
+        compiled.bind_attributes(projection);
+        compiled
+    }
+
+    fn bind_attributes(&mut self, projection: &crate::token_match::BoundProjection) {
         self.predicates.bind_attributes(projection);
         for plan in self.capture_plans.values_mut() {
             plan.0.bind_attributes(projection);
@@ -1821,6 +1843,7 @@ mod tests {
             )
             .unwrap_or_else(|error| panic!("fixture must compile: {:?}", error.diagnostics))
             .matcher
+            .shared
             .assertion_catalog
             .program_count_for_test()
         }
@@ -2306,5 +2329,36 @@ mod tests {
         assert_eq!(metrics.dense_main_transition_predicate_calls, 1);
         assert_eq!(metrics.dense_predicate_calls, 1);
         assert_eq!(metrics.spawn_predicate_calls, 1);
+    }
+
+    #[test]
+    fn schema_binding_shares_static_catalog_data_and_with_overlaps_copies_on_write() {
+        use crate::fsm::policy_program::Overlaps;
+        use crate::token_match::TokenSchema;
+
+        let compiled = compile_for_test(
+            "shared-static.lx",
+            concat!(
+                "pattern a := [text=a].\n",
+                "pattern ab := [text=a] [text=b].\n",
+                "policy\n",
+                "  resolve all rank: [longest, start, end, pattern].\n",
+                "end\n",
+            ),
+        );
+        let bound = compiled
+            .bind(&TokenSchema::unidic_morphology())
+            .expect("schema binds");
+        assert!(
+            std::sync::Arc::ptr_eq(&compiled.shared, &bound.compiled.shared),
+            "schema binding must share immutable catalog data without deep-cloning"
+        );
+
+        let relaxed = compiled.clone().with_overlaps(Overlaps::Keep);
+        assert!(
+            !std::sync::Arc::ptr_eq(&relaxed.shared, &bound.compiled.shared),
+            "with_overlaps must copy-on-write when shared with a bound catalog"
+        );
+        assert_ne!(relaxed.catalog_policy(), bound.catalog_policy());
     }
 }

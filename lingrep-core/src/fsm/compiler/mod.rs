@@ -83,7 +83,7 @@ use nfa::lower_to_nfa;
 
 use crate::fsm::CompiledCatalog;
 use crate::fsm::CompiledLexiconDefinition;
-use crate::fsm::matcher::CompiledLexicons;
+use crate::fsm::matcher::{CompiledCatalogParts, CompiledLexicons};
 
 /// lingrep patterns text supplied by an application.
 ///
@@ -643,21 +643,22 @@ fn compile_program(
     let capture_key_edits =
         capture_key::editable_capture_keys(&catalog_policy, &execution, &bound.sources);
     analyze_program(&mut execution, &bound.sources)?;
-    let mut lowered = lower_to_nfa(&bound, &nfa_limits, &execution, &assertions.occurrences)?;
-    lowered.matcher.install_assertions(assertions.catalog);
-    // Beside the catalog its ids index, which is the only relationship it has:
-    // this map records name-to-program, and outside the anchor tests nothing
-    // reads it yet. The projection widening an `exclude` fragment needs comes
-    // from `install_assertions` above, via the program `compile_assertions`
-    // interned — not from this call, which may run at any point without
-    // changing the result.
-    lowered
-        .matcher
-        .install_anchor_programs(assertions.anchor_programs);
-    lowered.matcher.install_execution(execution.into_vec());
-    lowered.matcher.install_lexicons(compiled_lexicons);
-    if lowered.matcher.requires_assertion_session()
-        && let Some(decline) = lowered.matcher.spawn_decline()
+    let lowered = lower_to_nfa(&bound, &nfa_limits, &execution, &assertions.occurrences)?;
+    let matcher = CompiledCatalog::from_parts(CompiledCatalogParts {
+        patterns: lowered.patterns,
+        state_machine: lowered.state_machine,
+        assertions: assertions.catalog,
+        anchor_programs: assertions.anchor_programs,
+        execution: execution.into_vec(),
+        lexicons: compiled_lexicons,
+        catalog_policy,
+        analyzer_constraints,
+        vectors: catalog_vectors,
+        near_tests,
+        label_declarations,
+    });
+    if matcher.requires_assertion_session()
+        && let Some(decline) = matcher.spawn_decline()
     {
         return Err(CompileError::from_diagnostics(vec![
             Diagnostic::error_with_source_label(
@@ -673,18 +674,6 @@ fn compile_program(
             ),
         ]));
     }
-    lowered.matcher.install_catalog_policy(catalog_policy);
-    lowered
-        .matcher
-        .install_analyzer_constraints(analyzer_constraints);
-    lowered.matcher.install_vectors(catalog_vectors, near_tests);
-    lowered
-        .matcher
-        .install_label_declarations(label_declarations);
-    lowered.matcher.finalize_required_attributes();
-    // Strictly after the attribute projection is frozen: the synthesized
-    // emitters must keep matching, so only the public catalog is filtered.
-    lowered.matcher.hide_synthesized_patterns();
     stats.expansion_work = lowered.expansion_work + assertions.cost.expansion_work;
     stats.generated_owned_bytes =
         lowered.generated_owned_bytes + assertions.cost.generated_owned_bytes + lexicon_owned_bytes;
@@ -713,7 +702,7 @@ fn compile_program(
 
     Ok(CompileOutput {
         capture_key_edits,
-        matcher: lowered.matcher,
+        matcher,
         diagnostics,
         stats: *stats,
         analysis,

@@ -1,7 +1,6 @@
 //! Lowering from the validated lingrep patterns graph to NFA builder inputs.
 
-use crate::fsm::matcher::CompiledCatalog;
-use crate::fsm::state_machine::StateMachineBuilder;
+use crate::fsm::state_machine::{StateMachineBuilder, StateMachineData};
 use crate::fsm::{AttrValueType, Pattern, PatternElement, Patterns, SymbolicAttrValue, TokenSpec};
 use compact_str::CompactString;
 use indexmap::IndexMap;
@@ -18,7 +17,8 @@ use super::model::{
 use crate::fsm::AssertionOccurrenceId;
 
 pub(super) struct NfaOutput {
-    pub(super) matcher: CompiledCatalog,
+    pub(super) patterns: Patterns,
+    pub(super) state_machine: StateMachineData,
     pub(super) expansion_work: usize,
     pub(super) generated_owned_bytes: usize,
     pub(super) states: usize,
@@ -175,7 +175,8 @@ impl<'a> CompatibilityLowerer<'a> {
         debug_assert_eq!(highest_state, self.states);
 
         Ok(NfaOutput {
-            matcher: CompiledCatalog::new(patterns, data),
+            patterns,
+            state_machine: data,
             expansion_work: self.expansion_work,
             generated_owned_bytes: self.generated_owned_bytes,
             states: self.states,
