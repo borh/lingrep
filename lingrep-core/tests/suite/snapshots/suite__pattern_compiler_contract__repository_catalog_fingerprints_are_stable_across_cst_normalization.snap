@@ -3317,10 +3317,6 @@ expression: repository_catalog_fingerprints()
                         "S3\n",
                     ),
                     (
-                        "priority_order",
-                        "0\n",
-                    ),
-                    (
                         "research_classes",
                         "- S1B\n",
                     ),
@@ -3348,10 +3344,6 @@ expression: repository_catalog_fingerprints()
                     (
                         "layer",
                         "S3\n",
-                    ),
-                    (
-                        "priority_order",
-                        "0\n",
                     ),
                     (
                         "research_classes",
@@ -3383,10 +3375,6 @@ expression: repository_catalog_fingerprints()
                         "S3\n",
                     ),
                     (
-                        "priority_order",
-                        "0\n",
-                    ),
-                    (
                         "research_classes",
                         "- S1B\n- S2I\n",
                     ),
@@ -3414,10 +3402,6 @@ expression: repository_catalog_fingerprints()
                     (
                         "layer",
                         "S3\n",
-                    ),
-                    (
-                        "priority_order",
-                        "0\n",
                     ),
                     (
                         "research_classes",
@@ -3449,10 +3433,6 @@ expression: repository_catalog_fingerprints()
                         "S3\n",
                     ),
                     (
-                        "priority_order",
-                        "0\n",
-                    ),
-                    (
                         "research_classes",
                         "- S1B\n",
                     ),
@@ -3480,10 +3460,6 @@ expression: repository_catalog_fingerprints()
                     (
                         "layer",
                         "S2\n",
-                    ),
-                    (
-                        "priority_order",
-                        "1\n",
                     ),
                     (
                         "research_classes",
@@ -3515,10 +3491,6 @@ expression: repository_catalog_fingerprints()
                         "S2\n",
                     ),
                     (
-                        "priority_order",
-                        "1\n",
-                    ),
-                    (
                         "research_classes",
                         "- S2B\n",
                     ),
@@ -3546,10 +3518,6 @@ expression: repository_catalog_fingerprints()
                     (
                         "layer",
                         "S2\n",
-                    ),
-                    (
-                        "priority_order",
-                        "1\n",
                     ),
                     (
                         "research_classes",
@@ -3581,10 +3549,6 @@ expression: repository_catalog_fingerprints()
                         "S2\n",
                     ),
                     (
-                        "priority_order",
-                        "1\n",
-                    ),
-                    (
                         "research_classes",
                         "- S2B\n",
                     ),
@@ -3612,10 +3576,6 @@ expression: repository_catalog_fingerprints()
                     (
                         "layer",
                         "S2\n",
-                    ),
-                    (
-                        "priority_order",
-                        "1\n",
                     ),
                     (
                         "research_classes",
@@ -3647,10 +3607,6 @@ expression: repository_catalog_fingerprints()
                         "S2\n",
                     ),
                     (
-                        "priority_order",
-                        "1\n",
-                    ),
-                    (
                         "research_classes",
                         "- S2B\n",
                     ),
@@ -3680,10 +3636,6 @@ expression: repository_catalog_fingerprints()
                         "S2\n",
                     ),
                     (
-                        "priority_order",
-                        "1\n",
-                    ),
-                    (
                         "research_classes",
                         "- S2B\n- S2E\n",
                     ),
@@ -3711,10 +3663,6 @@ expression: repository_catalog_fingerprints()
                     (
                         "layer",
                         "S2\n",
-                    ),
-                    (
-                        "priority_order",
-                        "1\n",
                     ),
                     (
                         "research_classes",
@@ -3754,10 +3702,6 @@ expression: repository_catalog_fingerprints()
                         "よう\n",
                     ),
                     (
-                        "priority_order",
-                        "1\n",
-                    ),
-                    (
                         "research_classes",
                         "- S2C\n",
                     ),
@@ -3793,10 +3737,6 @@ expression: repository_catalog_fingerprints()
                     (
                         "output_name",
                         "そう\n",
-                    ),
-                    (
-                        "priority_order",
-                        "1\n",
                     ),
                     (
                         "research_classes",
@@ -3836,10 +3776,6 @@ expression: repository_catalog_fingerprints()
                         "よう\n",
                     ),
                     (
-                        "priority_order",
-                        "1\n",
-                    ),
-                    (
                         "research_classes",
                         "- S2C\n",
                     ),
@@ -3867,10 +3803,6 @@ expression: repository_catalog_fingerprints()
                     (
                         "layer",
                         "S2\n",
-                    ),
-                    (
-                        "priority_order",
-                        "1\n",
                     ),
                     (
                         "research_classes",
@@ -3902,10 +3834,6 @@ expression: repository_catalog_fingerprints()
                         "S2\n",
                     ),
                     (
-                        "priority_order",
-                        "1\n",
-                    ),
-                    (
                         "research_classes",
                         "- S2G\n",
                     ),
@@ -3933,10 +3861,6 @@ expression: repository_catalog_fingerprints()
                     (
                         "layer",
                         "S2\n",
-                    ),
-                    (
-                        "priority_order",
-                        "1\n",
                     ),
                     (
                         "research_classes",
@@ -3968,10 +3892,6 @@ expression: repository_catalog_fingerprints()
                         "S2\n",
                     ),
                     (
-                        "priority_order",
-                        "1\n",
-                    ),
-                    (
                         "research_classes",
                         "- S2G\n",
                     ),
@@ -3999,10 +3919,6 @@ expression: repository_catalog_fingerprints()
                     (
                         "layer",
                         "S1\n",
-                    ),
-                    (
-                        "priority_order",
-                        "2\n",
                     ),
                     (
                         "research_classes",
@@ -4034,10 +3950,6 @@ expression: repository_catalog_fingerprints()
                         "S2\n",
                     ),
                     (
-                        "priority_order",
-                        "1\n",
-                    ),
-                    (
                         "research_classes",
                         "- S2A\n",
                     ),
@@ -4065,10 +3977,6 @@ expression: repository_catalog_fingerprints()
                     (
                         "layer",
                         "S2\n",
-                    ),
-                    (
-                        "priority_order",
-                        "1\n",
                     ),
                     (
                         "research_classes",
@@ -4100,10 +4008,6 @@ expression: repository_catalog_fingerprints()
                         "S2\n",
                     ),
                     (
-                        "priority_order",
-                        "1\n",
-                    ),
-                    (
                         "research_classes",
                         "- S2C\n",
                     ),
@@ -4131,10 +4035,6 @@ expression: repository_catalog_fingerprints()
                     (
                         "layer",
                         "S2\n",
-                    ),
-                    (
-                        "priority_order",
-                        "1\n",
                     ),
                     (
                         "research_classes",
@@ -4174,10 +4074,6 @@ expression: repository_catalog_fingerprints()
                         "はず\n",
                     ),
                     (
-                        "priority_order",
-                        "1\n",
-                    ),
-                    (
                         "research_classes",
                         "- S2C\n",
                     ),
@@ -4205,10 +4101,6 @@ expression: repository_catalog_fingerprints()
                     (
                         "layer",
                         "S2\n",
-                    ),
-                    (
-                        "priority_order",
-                        "1\n",
                     ),
                     (
                         "research_classes",
@@ -4240,10 +4132,6 @@ expression: repository_catalog_fingerprints()
                         "S2\n",
                     ),
                     (
-                        "priority_order",
-                        "1\n",
-                    ),
-                    (
                         "research_classes",
                         "- S2C\n",
                     ),
@@ -4271,10 +4159,6 @@ expression: repository_catalog_fingerprints()
                     (
                         "layer",
                         "S2\n",
-                    ),
-                    (
-                        "priority_order",
-                        "1\n",
                     ),
                     (
                         "research_classes",
@@ -4314,10 +4198,6 @@ expression: repository_catalog_fingerprints()
                         "ということ\n",
                     ),
                     (
-                        "priority_order",
-                        "2\n",
-                    ),
-                    (
                         "research_classes",
                         "- S3F\n",
                     ),
@@ -4355,10 +4235,6 @@ expression: repository_catalog_fingerprints()
                         "ということ\n",
                     ),
                     (
-                        "priority_order",
-                        "2\n",
-                    ),
-                    (
                         "research_classes",
                         "- S3F\n",
                     ),
@@ -4386,10 +4262,6 @@ expression: repository_catalog_fingerprints()
                     (
                         "layer",
                         "S1\n",
-                    ),
-                    (
-                        "priority_order",
-                        "2\n",
                     ),
                     (
                         "research_classes",
@@ -4421,10 +4293,6 @@ expression: repository_catalog_fingerprints()
                         "S1\n",
                     ),
                     (
-                        "priority_order",
-                        "2\n",
-                    ),
-                    (
                         "research_classes",
                         "- S2B\n- S3F\n",
                     ),
@@ -4452,10 +4320,6 @@ expression: repository_catalog_fingerprints()
                     (
                         "layer",
                         "S1\n",
-                    ),
-                    (
-                        "priority_order",
-                        "2\n",
                     ),
                     (
                         "research_classes",
@@ -4487,10 +4351,6 @@ expression: repository_catalog_fingerprints()
                         "S1\n",
                     ),
                     (
-                        "priority_order",
-                        "2\n",
-                    ),
-                    (
                         "research_classes",
                         "- S2B\n- S3F\n",
                     ),
@@ -4518,10 +4378,6 @@ expression: repository_catalog_fingerprints()
                     (
                         "layer",
                         "S1\n",
-                    ),
-                    (
-                        "priority_order",
-                        "2\n",
                     ),
                     (
                         "research_classes",
@@ -4553,10 +4409,6 @@ expression: repository_catalog_fingerprints()
                         "S2\n",
                     ),
                     (
-                        "priority_order",
-                        "1\n",
-                    ),
-                    (
                         "research_classes",
                         "- S2C\n",
                     ),
@@ -4584,10 +4436,6 @@ expression: repository_catalog_fingerprints()
                     (
                         "layer",
                         "S1\n",
-                    ),
-                    (
-                        "priority_order",
-                        "2\n",
                     ),
                     (
                         "research_classes",
@@ -4619,10 +4467,6 @@ expression: repository_catalog_fingerprints()
                         "S1\n",
                     ),
                     (
-                        "priority_order",
-                        "2\n",
-                    ),
-                    (
                         "research_classes",
                         "- S2F\n- S3E\n",
                     ),
@@ -4650,10 +4494,6 @@ expression: repository_catalog_fingerprints()
                     (
                         "layer",
                         "S1\n",
-                    ),
-                    (
-                        "priority_order",
-                        "2\n",
                     ),
                     (
                         "research_classes",
@@ -4685,10 +4525,6 @@ expression: repository_catalog_fingerprints()
                         "S1\n",
                     ),
                     (
-                        "priority_order",
-                        "2\n",
-                    ),
-                    (
                         "research_classes",
                         "- S3D\n",
                     ),
@@ -4716,10 +4552,6 @@ expression: repository_catalog_fingerprints()
                     (
                         "layer",
                         "S1\n",
-                    ),
-                    (
-                        "priority_order",
-                        "2\n",
                     ),
                     (
                         "research_classes",
@@ -4751,10 +4583,6 @@ expression: repository_catalog_fingerprints()
                         "S1\n",
                     ),
                     (
-                        "priority_order",
-                        "2\n",
-                    ),
-                    (
                         "research_classes",
                         "- S1C\n",
                     ),
@@ -4782,10 +4610,6 @@ expression: repository_catalog_fingerprints()
                     (
                         "layer",
                         "S1\n",
-                    ),
-                    (
-                        "priority_order",
-                        "2\n",
                     ),
                     (
                         "research_classes",
@@ -4817,10 +4641,6 @@ expression: repository_catalog_fingerprints()
                         "S1\n",
                     ),
                     (
-                        "priority_order",
-                        "2\n",
-                    ),
-                    (
                         "research_classes",
                         "- S3D\n",
                     ),
@@ -4848,10 +4668,6 @@ expression: repository_catalog_fingerprints()
                     (
                         "layer",
                         "S1\n",
-                    ),
-                    (
-                        "priority_order",
-                        "2\n",
                     ),
                     (
                         "research_classes",
@@ -4891,10 +4707,6 @@ expression: repository_catalog_fingerprints()
                         "わけ\n",
                     ),
                     (
-                        "priority_order",
-                        "2\n",
-                    ),
-                    (
                         "research_classes",
                         "- S3D\n",
                     ),
@@ -4930,10 +4742,6 @@ expression: repository_catalog_fingerprints()
                     (
                         "output_name",
                         "わけ\n",
-                    ),
-                    (
-                        "priority_order",
-                        "2\n",
                     ),
                     (
                         "research_classes",
@@ -4973,10 +4781,6 @@ expression: repository_catalog_fingerprints()
                         "ようなもの\n",
                     ),
                     (
-                        "priority_order",
-                        "2\n",
-                    ),
-                    (
                         "research_classes",
                         "- S3D\n",
                     ),
@@ -5014,10 +4818,6 @@ expression: repository_catalog_fingerprints()
                         "もの\n",
                     ),
                     (
-                        "priority_order",
-                        "2\n",
-                    ),
-                    (
                         "research_classes",
                         "- S3D\n",
                     ),
@@ -5045,10 +4845,6 @@ expression: repository_catalog_fingerprints()
                     (
                         "layer",
                         "S1\n",
-                    ),
-                    (
-                        "priority_order",
-                        "2\n",
                     ),
                     (
                         "research_classes",
@@ -5088,10 +4884,6 @@ expression: repository_catalog_fingerprints()
                         "こと\n",
                     ),
                     (
-                        "priority_order",
-                        "2\n",
-                    ),
-                    (
                         "research_classes",
                         "- S3D\n",
                     ),
@@ -5127,10 +4919,6 @@ expression: repository_catalog_fingerprints()
                     (
                         "output_name",
                         "ため\n",
-                    ),
-                    (
-                        "priority_order",
-                        "2\n",
                     ),
                     (
                         "research_classes",
@@ -5170,10 +4958,6 @@ expression: repository_catalog_fingerprints()
                         "可能\n",
                     ),
                     (
-                        "priority_order",
-                        "2\n",
-                    ),
-                    (
                         "research_classes",
                         "- S2D\n- S3C\n",
                     ),
@@ -5201,10 +4985,6 @@ expression: repository_catalog_fingerprints()
                     (
                         "layer",
                         "S1\n",
-                    ),
-                    (
-                        "priority_order",
-                        "2\n",
                     ),
                     (
                         "research_classes",
@@ -5236,10 +5016,6 @@ expression: repository_catalog_fingerprints()
                         "S1\n",
                     ),
                     (
-                        "priority_order",
-                        "2\n",
-                    ),
-                    (
                         "research_classes",
                         "- S3C\n",
                     ),
@@ -5267,10 +5043,6 @@ expression: repository_catalog_fingerprints()
                     (
                         "layer",
                         "S1\n",
-                    ),
-                    (
-                        "priority_order",
-                        "2\n",
                     ),
                     (
                         "research_classes",
@@ -5302,10 +5074,6 @@ expression: repository_catalog_fingerprints()
                         "S1\n",
                     ),
                     (
-                        "priority_order",
-                        "2\n",
-                    ),
-                    (
                         "research_classes",
                         "- S2C\n- S3C\n",
                     ),
@@ -5333,10 +5101,6 @@ expression: repository_catalog_fingerprints()
                     (
                         "layer",
                         "S1\n",
-                    ),
-                    (
-                        "priority_order",
-                        "2\n",
                     ),
                     (
                         "research_classes",
@@ -5368,10 +5132,6 @@ expression: repository_catalog_fingerprints()
                         "S1\n",
                     ),
                     (
-                        "priority_order",
-                        "2\n",
-                    ),
-                    (
                         "research_classes",
                         "- S2D\n- S3C\n",
                     ),
@@ -5399,10 +5159,6 @@ expression: repository_catalog_fingerprints()
                     (
                         "layer",
                         "S1\n",
-                    ),
-                    (
-                        "priority_order",
-                        "2\n",
                     ),
                     (
                         "research_classes",
@@ -5434,10 +5190,6 @@ expression: repository_catalog_fingerprints()
                         "S1\n",
                     ),
                     (
-                        "priority_order",
-                        "2\n",
-                    ),
-                    (
                         "research_classes",
                         "- S2E\n- S3C\n",
                     ),
@@ -5465,10 +5217,6 @@ expression: repository_catalog_fingerprints()
                     (
                         "layer",
                         "S1\n",
-                    ),
-                    (
-                        "priority_order",
-                        "2\n",
                     ),
                     (
                         "research_classes",
@@ -5500,10 +5248,6 @@ expression: repository_catalog_fingerprints()
                         "S1\n",
                     ),
                     (
-                        "priority_order",
-                        "2\n",
-                    ),
-                    (
                         "research_classes",
                         "- S2D\n- S3C\n",
                     ),
@@ -5533,10 +5277,6 @@ expression: repository_catalog_fingerprints()
                         "S1\n",
                     ),
                     (
-                        "priority_order",
-                        "2\n",
-                    ),
-                    (
                         "research_classes",
                         "- S3C\n",
                     ),
@@ -5564,10 +5304,6 @@ expression: repository_catalog_fingerprints()
                     (
                         "layer",
                         "S1\n",
-                    ),
-                    (
-                        "priority_order",
-                        "2\n",
                     ),
                     (
                         "research_classes",
@@ -5600,11 +5336,7 @@ expression: repository_catalog_fingerprints()
                     ),
                     (
                         "mapping_note",
-                        "pinned CWJ splits GiNZA NORM=可能性 into 可能 + 性\n",
-                    ),
-                    (
-                        "priority_order",
-                        "2\n",
+                        "UniDic CWJ splits 可能性 into 可能 + 性\n",
                     ),
                     (
                         "research_classes",
@@ -5636,10 +5368,6 @@ expression: repository_catalog_fingerprints()
                         "S1\n",
                     ),
                     (
-                        "priority_order",
-                        "2\n",
-                    ),
-                    (
                         "research_classes",
                         "- S2D\n- S3C\n",
                     ),
@@ -5667,10 +5395,6 @@ expression: repository_catalog_fingerprints()
                     (
                         "layer",
                         "S1\n",
-                    ),
-                    (
-                        "priority_order",
-                        "2\n",
                     ),
                     (
                         "research_classes",
@@ -5702,10 +5426,6 @@ expression: repository_catalog_fingerprints()
                         "S1\n",
                     ),
                     (
-                        "priority_order",
-                        "2\n",
-                    ),
-                    (
                         "research_classes",
                         "- S3B\n",
                     ),
@@ -5733,10 +5453,6 @@ expression: repository_catalog_fingerprints()
                     (
                         "layer",
                         "S1\n",
-                    ),
-                    (
-                        "priority_order",
-                        "2\n",
                     ),
                     (
                         "research_classes",
@@ -5768,10 +5484,6 @@ expression: repository_catalog_fingerprints()
                         "S1\n",
                     ),
                     (
-                        "priority_order",
-                        "2\n",
-                    ),
-                    (
                         "research_classes",
                         "- S3B\n",
                     ),
@@ -5799,10 +5511,6 @@ expression: repository_catalog_fingerprints()
                     (
                         "layer",
                         "S2\n",
-                    ),
-                    (
-                        "priority_order",
-                        "1\n",
                     ),
                     (
                         "research_classes",
@@ -5834,10 +5542,6 @@ expression: repository_catalog_fingerprints()
                         "S2\n",
                     ),
                     (
-                        "priority_order",
-                        "1\n",
-                    ),
-                    (
                         "research_classes",
                         "- S2G\n",
                     ),
@@ -5865,10 +5569,6 @@ expression: repository_catalog_fingerprints()
                     (
                         "layer",
                         "S2\n",
-                    ),
-                    (
-                        "priority_order",
-                        "1\n",
                     ),
                     (
                         "research_classes",
@@ -5904,10 +5604,6 @@ expression: repository_catalog_fingerprints()
                         "S1\n",
                     ),
                     (
-                        "priority_order",
-                        "2\n",
-                    ),
-                    (
                         "research_classes",
                         "- S3A\n",
                     ),
@@ -5935,10 +5631,6 @@ expression: repository_catalog_fingerprints()
                     (
                         "layer",
                         "S1\n",
-                    ),
-                    (
-                        "priority_order",
-                        "2\n",
                     ),
                     (
                         "research_classes",
@@ -5970,10 +5662,6 @@ expression: repository_catalog_fingerprints()
                         "S1\n",
                     ),
                     (
-                        "priority_order",
-                        "2\n",
-                    ),
-                    (
                         "research_classes",
                         "- S3A\n",
                     ),
@@ -6001,10 +5689,6 @@ expression: repository_catalog_fingerprints()
                     (
                         "layer",
                         "S1\n",
-                    ),
-                    (
-                        "priority_order",
-                        "2\n",
                     ),
                     (
                         "research_classes",
@@ -6040,10 +5724,6 @@ expression: repository_catalog_fingerprints()
                         "S1\n",
                     ),
                     (
-                        "priority_order",
-                        "2\n",
-                    ),
-                    (
                         "research_classes",
                         "- S3A\n",
                     ),
@@ -6071,10 +5751,6 @@ expression: repository_catalog_fingerprints()
                     (
                         "layer",
                         "S1\n",
-                    ),
-                    (
-                        "priority_order",
-                        "2\n",
                     ),
                     (
                         "research_classes",
@@ -6106,10 +5782,6 @@ expression: repository_catalog_fingerprints()
                         "S1\n",
                     ),
                     (
-                        "priority_order",
-                        "2\n",
-                    ),
-                    (
                         "research_classes",
                         "- S3A\n",
                     ),
@@ -6137,10 +5809,6 @@ expression: repository_catalog_fingerprints()
                     (
                         "layer",
                         "S0\n",
-                    ),
-                    (
-                        "priority_order",
-                        "3\n",
                     ),
                     (
                         "research_classes",
@@ -6176,10 +5844,6 @@ expression: repository_catalog_fingerprints()
                         "S0\n",
                     ),
                     (
-                        "priority_order",
-                        "3\n",
-                    ),
-                    (
                         "research_classes",
                         "- S1A\n",
                     ),
@@ -6211,10 +5875,6 @@ expression: repository_catalog_fingerprints()
                     (
                         "layer",
                         "S0\n",
-                    ),
-                    (
-                        "priority_order",
-                        "3\n",
                     ),
                     (
                         "research_classes",
@@ -6250,10 +5910,6 @@ expression: repository_catalog_fingerprints()
                         "S0\n",
                     ),
                     (
-                        "priority_order",
-                        "3\n",
-                    ),
-                    (
                         "research_classes",
                         "- S1A\n",
                     ),
@@ -6269,10 +5925,8 @@ expression: repository_catalog_fingerprints()
             ),
         ],
         policy: [
-            "resolve All partition={\"ある\": \"S0\", \"かもしれない\": \"S2\", \"こと\": \"S1\", \"ことができる\": \"S1\", \"ことがわかる\": \"S2\", \"ことが多い\": \"S1\", \"ことが知られている\": \"S2\", \"ことである\": \"S1\", \"こととなる\": \"S1\", \"ことになる\": \"S1\", \"ことも\": \"S1\", \"こともある\": \"S1\", \"ことも多い\": \"S1\", \"させる\": \"S1\", \"される\": \"S1\", \"ずにはおかない\": \"S2\", \"そうだ\": \"S2\", \"たい\": \"S2\", \"ためである\": \"S1\", \"だ\": \"S0\", \"だろう\": \"S2\", \"つつある\": \"S1\", \"てある\": \"S1\", \"ていく\": \"S1\", \"ている\": \"S1\", \"ておく\": \"S1\", \"てくる\": \"S1\", \"てしまう\": \"S1\", \"てよい\": \"S2\", \"であろう\": \"S2\", \"できる\": \"S1\", \"という\": \"S2\", \"ということだ\": \"S1\", \"ということで\": \"S1\", \"ということである\": \"S1\", \"というのである\": \"S2\", \"という指摘もある\": \"S2\", \"とされる\": \"S1\", \"としておきたい\": \"S3\", \"としておく\": \"S3\", \"としておくにとどめる\": \"S3\", \"としておこう\": \"S3\", \"とは言い難い\": \"S1\", \"とは限らない\": \"S1\", \"とみられる\": \"S2\", \"ともいえる\": \"S1\", \"と信じる\": \"S2\", \"と判断される\": \"S1\", \"と判断できる\": \"S2\", \"と思われる\": \"S2\", \"と考えられる\": \"S1\", \"と考える\": \"S2\", \"と見られる\": \"S2\", \"と言える\": \"S1\", \"と言われる\": \"S2\", \"なければならない\": \"S1\", \"なる\": \"S0\", \"にとどめる\": \"S3\", \"に他ならない\": \"S1\", \"に違いない\": \"S2\", \"のだ\": \"S1\", \"のである\": \"S1\", \"のであろう\": \"S2\", \"のではないだろうか\": \"S2\", \"はずである\": \"S2\", \"ものである\": \"S1\", \"ようだ\": \"S2\", \"ようである\": \"S2\", \"ようなものであった\": \"S1\", \"わけだ\": \"S1\", \"わけである\": \"S1\", \"伺える\": \"S1\", \"可能である\": \"S1\", \"可能性がある\": \"S1\", \"否めない\": \"S1\", \"必要\": \"S1\", \"必要がある\": \"S1\", \"必要になる\": \"S1\", \"想像にかたくない\": \"S1\", \"意図する\": \"S2\", \"感がある\": \"S1\", \"指す\": \"S1\", \"明らかにされる\": \"S2\", \"確認できる\": \"S1\", \"行う\": \"S0\", \"重要だ\": \"S1\"} rank=[Longest, Start, End, Pattern]",
             "Exclude Def(DefId(93)) with=Def(DefId(16)) relation=After evidence=Raw",
             "Exclude Def(DefId(88)) with=Group(GroupId(0)) relation=After evidence=Current",
-            "resolve Patterns rank=[Longest, PriorityOrder, Start, End, Pattern]",
             "Detach Group(GroupId(2)) with=Def(DefId(5)) relation=AtEnd evidence=Raw",
             "admit All terminal=Within(5) anchor=propositional_end",
             "admit Def(DefId(34)) terminal=Exact anchor=propositional_end",

@@ -82,11 +82,19 @@ fn sample_render_shows_constellation_states_classes_and_parent_depth() {
     let source = include_str!("../../../patterns/sf-experimental.lx");
     let analysis = analyze_tokens(
         source,
-        &[vec![
-            TokenInfo::default().with_orth("もの").with_lemma("物"),
-            TokenInfo::default().with_orth("で").with_lemma("だ"),
-            TokenInfo::default().with_orth("あろう").with_lemma("有る"),
-        ]],
+        &[
+            vec![
+                TokenInfo::default().with_orth("もの").with_lemma("物"),
+                TokenInfo::default().with_orth("で").with_lemma("だ"),
+                TokenInfo::default().with_orth("あろう").with_lemma("有る"),
+            ],
+            // `exclude @ている with: @NEG` suppresses the ている record.
+            vec![
+                TokenInfo::default().with_orth("て").with_lemma("て"),
+                TokenInfo::default().with_orth("い").with_lemma("居る"),
+                TokenInfo::default().with_orth("ない").with_lemma("ない"),
+            ],
+        ],
     );
     let html = SampleResults {
         analysis,

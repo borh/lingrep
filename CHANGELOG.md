@@ -75,6 +75,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- `patterns/sf-experimental.lx` no longer declares `resolve`, so overlapping
+  definitions are all counted: a specific form and the general form that
+  contains it (`であろう` and `だろう`, `ことも` and `こと`) each keep their
+  records, and counts are higher than before. `--overlaps longest` gives one
+  record per overlapping set. The unused `priority_order` keys and
+  `scripts/upstream_sf_differential.py` are removed. All of its examples now
+  pass `ling check --verify-examples`.
 - In the web pattern editor, Tab and Shift+Tab move focus to the next and
   previous control instead of indenting, so the editor can be left from the
   keyboard. Ctrl+] and Ctrl+[ indent and outdent.

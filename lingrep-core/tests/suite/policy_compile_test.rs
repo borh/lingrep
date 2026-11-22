@@ -399,7 +399,7 @@ fn a_catalog_declaring_no_policy_is_untouched() {
 }
 
 #[test]
-fn sf_experimental_declares_its_migrated_result_policy() {
+fn sf_experimental_declares_its_result_policy() {
     // Pin the tracked catalog's complete declared publication policy: thirteen
     // renames, thirteen subjects, and one hidden emitter.
     let sources = lingrep_core::testing::catalogs::tracked_catalog_sources();
@@ -447,14 +447,14 @@ fn sf_experimental_declares_its_migrated_result_policy() {
     // this assertion meaningful on its own rather than a restatement of the
     // program below.
     //
-    // `upper_layer` is every non-S0 pattern — **derived**, since the metadata
-    // derivation migration, by `group upper_layer := layer in {"S1", "S2",
-    // "S3"}.` rather than restated on 82 `groups:` lists — and
+    // `upper_layer` is every non-S0 pattern, derived by
+    // `group upper_layer := layer in {"S1", "S2", "S3"}.` rather than
+    // restated on 82 `groups:` lists, and
     // `s0_conditional` is the three S0 patterns that are not `だ`. The
     // asymmetry is semantic: `だ` survives a bare-S0 sentence by
     // being *absent* from the group, which is a declaration a single boolean
     // per definition could not make. The curated three stay literal lists:
-    // they are upstream name-lists, not functions of any metadata key.
+    // they are curated name lists, not functions of any metadata key.
     for (group, expected) in [
         ("upper_layer", 82),
         ("s0_conditional", 3),
@@ -467,9 +467,8 @@ fn sf_experimental_declares_its_migrated_result_policy() {
             "`%{group}` membership: {policy:#?}"
         );
     }
-    // The per-layer groups left with the stage-1 collapse's follow-up: layer
-    // identity lives in `layer:` metadata alone, and no statement names a
-    // `%S<n>` any more, so the names are gone rather than inert.
+    // Layer identity lives in `layer:` metadata alone: no `%S<n>` group is
+    // declared.
     for gone in ["S0", "S1", "S2", "S3"] {
         assert_eq!(
             policy.group_index().members_of(gone),
@@ -523,17 +522,10 @@ fn sf_experimental_declares_its_migrated_result_policy() {
         "the synthesized emitter must stay out of the public catalog"
     );
 
-    // Pin the complete program in authored order and authored text.
-    //
-    // The successor is stronger. Counting contests could not tell a `resolve`
-    // over the wrong group from one over the right group, nor notice a
-    // statement inserted at the wrong position — and position is semantic
-    // here, because a `resolve` before an `exclude` contests a different field
-    // than one after it. The ordered labels pin all three.
-    //
-    // The finished program: eight statements, in upstream's stage order —
-    // stage 1's four per-layer resolves collapsed into one partitioned
-    // resolve when the language gained `partition:`.
+    // Pin the complete program in authored order and authored text; position
+    // is semantic, because `evidence: current` reads what earlier statements
+    // left. The block declares no `resolve`: overlapping definitions are all
+    // counted, and `--overlaps longest` adds a `resolve` only to such a block.
     let authored: Vec<&str> = policy
         .program()
         .labels()
@@ -543,10 +535,8 @@ fn sf_experimental_declares_its_migrated_result_policy() {
     assert_eq!(
         authored,
         vec![
-            "resolve all partition: layer, rank: [longest, start, end, pattern].",
             "exclude @ている with: @NEG, relation: after, evidence: raw.",
             "exclude @される with: %aspect, relation: after, evidence: current.",
-            "resolve patterns rank: [longest, priority_order, start, end, pattern].",
             "detach %trailing_copula with: @DA, relation: at_end, evidence: raw.",
             "admit all terminal: {within: 5, anchor: propositional_end}.",
             "admit @という terminal: {exact: true, anchor: propositional_end}.",
@@ -575,145 +565,15 @@ fn sf_experimental_policy() -> lingrep_core::fsm::CatalogPolicy {
     .clone()
 }
 
-/// Stage 1 is one partitioned resolve, contesting within each layer only.
-///
-/// It was four statements — one `resolve %S<n>` per layer — because a
-/// `resolve`'s subject is a single competing set and the language had no
-/// partition-by-dimension operator. `partition: layer` subdivides the selected
-/// set by each definition's `layer` metadata and runs the contest per class,
-/// so one statement now says what four did without resolving the layers
-/// *against each other* — that cross-layer contest is stage 4's job, and the
-/// two still differ in rank: within one layer there is no layer to break a
-/// tie.
-///
-/// Asserted on the bound partition classes, not only on the statement text: a
-/// `partition:` over the wrong key would satisfy a label check while
-/// contesting the wrong classes.
-#[test]
-fn stage_one_resolves_within_each_layer_by_partition() {
-    use lingrep_core::fsm::policy_program::BoundOp;
-
-    let policy = sf_experimental_policy();
-    let program = policy.program();
-
-    // Stage 1 comes first: a `resolve` after an `exclude` contests a
-    // different field than one before it.
-    assert_eq!(
-        program
-            .labels()
-            .first()
-            .map(lingrep_core::fsm::policy_program::StatementLabel::text),
-        Some("resolve all partition: layer, rank: [longest, start, end, pattern]."),
-        "stage 1 is the one partitioned resolve, and it is first: {program:#?}"
-    );
-
-    let BoundOp::Resolve {
-        partition: Some(classes),
-        ..
-    } = &program.ops[0]
-    else {
-        panic!("stage 1 carries a resolved partition map: {program:#?}");
-    };
-    let mut layers: Vec<&str> = classes
-        .values()
-        .map(compact_str::CompactString::as_str)
-        .collect();
-    layers.sort_unstable();
-    layers.dedup();
-    assert_eq!(
-        layers,
-        vec!["S0", "S1", "S2", "S3"],
-        "the classes are the four layers: {classes:#?}"
-    );
-    assert_eq!(
-        classes.len(),
-        86,
-        "every emitting pattern carries `layer`, so all 86 are partitioned"
-    );
-
-    // Stage 4's cross-layer resolve is still present and still unpartitioned:
-    // resolving the layers against each other is its job alone.
-    assert!(
-        matches!(
-            &program.ops[3],
-            BoundOp::Resolve {
-                partition: None,
-                ..
-            }
-        ),
-        "the cross-layer resolve does not partition: {program:#?}"
-    );
-}
-
-/// The cross-layer resolve is the only statement that ranks by layer.
-///
-/// Within one layer there is no layer to break a tie, so `priority_order`
-/// belongs in the cross-layer contest and not the per-layer resolves. A test
-/// counting `resolve` statements, or asserting the criterion appears
-/// *somewhere*, would pass with it in all five — which would silently make
-/// a per-layer resolve adjudicate by a constant layer rank, where every contestant
-/// has the same one.
-///
-/// The direction — lower wins, so `S3: 0` is outermost — is upstream's
-/// `_LAYER_PRIORITY` sorted ascending, and is already pinned behaviourally by
-/// `priority_order_decides_a_contest_the_earlier_criteria_tie` in
-/// `policy_engine_program_test`. Not restated here: one behavioural pin is
-/// enough, and a second written against this catalog would be a slower way to
-/// ask the same question.
-#[test]
-fn only_the_cross_layer_resolve_ranks_by_priority_order() {
-    let policy = sf_experimental_policy();
-
-    let ranked_by_layer: Vec<&str> = policy
-        .program()
-        .labels()
-        .iter()
-        .map(lingrep_core::fsm::policy_program::StatementLabel::text)
-        .filter(|text| text.contains("priority_order"))
-        .collect();
-
-    assert_eq!(
-        ranked_by_layer,
-        vec!["resolve patterns rank: [longest, priority_order, start, end, pattern]."],
-        "exactly one statement ranks by layer: {policy:#?}"
-    );
-}
-
-#[test]
-fn every_sf_experimental_pattern_declares_its_layer_rank() {
-    let policy = sf_experimental_policy();
-
-    let mut by_rank = std::collections::BTreeMap::new();
-    for entry in policy.entries().values() {
-        *by_rank.entry(entry.priority_order).or_insert(0usize) += 1;
-    }
-
-    // Upstream's `_LAYER_PRIORITY = {"S3": 0, "S2": 1, "S1": 2, "S0": 3}`
-    // (`sf_experimental.py:1177`), outermost first, against this catalog's
-    // 5 / 27 / 50 / 4 layer inventory.
-    assert_eq!(
-        by_rank,
-        [(Some(0), 5), (Some(1), 27), (Some(2), 50), (Some(3), 4)]
-            .into_iter()
-            .collect::<std::collections::BTreeMap<_, _>>(),
-        "one rank per layer, and no pattern left without one: {policy:#?}"
-    );
-}
-
 /// The distance rule reads the same declared anchor the という rule reads.
 ///
-/// `filter_pipeline.py:100-101` passes one `effective_end` to both stages, so a
-/// catalog where they resolved differently would mean the anchor pre-pass had
-/// been consulted twice with different answers. Asserted on the two `Admit` ops
-/// naming the same anchor, not on either one alone: `admit @という` alone has
-/// been correct independently, and pinning its anchor a second time would not
-/// verify the distance rule.
+/// Asserted on the two `Admit` ops naming the same anchor, not on either one
+/// alone: pinning the anchor of `admit @という` a second time would not verify
+/// the distance rule.
 ///
-/// The pairing is also where a plausible mistake would land. `sentence_end` is
-/// reserved and resolves without declaration, so a distance rule written against
-/// it compiles, runs, and measures against the raw token count — an anchor the
-/// catalog's other `admit` does not use. Upstream measures both against the same
-/// `effective_end`, and this is the assertion that a divergence has to pass.
+/// `sentence_end` is reserved and resolves without declaration, so a distance
+/// rule written against it compiles, runs, and measures against the raw token
+/// count, an anchor the catalog's other `admit` does not use.
 #[test]
 fn both_admits_measure_against_the_same_declared_anchor() {
     let policy = sf_experimental_policy();
