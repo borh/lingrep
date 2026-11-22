@@ -19,7 +19,6 @@ use super::{
 };
 
 const PROTOCOL: &str = "lingrep.external-morphology/v1";
-const REQUEST_DIGEST_DOMAIN: &[u8] = b"lingrep.external-morphology/request/v1";
 
 #[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(deny_unknown_fields)]
@@ -443,7 +442,6 @@ fn admit_request_record(
 
 #[derive(Clone, Copy, Debug)]
 pub(crate) struct ExternalBatchBounds {
-    pub max_input_record_bytes: usize,
     pub max_stage_input_bytes: usize,
     pub max_stage_sentences: usize,
     pub max_sentence_bytes: usize,
@@ -455,7 +453,6 @@ pub struct ExternalValidatedBatch {
     batch_id: u64,
     analysis: ValidatedAnalysisBatch,
     warnings: Box<[ExternalWarning]>,
-    input_record_bytes: Box<[usize]>,
 }
 
 impl ExternalValidatedBatch {
@@ -474,10 +471,8 @@ impl ExternalValidatedBatch {
         &self.warnings
     }
 
-    pub(crate) fn into_parts(
-        self,
-    ) -> (ValidatedAnalysisBatch, Box<[ExternalWarning]>, Box<[usize]>) {
-        (self.analysis, self.warnings, self.input_record_bytes)
+    pub(crate) fn into_parts(self) -> (ValidatedAnalysisBatch, Box<[ExternalWarning]>) {
+        (self.analysis, self.warnings)
     }
 }
 
@@ -492,8 +487,6 @@ pub struct ExternalTranscript<R> {
     projection: BoundProjection,
     next_batch_id: u64,
     last_input_id: Option<u64>,
-    request_hasher: blake3::Hasher,
-    file_hasher: blake3::Hasher,
     clean_eof: bool,
 }
 
@@ -547,11 +540,8 @@ impl<R: BufRead> ExternalTranscript<R> {
                 .expect("placeholder projection is valid"),
             next_batch_id,
             last_input_id: None,
-            request_hasher: blake3::Hasher::new(),
-            file_hasher: blake3::Hasher::new(),
             clean_eof: false,
         };
-        transcript.request_hasher.update(REQUEST_DIGEST_DOMAIN);
         let (record, _) = transcript
             .read_record()?
             .ok_or_else(|| ExternalProtocolError::new("truncated", "missing run_header"))?;
@@ -562,7 +552,6 @@ impl<R: BufRead> ExternalTranscript<R> {
             ));
         };
         validate_header(&header, limits)?;
-        transcript.hash_request(&ExternalRecord::RunHeader(header.clone()))?;
 
         let (record, _) = transcript
             .read_record()?
@@ -602,22 +591,10 @@ impl<R: BufRead> ExternalTranscript<R> {
         &self.projection
     }
 
-    #[must_use]
-    pub fn request_digest(&self) -> [u8; 32] {
-        *self.request_hasher.clone().finalize().as_bytes()
-    }
-
-    #[must_use]
-    pub fn whole_file_digest(&self) -> Option<[u8; 32]> {
-        self.clean_eof
-            .then(|| *self.file_hasher.clone().finalize().as_bytes())
-    }
-
     pub fn next_validated_batch(
         &mut self,
     ) -> Result<Option<ExternalValidatedBatch>, ExternalProtocolError> {
         self.next_validated_batch_with_bounds(ExternalBatchBounds {
-            max_input_record_bytes: self.limits.max_record_bytes,
             max_stage_input_bytes: self.limits.max_request_batch_bytes,
             max_stage_sentences: self.limits.max_documents_per_batch,
             max_sentence_bytes: self.limits.max_record_bytes,
@@ -653,7 +630,6 @@ impl<R: BufRead> ExternalTranscript<R> {
             .batch(begin.batch_id));
         }
         let batch_id = begin.batch_id;
-        self.hash_request(&ExternalRecord::BatchBegin(begin.clone()))?;
         let document_count = usize::try_from(begin.document_count)
             .map_err(|_| limit_error("document count", batch_id))?;
         if document_count == 0 {
@@ -665,15 +641,10 @@ impl<R: BufRead> ExternalTranscript<R> {
             return Err(limit_error("document count", batch_id));
         }
         let mut documents = Vec::with_capacity(document_count);
-        let mut input_record_bytes = Vec::with_capacity(document_count);
         let mut request_bytes = begin_bytes;
         let mut input_bytes = 0_usize;
         for expected in 0..document_count {
-            let (record, record_bytes) = self.required_record_with_limit(
-                "document",
-                batch_id,
-                bounds.max_input_record_bytes,
-            )?;
+            let (record, record_bytes) = self.required_record("document", batch_id)?;
             let ExternalRecord::Document(document) = record else {
                 return Err(state_error("expected document", batch_id));
             };
@@ -690,9 +661,6 @@ impl<R: BufRead> ExternalTranscript<R> {
                 return Err(order_error("global input identity", batch_id).input(document.input_id));
             }
             self.last_input_id = Some(document.input_id);
-            if record_bytes > bounds.max_input_record_bytes {
-                return Err(limit_error("input record bytes", batch_id).input(document.input_id));
-            }
             request_bytes = request_bytes
                 .checked_add(record_bytes)
                 .ok_or_else(|| limit_error("request batch bytes", batch_id))?;
@@ -706,9 +674,7 @@ impl<R: BufRead> ExternalTranscript<R> {
                     limit_error("request/stage input bytes", batch_id).input(document.input_id)
                 );
             }
-            self.hash_request(&ExternalRecord::Document(document.clone()))?;
             documents.push(admit_document(document, &self.header, batch_id)?);
-            input_record_bytes.push(record_bytes);
         }
         let (record, end_bytes) = self.required_record("batch_end", batch_id)?;
         let ExternalRecord::BatchEnd(end) = record else {
@@ -721,7 +687,6 @@ impl<R: BufRead> ExternalTranscript<R> {
         if request_bytes > self.limits.max_request_batch_bytes {
             return Err(limit_error("request batch bytes", batch_id));
         }
-        self.hash_request(&ExternalRecord::BatchEnd(end))?;
 
         let mut sentences: Vec<Vec<AnalyzedSentence>> =
             (0..document_count).map(|_| Vec::new()).collect();
@@ -797,7 +762,6 @@ impl<R: BufRead> ExternalTranscript<R> {
             batch_id,
             analysis,
             warnings: warnings.into_boxed_slice(),
-            input_record_bytes: input_record_bytes.into_boxed_slice(),
         }))
     }
 
@@ -811,33 +775,9 @@ impl<R: BufRead> ExternalTranscript<R> {
         })
     }
 
-    fn required_record_with_limit(
-        &mut self,
-        expected: &str,
-        batch_id: u64,
-        limit: usize,
-    ) -> Result<(ExternalRecord, usize), ExternalProtocolError> {
-        self.read_record_with_limit(limit)?.ok_or_else(|| {
-            ExternalProtocolError::new("truncated", format!("missing {expected}")).batch(batch_id)
-        })
-    }
-
-    fn hash_request(&mut self, record: &ExternalRecord) -> Result<(), ExternalProtocolError> {
-        let bytes = encode_record(record)?;
-        self.request_hasher.update(&bytes);
-        Ok(())
-    }
-
     fn read_record(&mut self) -> Result<Option<(ExternalRecord, usize)>, ExternalProtocolError> {
-        self.read_record_with_limit(self.limits.max_record_bytes)
-    }
-
-    fn read_record_with_limit(
-        &mut self,
-        local_limit: usize,
-    ) -> Result<Option<(ExternalRecord, usize)>, ExternalProtocolError> {
         let mut bytes = Vec::new();
-        let admitted_limit = self.limits.max_record_bytes.min(local_limit);
+        let admitted_limit = self.limits.max_record_bytes;
         let read_limit = admitted_limit
             .checked_add(1)
             .ok_or_else(|| ExternalProtocolError::new("limit", "record bound overflow"))?;
@@ -850,14 +790,11 @@ impl<R: BufRead> ExternalTranscript<R> {
         if read == 0 {
             return Ok(None);
         }
-        self.file_hasher.update(&bytes);
         if bytes.len() > admitted_limit {
-            let message = if admitted_limit < self.limits.max_record_bytes {
-                "input record bytes exceed the execution limit"
-            } else {
-                "protocol record exceeds max_record_bytes"
-            };
-            return Err(ExternalProtocolError::new("limit", message));
+            return Err(ExternalProtocolError::new(
+                "limit",
+                "protocol record exceeds max_record_bytes",
+            ));
         }
         if bytes.last() != Some(&b'\n') {
             return Err(ExternalProtocolError::new(
@@ -1950,21 +1887,6 @@ fn decode_record(value: Value) -> Result<ExternalRecord, ExternalProtocolError> 
             format!("unknown record tag `{other}`"),
         )),
     }
-}
-
-fn encode_record(record: &ExternalRecord) -> Result<Vec<u8>, ExternalProtocolError> {
-    let mut bytes = match record {
-        ExternalRecord::RunHeader(value) => serde_json::to_vec(value),
-        ExternalRecord::RunReady(value) => serde_json::to_vec(value),
-        ExternalRecord::BatchBegin(value) => serde_json::to_vec(value),
-        ExternalRecord::Document(value) => serde_json::to_vec(value),
-        ExternalRecord::BatchEnd(value) => serde_json::to_vec(value),
-        ExternalRecord::Sentence(value) => serde_json::to_vec(value),
-        ExternalRecord::BatchComplete(value) => serde_json::to_vec(value),
-    }
-    .map_err(|error| ExternalProtocolError::new("json", error.to_string()))?;
-    bytes.push(b'\n');
-    Ok(bytes)
 }
 
 struct BoundedRecordWriter {

@@ -333,41 +333,6 @@ fn declared_document_count_is_bounded_before_capacity_allocation() {
 }
 
 #[test]
-fn request_and_file_digests_have_distinct_ownership() {
-    let first = valid_transcript();
-    let second = first.replace("\"backend\":\"cpu\"", "\"backend\":\"gpu\"");
-    let changed_request = first
-        .replacen("\"text\":\"猫。\"", "\"text\":\"犬。\"", 1)
-        .replacen("[\"猫\",\"猫\",", "[\"犬\",\"犬\",", 1);
-
-    let mut digests = Vec::new();
-    for bytes in [first, second, changed_request] {
-        let mut transcript = ExternalTranscript::open(
-            Cursor::new(bytes.into_bytes()),
-            ExternalProtocolLimits::default(),
-        )
-        .unwrap();
-        transcript.next_validated_batch().unwrap().unwrap();
-        assert!(transcript.whole_file_digest().is_none());
-        assert!(transcript.next_validated_batch().unwrap().is_none());
-        digests.push((
-            transcript.request_digest(),
-            transcript.whole_file_digest().unwrap(),
-        ));
-    }
-    assert_eq!(digests[0].0, digests[1].0);
-    assert_ne!(digests[0].1, digests[1].1);
-    assert_ne!(digests[0].0, digests[2].0);
-    assert_eq!(
-        digests[0].0,
-        [
-            203, 96, 84, 240, 160, 241, 136, 93, 172, 154, 174, 117, 48, 57, 254, 154, 44, 247, 67,
-            1, 221, 106, 180, 42, 104, 111, 95, 158, 20, 54, 188, 0,
-        ]
-    );
-}
-
-#[test]
 fn warnings_are_preserved_but_not_interpreted() {
     let warned = batch().replace(
         "\"warnings\":[]",

@@ -1314,7 +1314,6 @@ impl ExternalAdapterProcess {
             batch_id,
         )?;
         let bounds = crate::analysis::ExternalBatchBounds {
-            max_input_record_bytes: limits.max_input_record_bytes,
             max_stage_input_bytes: limits.max_stage_input_bytes,
             max_stage_sentences: limits.max_stage_sentences,
             max_sentence_bytes: limits.max_sentence_bytes,

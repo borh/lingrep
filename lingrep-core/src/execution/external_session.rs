@@ -372,7 +372,7 @@ impl AnalyzerSession for ExternalAnalyzerSession {
             .exchange_batch(adapter_inputs, &self.limits);
         match result {
             Ok(batch) => {
-                let (analysis, warnings, _) = batch.into_parts();
+                let (analysis, warnings) = batch.into_parts();
                 for warning in warnings {
                     (self.diagnostic)(format!("{warning:?}").as_bytes())
                         .map_err(AnalysisError::ProviderFailure)?;
