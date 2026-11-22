@@ -12,6 +12,7 @@
 //! prepared build has no advisory channel, and publishing a metadata-less
 //! document would make every later cached run silently degraded.
 
+use std::borrow::Cow;
 use std::collections::BTreeMap;
 use std::io;
 use std::path::Path;
@@ -322,10 +323,18 @@ impl BccwjMetadata {
                     ),
                 )
             })?;
-            let patch = ndc_patches.get(basename);
-            let tuple: [&str; 4] = patch.copied().unwrap_or([g1, g2, g3, g4]);
-            let (category, dropped) = derive_category(subcorpus, [g1, g2, g3, g4], patch.copied());
-            let g3_patched = tuple[2];
+            let patch = ndc_patches.get(basename).copied();
+            let mut tuple = patch.unwrap_or([g1, g2, g3, g4]);
+            let (ndc, c_code);
+            if subcorpus.is_book() && patch.is_some() {
+                let (integer, suffix) =
+                    tuple[1].split_at(tuple[1].find('.').unwrap_or(tuple[1].len()));
+                ndc = format!("{}{suffix}", pad_code(integer, 3));
+                c_code = pad_code(tuple[2], 4);
+                tuple[1] = &ndc;
+                tuple[2] = &c_code;
+            }
+            let (category, dropped) = derive_category(subcorpus, tuple);
             notes.dropped_category_values = notes
                 .dropped_category_values
                 .saturating_add(u64::try_from(dropped).unwrap_or(u64::MAX));
@@ -342,7 +351,7 @@ impl BccwjMetadata {
             // for the three fields that share it.
             let c_code = subcorpus
                 .is_book()
-                .then(|| c_code_lookup(g3_patched))
+                .then(|| c_code_lookup(tuple[2]))
                 .flatten();
             by_basename.insert(
                 basename.to_owned(),
@@ -366,10 +375,6 @@ impl BccwjMetadata {
                         publisher.to_owned()
                     },
                     copyright: copyright_map.get(basename).cloned(),
-                    // The reference gates the C-code fields on the book
-                    // subcorpora and does a single four-digit key lookup on
-                    // the *patched* `genre-3`; a shorter value misses
-                    // entirely (all three `nil`).
                     audience: c_code.map(|code| code.0.to_owned()),
                     media: c_code.map(|code| code.1.to_owned()),
                     topic: c_code.map(|code| code.2.to_owned()),
@@ -409,6 +414,14 @@ fn column_error(file: &str, line: usize, found: usize, expected: usize) -> io::E
         io::ErrorKind::InvalidData,
         format!("{file} line {line} has {found} columns, expected {expected}"),
     )
+}
+
+fn pad_code(code: &str, width: usize) -> Cow<'_, str> {
+    if !code.is_empty() && code.len() < width && code.bytes().all(|byte| byte.is_ascii_digit()) {
+        Cow::Owned(format!("{code:0>width$}"))
+    } else {
+        Cow::Borrowed(code)
+    }
 }
 
 /// Plain tab-split with the header dropped. No CSV quoting: the reference
@@ -473,12 +486,7 @@ fn book_label(label: &str, out: &mut Vec<String>, dropped: &mut usize) {
 /// The reference's category derivation, per subcorpus. Returns the derived
 /// list (subcorpus display name first) and the count of dropped
 /// unknown-notation values (the books branch's digits-only rule).
-fn derive_category(
-    subcorpus: Subcorpus,
-    genre: [&str; 4],
-    ndc_patch: Option<[&str; 4]>,
-) -> (Vec<String>, usize) {
-    let tuple = ndc_patch.unwrap_or(genre);
+fn derive_category(subcorpus: Subcorpus, tuple: [&str; 4]) -> (Vec<String>, usize) {
     let (values, dropped) = if subcorpus.is_book() {
         let mut out = Vec::new();
         let mut dropped = 0usize;
@@ -841,6 +849,62 @@ mod tests {
             doc.category,
             ["書籍", "91 日本文学", "日本文学", "小説", "物語"]
         );
+    }
+
+    #[test]
+    fn book_ndc_patches_restore_leading_zeroes() {
+        let mut joined = JOINED_HEADER.to_owned();
+        let mut ndc = NDC_HEADER.to_owned();
+        for (id, notation, code, padded_notation, padded_code, category, topic) in [
+            (
+                "LBa0_00002",
+                "70",
+                "36",
+                "070",
+                "0036",
+                &["書籍", "総記", "ジャーナリズム", "新聞"][..],
+                "社会",
+            ),
+            (
+                "LBb0_00002",
+                "7.64",
+                "355",
+                "007.64",
+                "0355",
+                &[
+                    "書籍",
+                    "総記",
+                    "情報科学",
+                    "データ処理",
+                    "情報処理",
+                    "コンピュータ プログラミング",
+                ][..],
+                "電子通信",
+            ),
+        ] {
+            joined.push_str(&joined_row(
+                id,
+                "",
+                "",
+                "",
+                "1980",
+                "0 総記",
+                padded_notation,
+                padded_code,
+                "",
+                "",
+                "",
+                "",
+                "LB",
+            ));
+            ndc.push_str(&ndc_row(notation, id, "0 総記", "", code, ""));
+            let (patched, _) = build(&joined, &ndc, COPYRIGHT_HEADER);
+            let (unpatched, _) = build(&joined, NDC_HEADER, COPYRIGHT_HEADER);
+            let doc = patched.lookup(id).expect("patched book");
+            assert_eq!(doc.category, category);
+            assert_eq!(doc.topic.as_deref(), Some(topic));
+            assert_eq!(doc, unpatched.lookup(id).expect("joined book"));
+        }
     }
 
     #[test]

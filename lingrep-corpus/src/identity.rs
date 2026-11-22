@@ -515,7 +515,7 @@ mod reader_identity_tests {
             (
                 &CorpusReadConfig::Bccwj,
                 NormalizationPolicy::Nfc,
-                "d1ee857e00bfa141eec574e1a247f9189d343a9f9b920ce35075b8fc4d7fc2d7",
+                "8452fe20c31642b1a7d17d1812edb7308d5797dfaabf3e0b1fb9c09a973f874b",
             ),
         ] {
             assert_eq!(

@@ -39,7 +39,7 @@ const CONLLU_CONFIG_TAG: u64 = 0x94d2_6c1e_58af_43b9u64;
 /// Fixed reader-configuration tag for the BCCWJ stream. Configuration only
 /// — the reader carries no tunable policy, so the tag is a constant. It is
 /// one of the only BCCWJ-derived bytes in the V1 artifact identity (§3.1).
-const BCCWJ_CONFIG_TAG: u64 = 0x7d1c_9e4a_b3f2_8c6eu64;
+const BCCWJ_CONFIG_TAG: u64 = 0x7d1c_9e4a_b3f2_8c6fu64;
 /// Fixed reader-configuration tag for a Soranoha bulk archive. Configuration
 /// only — the catalog policy is the format's, with no tunable knob.
 const SORANOHA_CONFIG_TAG: u64 = 0xd3e7_4e8e_1992_ecb3u64;
