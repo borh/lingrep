@@ -274,14 +274,15 @@ const workRows = new WeakMap();
 function workView(page) {
     let view = workViews.get(page);
     if (!view) {
-        view = { groups: [], expanded: new Set(), total: null, next: null, loading: false, error: null, pinned: null };
+        view = { groups: [], expanded: new Map(), total: null, next: null, loading: false, error: null, pinned: null };
         workViews.set(page, view);
     }
     return view;
 }
 const byWork = (run) => !isReplay && run.phase === 'complete' && resultLayout(run) === 'works';
-const zoomLabels = () => locale === 'ja' ? ['作品', '用例', '文'] : ['Works', 'Matches', 'Sentences'];
+const zoomLabels = () => locale === 'ja' ? ['各作品1件', '用例を増やす', '全文'] : ['One per work', 'More matches', 'Full sentences'];
 const zoomLevel = (panel) => Number($('[data-work-zoom]', panel).value);
+const workExpanded = (view, ordinal, zoom) => view.expanded.get(ordinal) ?? (zoom > 0);
 let isReplay = false;
 let viewLocation = defaultView();
 let viewEvidence = null;
@@ -824,7 +825,7 @@ function render(force = false) {
             panel = document.createElement('article');
             panel.className = 'result-panel';
             panel.dataset.run = run.id;
-            panel.innerHTML = '<p class="result-scope"></p><ul class="result-notices" hidden></ul><div class="panel-body"><details class="pattern-picker"><summary></summary><div class="pattern-list"></div></details><div class="lines-area"><div class="result-modes" hidden><div class="result-layout" role="group"><button type="button" data-layout="works"></button><button type="button" data-layout="kwic"></button></div><label class="work-zoom"><span></span><input type="range" min="0" max="2" step="1" value="0" data-work-zoom><output></output></label><label class="kwic-sort"><span></span><select><option value="original"></option><option value="left"></option><option value="match"></option><option value="right"></option></select></label></div><div class="result-reading"><span class="evidence-sentence"></span> <span class="document-scope" hidden></span> <span class="line-controls"><span></span> <input type="search"></span> <details class="document-nav" aria-label="Documents" hidden><summary class="document-jump"></summary><div class="document-finder" hidden></div><div class="document-choice"></div></details> <span class="result-header"></span> <span class="line-note" role="status" hidden></span></div><div class="kwic-list"></div><nav class="document-pages" aria-label="Example pages" hidden></nav><button type="button" class="more-works" hidden></button></div></div><details class="query-tools-detail"><summary></summary><pre></pre><div class="query-tools"><button type="button" data-copy></button><button type="button" data-source></button></div></details>';
+            panel.innerHTML = '<p class="result-scope"></p><ul class="result-notices" hidden></ul><div class="panel-body"><details class="pattern-picker"><summary></summary><div class="pattern-list"></div></details><div class="lines-area"><div class="result-modes" hidden><div class="result-layout" role="group"><button type="button" data-layout="works"></button><button type="button" data-layout="kwic"></button></div><label class="kwic-sort"><span></span><select><option value="original"></option><option value="left"></option><option value="match"></option><option value="right"></option></select></label></div><div class="work-zoom" hidden><span class="work-zoom-name"></span><div class="work-zoom-scale"><input type="range" min="0" max="2" step="1" value="0" data-work-zoom><div class="work-zoom-stops" aria-hidden="true"><span></span><span></span><span></span></div></div></div><div class="result-reading"><span class="evidence-sentence"></span> <span class="document-scope" hidden></span> <span class="line-controls"><span></span> <input type="search"></span> <details class="document-nav" aria-label="Documents" hidden><summary class="document-jump"></summary><div class="document-finder" hidden></div><div class="document-choice"></div></details> <span class="result-header"></span> <span class="line-note" role="status" hidden></span></div><div class="kwic-list"></div><nav class="document-pages" aria-label="Example pages" hidden></nav><button type="button" class="more-works" hidden></button></div></div><details class="query-tools-detail"><summary></summary><pre></pre><div class="query-tools"><button type="button" data-copy></button><button type="button" data-source></button></div></details>';
             $('.document-nav', panel).open = false;
             bindResultModes(panel, run.id);
             $('.kwic-list', panel).addEventListener('click', event => { const row = event.target.closest('[data-entry-line]'); if (row)
@@ -1000,30 +1001,27 @@ function bindResultModes(panel, id) {
         await loadWorkSamples(panel, run, pattern, view);
         if (focused && document.activeElement === document.body && panel.classList.contains('work-results')) {
             const ordinal = view.groups[firstNew]?.document.ordinal;
-            const first = panel.querySelector(`[data-work-heading="${ordinal}"] a`);
+            const first = panel.querySelector(`[data-work-heading="${ordinal}"] button, [data-work-heading="${ordinal}"] + .kwic-row`);
             first?.focus();
         }
     });
     $('.kwic-list', panel).addEventListener('click', event => {
-        const button = event.target.closest('[data-work-more],[data-work-fewer]');
+        const button = event.target.closest('[data-work-more],[data-work-toggle]');
         if (!button)
             return;
         const run = runFor(id), pattern = selection.get(id) ?? '', view = workView(documentView(run, pattern));
-        const ordinal = Number(button.dataset.workMore ?? button.dataset.workFewer);
+        const ordinal = Number(button.dataset.workMore ?? button.dataset.workToggle);
         const group = view.groups.find(group => group.document.ordinal === ordinal);
         if (!group)
             return;
-        if (button.hasAttribute('data-work-fewer')) {
-            view.expanded.delete(ordinal);
+        if (button.hasAttribute('data-work-toggle')) {
+            const zoom = zoomLevel(panel);
+            const expanded = !workExpanded(view, ordinal, zoom);
+            if (expanded === (zoom > 0))
+                view.expanded.delete(ordinal);
+            else
+                view.expanded.set(ordinal, expanded);
             renderLines(panel, run);
-            panel.querySelector(`[data-work-more="${ordinal}"]`)?.focus({ preventScroll: true });
-        }
-        else if (zoomLevel(panel) === 0 && !view.expanded.has(ordinal)) {
-            const focused = document.activeElement === button;
-            view.expanded.add(ordinal);
-            renderLines(panel, run);
-            if (focused && document.activeElement === document.body)
-                panel.querySelector(`[data-work-fewer="${ordinal}"]`)?.focus({ preventScroll: true });
         }
         else if (group.next != null)
             void loadWorkSamples(panel, run, pattern, view, group);
@@ -1038,13 +1036,16 @@ function renderResultModes(panel, run, grouped) {
         setConcordanceText(button, works ? (locale === 'ja' ? '作品別' : 'By work') : 'KWIC');
         button.setAttribute('aria-pressed', String(works === grouped));
     }
-    const label = $('.work-zoom', modes);
-    label.hidden = !grouped;
-    const name = locale === 'ja' ? 'ズーム' : 'Zoom', level = zoomLabels()[zoomLevel(panel)];
-    setConcordanceText($('span', label), name);
-    setConcordanceText($('output', label), level);
-    $('[data-work-zoom]', label).setAttribute('aria-label', name);
-    $('[data-work-zoom]', label).setAttribute('aria-valuetext', level);
+    const zoom = $('.work-zoom', panel);
+    zoom.hidden = !grouped;
+    const name = locale === 'ja' ? 'ズーム' : 'Zoom', level = zoomLevel(panel), labels = zoomLabels();
+    setConcordanceText($('.work-zoom-name', zoom), name);
+    zoom.querySelectorAll('.work-zoom-stops span').forEach((stop, index) => {
+        setConcordanceText(stop, labels[index]);
+        stop.classList.toggle('selected', index === level);
+    });
+    $('[data-work-zoom]', zoom).setAttribute('aria-label', name);
+    $('[data-work-zoom]', zoom).setAttribute('aria-valuetext', labels[level]);
     const sort = $('.kwic-sort', modes);
     sort.hidden = grouped;
     setConcordanceText($('span', sort), locale === 'ja' ? '表示中の用例を並べ替え' : 'Sort shown lines');
@@ -1259,7 +1260,7 @@ function renderLines(panel, run, _force = false) {
     const landmarks = new Map((grouped ? work.groups.map(group => group.document) : view.landmarks).map(document => [document.ordinal, document]));
     const pinned = inspecting?.run.id === run.id && !tokenLab.hidden ? inspecting.row : work.pinned;
     const visibleWorkRows = grouped ? work.groups.flatMap(group => {
-        const rows = zoom > 0 || work.expanded.has(group.document.ordinal) ? [...group.rows] : group.rows.slice(0, 1);
+        const rows = workExpanded(work, group.document.ordinal, zoom) ? [...group.rows] : group.rows.slice(0, 1);
         if (pinned?.document_ordinal === group.document.ordinal && !rows.some(row => row.sequence === pinned.sequence))
             rows.push(pinned);
         return rows;
@@ -1278,7 +1279,7 @@ function renderLines(panel, run, _force = false) {
     const shownCounts = new Map();
     for (const row of rows)
         shownCounts.set(row.document_ordinal, (shownCounts.get(row.document_ordinal) ?? 0) + 1);
-    const total = pageReady ? view.matchesTotal : run.counts[pattern] ?? 0, shownLines = Math.min(allRows.length, limit);
+    const total = !grouped && pageReady ? view.matchesTotal : run.counts[pattern] ?? 0, shownLines = Math.min(allRows.length, limit);
     const input = $('.line-controls input', panel), hint = locale === 'ja' ? `表示中の${count(shownLines)}件から絞り込む` : `Filter the ${count(shownLines)} lines shown`;
     input.placeholder = hint;
     input.setAttribute('aria-label', hint);
@@ -1291,7 +1292,7 @@ function renderLines(panel, run, _force = false) {
     const matchingDocuments = grouped ? work.total : pageReady ? (view.scopeDocument != null ? (total ? 1 : 0) : view.query ? null : view.documentsTotal) : null;
     $('.evidence-sentence', panel).textContent = run.phase !== 'complete' && !isReplay ? (locale === 'ja' ? `途中までに ${count(total)} 件。` : `${count(total)} ${total === 1 ? 'match' : 'matches'} so far.`) : locale === 'ja' ? `${count(total)} 件${matchingDocuments == null ? '' : ` · ${count(matchingDocuments)} 文書`}。` : `${count(total)} ${total === 1 ? 'match' : 'matches'}${matchingDocuments == null ? '' : ` in ${count(matchingDocuments)} ${matchingDocuments === 1 ? 'document' : 'documents'}`}.`;
     const scope = $('.document-scope', panel);
-    scope.hidden = view.scopeDocument == null;
+    scope.hidden = grouped || view.scopeDocument == null;
     if (!scope.hidden) {
         const markup = `<a data-view href="${escape(hrefFor(run, { ...concordanceFor(run), scopeDocument: null, document: null, after: view.returnAfter }))}">${locale === 'ja' ? 'すべての文書に戻る' : 'Return to all documents'}</a>`;
         if (renderSignatures.get(scope) !== markup) {
@@ -1304,7 +1305,7 @@ function renderLines(panel, run, _force = false) {
     note.textContent = view.loading && (!rows.length || view.documents !== null) ? (locale === 'ja' ? '用例を読み込んでいます…' : 'Loading examples…') : view.loading ? '' : view.error ? (locale === 'ja' ? `用例を読み込めませんでした。${view.error}` : `Examples could not be loaded. ${view.error}`) : run.phase === 'running' ? t('notTotal') : '';
     if (grouped) {
         const shown = count(work.groups.length);
-        const first = zoom === 0 && !work.expanded.size && !pinned;
+        const first = zoom === 0 && !work.groups.some(group => workExpanded(work, group.document.ordinal, zoom)) && !pinned;
         const summary = locale === 'ja' ? (first ? `${shown} 作品から最初の用例` : `${shown} 作品を表示`) : (first ? `First match from each of ${shown} ${work.groups.length === 1 ? 'work' : 'works'}` : `Showing ${shown} ${work.groups.length === 1 ? 'work' : 'works'}`);
         note.textContent = work.error ?? (work.loading ? (locale === 'ja' ? '用例を読み込んでいます…' : 'Loading examples…') : work.groups.length ? summary : '');
         more.hidden = work.next == null && !(work.total == null && work.error);
@@ -1327,21 +1328,36 @@ function renderLines(panel, run, _force = false) {
     let previousDocument;
     for (const [index, row] of rows.entries()) {
         if (previousDocument !== row.document_ordinal) {
-            const heading = node(`document:${row.document_ordinal}:${sort === 'original' || grouped ? '' : row.sequence}`, 'div', 'document-heading');
+            const ordinal = row.document_ordinal, group = grouped ? works.get(ordinal) : undefined;
+            const titleTag = grouped ? (group && group.document.matches > 1 ? 'button' : 'strong') : 'a';
+            const heading = node(`document:${ordinal}:${titleTag}:${sort === 'original' || grouped ? '' : row.sequence}`, 'div', 'document-heading');
             if (grouped)
-                heading.dataset.workHeading = String(row.document_ordinal);
-            const landmark = landmarks.get(row.document_ordinal);
-            const shown = shownCounts.get(row.document_ordinal) ?? 0;
-            const href = hrefFor(run, { ...concordanceFor(run), layout: 'kwic', scopeDocument: row.document_ordinal, returnAfter: view.scopeDocument == null ? view.after : view.returnAfter, document: row.document_ordinal, after: -1 });
+                heading.dataset.workHeading = String(ordinal);
+            const landmark = landmarks.get(ordinal);
+            const shown = shownCounts.get(ordinal) ?? 0;
             let content = concordanceHeadings.get(heading);
             if (!content) {
-                heading.innerHTML = '<a data-view></a><span></span><span class="document-match-count"></span>';
-                content = { link: heading.children[0], author: heading.children[1], count: heading.children[2] };
+                const title = document.createElement(titleTag);
+                if (title instanceof HTMLButtonElement) {
+                    title.type = 'button';
+                    title.dataset.workToggle = String(ordinal);
+                }
+                if (title instanceof HTMLAnchorElement)
+                    title.dataset.view = '';
+                const author = document.createElement('span'), count = document.createElement('span');
+                count.className = 'document-match-count';
+                heading.append(title, author, count);
+                content = { title, author, count };
                 concordanceHeadings.set(heading, content);
             }
-            if (content.link.getAttribute('href') !== href)
-                content.link.setAttribute('href', href);
-            setConcordanceText(content.link, landmark?.title || documentTitle(row));
+            if (content.title instanceof HTMLAnchorElement) {
+                const href = hrefFor(run, { ...concordanceFor(run), layout: 'kwic', scopeDocument: ordinal, returnAfter: view.scopeDocument == null ? view.after : view.returnAfter, document: ordinal, after: -1 });
+                if (content.title.getAttribute('href') !== href)
+                    content.title.setAttribute('href', href);
+            }
+            if (content.title instanceof HTMLButtonElement)
+                content.title.setAttribute('aria-expanded', String(workExpanded(work, ordinal, zoom)));
+            setConcordanceText(content.title, landmark?.title || documentTitle(row));
             const author = landmark?.author || row.source_metadata?.document?.author || '';
             const edition = grouped ? works.get(row.document_ordinal)?.edition : '';
             const source = [author, edition].filter(Boolean).join(' · ');
@@ -1420,22 +1436,13 @@ function renderLines(panel, run, _force = false) {
         }
         if (grouped && rows[index + 1]?.document_ordinal !== row.document_ordinal) {
             const group = works.get(row.document_ordinal);
-            const expanded = work.expanded.has(row.document_ordinal);
-            const summary = zoom === 0 && !expanded;
-            if (group && group.document.matches > 1 && (summary || group.next != null)) {
+            if (group && group.next != null && workExpanded(work, row.document_ordinal, zoom)) {
                 const action = node(`work-more:${row.document_ordinal}`, 'button', 'work-more');
                 action.type = 'button';
                 action.dataset.workMore = String(row.document_ordinal);
                 action.disabled = work.loading;
-                setConcordanceText(action, summary ? (locale === 'ja' ? 'この作品の用例を表示' : 'More from this work') : (locale === 'ja' ? 'さらに用例を表示' : 'Show more matches'));
+                setConcordanceText(action, locale === 'ja' ? 'さらに用例を表示' : 'Show more matches');
                 desired.push(action);
-            }
-            if (zoom === 0 && expanded) {
-                const collapse = node(`work-fewer:${row.document_ordinal}`, 'button', 'work-more');
-                collapse.type = 'button';
-                collapse.dataset.workFewer = String(row.document_ordinal);
-                setConcordanceText(collapse, locale === 'ja' ? '用例を折りたたむ' : 'Show fewer matches');
-                desired.push(collapse);
             }
         }
     }
@@ -1467,10 +1474,10 @@ function renderLines(panel, run, _force = false) {
             nodes.delete(key);
 }
 const listStops = new WeakMap();
-const listItems = (list) => [...list.querySelectorAll(':scope>.kwic-row,:scope>.document-heading>a')];
+const listItems = (list) => [...list.querySelectorAll(':scope>.kwic-row,:scope>.document-heading>a,:scope>.document-heading>button[data-work-toggle]')];
 function roveList(list) {
     const items = listItems(list), remembered = listStops.get(list);
-    const stop = remembered && items.includes(remembered) ? remembered : items.find(item => item.getAttribute('aria-expanded') === 'true') ?? items[0];
+    const stop = remembered && items.includes(remembered) ? remembered : items.find(item => item.matches('.kwic-row[aria-expanded=true]')) ?? items[0];
     for (const item of items) {
         const index = item === stop ? '0' : '-1';
         if (item.getAttribute('tabindex') !== index)

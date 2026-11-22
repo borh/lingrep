@@ -3221,6 +3221,19 @@ async fn work_zoom_keeps_the_open_match_when_the_view_changes() -> WebDriverResu
             &format!("return document.querySelectorAll('{rows}').length === 5"),
             "one preview for each of the first five works",
         ).await?;
+        let title = driver.find(By::Css(".work-sample-list button[data-work-toggle]")).await?;
+        title.send_keys(Key::Enter).await?;
+        wait_for(
+            &driver,
+            &format!("return document.querySelectorAll('{rows}').length > 5 && document.querySelector('[data-work-toggle]').getAttribute('aria-expanded') === 'true'"),
+            "the work title expands matches inline",
+        ).await?;
+        title.send_keys(Key::Enter).await?;
+        wait_for(
+            &driver,
+            &format!("return document.querySelectorAll('{rows}').length === 5 && document.querySelector('[data-work-toggle]').getAttribute('aria-expanded') === 'false'"),
+            "the work title collapses its matches",
+        ).await?;
         driver.find(By::Css(".more-works")).await?.click().await?;
         wait_for(
             &driver,
@@ -3241,7 +3254,7 @@ async fn work_zoom_keeps_the_open_match_when_the_view_changes() -> WebDriverResu
         wait_for(&driver, "return !document.querySelector('#token-lab').hidden", "the open match").await?;
         crate::resize(&driver, 360, 550).await?;
         zoom.send_keys(thirtyfour::Key::Home).await?;
-        assert_eq!(zoom.attr("aria-valuetext").await?.as_deref(), Some("Works"));
+        assert_eq!(zoom.attr("aria-valuetext").await?.as_deref(), Some("One per work"));
         driver.find(By::Css("[data-layout=kwic]")).await?.click().await?;
         wait_for(
             &driver,
@@ -3258,6 +3271,40 @@ async fn work_zoom_keeps_the_open_match_when_the_view_changes() -> WebDriverResu
             "return !!document.querySelector('.work-sample-list > [aria-expanded=true]')",
             "the selected match after returning to By work",
         ).await?;
+        driver.execute(
+            "[...document.querySelectorAll('.work-sample-list > .kwic-row')].at(-2).scrollIntoView({block:'center'})",
+            Vec::new(),
+        ).await?;
+        two_frames(&driver).await?;
+        assert_eq!(driver.execute(
+            "const box = document.querySelector('[data-work-zoom]').getBoundingClientRect(); return scrollY > 500 && box.top >= 0 && box.bottom < 100",
+            Vec::new(),
+        ).await?.json(), &json!(true), "zoom stays reachable while reading");
+        assert_no_page_errors(&driver).await
+    }.await;
+    driver.quit().await?;
+    served.server.abort();
+    result
+}
+
+#[tokio::test]
+async fn by_work_summary_uses_the_full_result_scope_after_scoped_kwic() -> WebDriverResult<()> {
+    let Some(driver) = driver().await? else {
+        return Ok(());
+    };
+    let served = serve_entries().await;
+    let result: WebDriverResult<()> = async {
+        driver.goto(limited_question(&served.base, ENTRY_CATALOG, true)).await?;
+        wait_for(&driver, "return /in 8 documents/.test(document.querySelector('.evidence-sentence')?.textContent)", "the complete result total").await?;
+        let caption = driver.find(By::Css(".evidence-sentence")).await?.text().await?;
+        select_question_kwic(&driver).await?;
+        wait_for(&driver, "return document.querySelectorAll('.kwic-list > .kwic-row').length === 20", "the unscoped KWIC").await?;
+        driver.find(By::Css(".kwic-list .document-heading > a")).await?.click().await?;
+        wait_for(&driver, "return /in 1 document\\./.test(document.querySelector('.evidence-sentence')?.textContent)", "the scoped KWIC total").await?;
+        driver.find(By::Css("[data-layout=works]")).await?.click().await?;
+        wait_for(&driver, "return document.querySelectorAll('.work-sample-list > .document-heading').length === 5", "the cross-work previews").await?;
+        assert_eq!(driver.find(By::Css(".evidence-sentence")).await?.text().await?, caption);
+        assert!(!driver.find(By::Css(".document-scope")).await?.is_displayed().await?);
         assert_no_page_errors(&driver).await
     }.await;
     driver.quit().await?;
