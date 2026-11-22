@@ -224,6 +224,9 @@ pub fn run(
     terminal: &TerminalArbiter,
     output: OutputMode,
 ) -> Result<CommandOutcome, CliError> {
+    if args.by_window.is_some() && output != OutputMode::Jsonl {
+        return Err(CliError::InvalidArgs("--by-window requires --json".into()));
+    }
     let top = resolve_summary_top(output, args.top);
     let started = Instant::now();
     let catalog =
@@ -235,14 +238,6 @@ pub fn run(
     let table_fingerprint = catalog.fingerprint.clone();
     let mut compiled = catalog.output;
     compiled.matcher = compiled.matcher.with_overlaps(args.overlaps.into());
-    let mut projected_attributes = cached_run_attributes(&compiled.matcher);
-    // Read by `--by surface`; a schema without it drops it.
-    projected_attributes.push(
-        lingrep_core::token_match::AttributeKey::new("surface")
-            .expect("surface is a canonical attribute"),
-    );
-    projected_attributes.sort_unstable();
-    projected_attributes.dedup();
     let catalog_policy = compiled.matcher.catalog_policy();
     let pattern_ordinals = catalog_policy
         .published_entries(
@@ -253,6 +248,26 @@ pub fn run(
         .map(|(name, ordinal)| (name.to_owned(), ordinal))
         .collect::<BTreeMap<_, _>>();
 
+    if let Some(size) = args.by_window {
+        return super::window_counts::run(
+            args,
+            config,
+            terminal,
+            size,
+            &compiled,
+            catalog_fingerprint,
+            pattern_ordinals.into_keys().collect(),
+        );
+    }
+
+    let mut projected_attributes = cached_run_attributes(&compiled.matcher);
+    // Read by `--by surface`; a schema without it drops it.
+    projected_attributes.push(
+        lingrep_core::token_match::AttributeKey::new("surface")
+            .expect("surface is a canonical attribute"),
+    );
+    projected_attributes.sort_unstable();
+    projected_attributes.dedup();
     let pattern_metadata_selection = PatternMetadataSelection::parse(
         args.pattern_filter.as_deref(),
         args.group_patterns_by.as_deref(),

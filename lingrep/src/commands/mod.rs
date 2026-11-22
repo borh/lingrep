@@ -33,6 +33,7 @@ pub mod summarize;
 pub mod table;
 pub mod tokenize;
 pub mod variants;
+mod window_counts;
 
 use lingrep_core::corpus::admission_identity_digest;
 use lingrep_corpus::AdmissionIdentity;

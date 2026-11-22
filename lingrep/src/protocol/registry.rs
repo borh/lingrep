@@ -2,7 +2,7 @@ use super::discovery::{ContractKind, ContractSpec, ContractSummary};
 use super::{
     ContractId, attributes, capabilities, check, completions, contract, contrast, diagnostic,
     dictionary, disk, doctor, invocation, manpages, neighbors, prune, query, sources, status,
-    table, tokenize, variants,
+    table, tokenize, variants, window_counts,
 };
 
 pub fn get(id: ContractId) -> ContractSpec {
@@ -39,6 +39,7 @@ pub fn get(id: ContractId) -> ContractSpec {
         ContractId::Table => table::contract(),
         ContractId::Contrast => contrast::contract(),
         ContractId::Neighbors => neighbors::contract(),
+        ContractId::WindowCounts => window_counts::contract(),
     }
 }
 

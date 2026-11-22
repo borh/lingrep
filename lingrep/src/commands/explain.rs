@@ -338,6 +338,9 @@ fn schemas(cli: &Cli) -> Vec<String> {
         return Vec::new();
     }
     let schema = match &cli.command {
+        Command::Summarize(args) if args.by_window.is_some() => {
+            crate::protocol::window_counts::SCHEMA
+        }
         Command::Matches(_) | Command::Summarize(_) => "lingrep.query/v2",
         Command::Tokenize(_) => "lingrep.tokenize/v1",
         Command::Attributes(_) => "lingrep.attributes/v1",

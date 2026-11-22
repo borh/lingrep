@@ -697,6 +697,30 @@ ling --json summarize --by-document --source-metadata @document.id \
 Over a prepared corpus `--by-document` reads every sentence, because the
 posting index has no per-document token counts.
 
+### Counting per sentence-aligned token window
+
+```bash
+ling --json summarize --by-window 300 --corpus corpus.lingcorpus \
+  --patterns patterns/sentence-final.lx
+ling contracts lingrep.window-counts/v1
+```
+
+Within each document, divide the zero-based token ordinal of a sentence's first
+word by `N` and round down. The result is the window ordinal. The entire sentence
+contributes to that window, even when the sentence crosses one or more window
+boundaries. Window ordinals restart at zero in each document and may have gaps.
+
+The JSONL stream begins with the window size, corpus identities, catalog
+fingerprint, and published pattern names. Each `window` record contains document
+and window ordinals, sentence and token totals, and a sparse count for each
+published pattern. A missing pattern count is zero. Counts apply publication
+policy and include all published occurrences. The output carries counts and
+ordinals only for the admitted text. The `complete` record confirms a full scan.
+
+Use `--corpus` or `--cache`. Window assignment uses the full prepared document,
+so a window run requires the complete corpus and rejects scope filters and
+sampling. If a sentence exceeds execution limits, increase the limit and rerun.
+
 ### Counting per section
 
 `--by-section` counts, for every section label of a prepared corpus, each

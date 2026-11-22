@@ -27,6 +27,7 @@ pub mod status;
 pub mod table;
 pub mod tokenize;
 pub mod variants;
+pub mod window_counts;
 
 #[cfg(test)]
 mod tests;

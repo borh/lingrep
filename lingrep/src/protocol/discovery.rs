@@ -67,6 +67,7 @@ contract_ids! {
     Tokenize => "lingrep.tokenize/v1",
     TokenizeTsv => "lingrep.tokenize-tsv/v1",
     Variants => "lingrep.variants/v1",
+    WindowCounts => "lingrep.window-counts/v1",
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]

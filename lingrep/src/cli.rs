@@ -827,6 +827,19 @@ pub struct SummarizeArgs {
     #[arg(long, help_heading = "Output")]
     pub by_document: bool,
 
+    /// Count each pattern in sentence-aligned document windows of N tokens.
+    /// Requires --json and a prepared corpus.
+    #[arg(
+        long,
+        value_name = "N",
+        conflicts_with_all = [
+            "tsv", "by_span", "by_document", "by_section", "by_metadata",
+            "grouping_coverage", "write_table", "top", "clause", "rate", "trace_policy",
+        ],
+        help_heading = "Output"
+    )]
+    pub by_window: Option<std::num::NonZeroU64>,
+
     /// Report per-pattern grouped and unkeyed records after publication policy
     /// (requires --json). With --by-document, also report each document's coverage.
     #[arg(long, help_heading = "Output", hide_short_help = true)]

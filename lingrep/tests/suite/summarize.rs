@@ -4305,3 +4305,138 @@ fn text_summary_states_how_many_records_had_no_key() {
         "{stdout}"
     );
 }
+
+#[test]
+fn by_window_counts_whole_sentences_and_emits_only_counts() {
+    let temp = tempfile::tempdir().unwrap();
+    let input = temp.path().join("windows.conllu");
+    let corpus = temp.path().join("windows.lingcorpus");
+    let documents: &[&[&[&str]]] = &[
+        &[
+            &["NOUN", "VERB"],
+            &["VERB", "NOUN", "NOUN", "VERB", "VERB"],
+            &["VERB"],
+            &["NOUN"],
+        ],
+        &[&["VERB", "VERB"]],
+    ];
+    let mut source = String::new();
+    let mut expected = BTreeMap::<(u64, u64), (u64, u64, u64)>::new();
+    for (doc, sentences) in documents.iter().enumerate() {
+        source.push_str("# newdoc id = private-doc\n");
+        let mut start = 0;
+        for sentence in *sentences {
+            let totals = expected.entry((doc as u64, start / 3)).or_default();
+            totals.0 += 1;
+            totals.1 += sentence.len() as u64;
+            start += sentence.len() as u64;
+            for (index, pos) in sentence.iter().enumerate() {
+                source.push_str(&format!(
+                    "{}\tPRIVATE_SURFACE\tPRIVATE_LEMMA\t{pos}\t_\t_\t0\troot\t_\t_\n",
+                    index + 1
+                ));
+                totals.2 += u64::from(*pos == "NOUN");
+            }
+            source.push('\n');
+        }
+    }
+    fs::write(&input, source).unwrap();
+    lingrep()
+        .args(["corpus", "build", "--output"])
+        .arg(&corpus)
+        .arg(&input)
+        .assert()
+        .success();
+
+    let output = lingrep()
+        .args([
+            "--json",
+            "summarize",
+            "--by-window",
+            "3",
+            "--workers",
+            "2",
+            "--batch-sentences",
+            "2",
+            "--pattern",
+            "key: [surface]\npattern noun := [upos=NOUN].",
+            "--corpus",
+        ])
+        .arg(&corpus)
+        .output()
+        .unwrap();
+    assert_success(&output);
+    let stdout = std::str::from_utf8(&output.stdout).unwrap();
+    assert!(!stdout.contains("PRIVATE_"));
+    assert!(!stdout.contains("private-doc"));
+    let rows = parse_jsonl(&output.stdout);
+    assert_eq!(rows[0]["schema"], "lingrep.window-counts/v1");
+    assert_eq!(rows[0]["data"]["patterns"], serde_json::json!(["noun"]));
+    assert_eq!(rows.last().unwrap()["type"], "complete");
+    assert_eq!(rows.last().unwrap()["data"]["windows"], expected.len());
+    let actual = rows
+        .iter()
+        .filter(|row| row["type"] == "window")
+        .map(|row| {
+            let data = &row["data"];
+            assert_eq!(data.as_object().unwrap().len(), 5);
+            (
+                (
+                    data["document_ordinal"].as_u64().unwrap(),
+                    data["window_ordinal"].as_u64().unwrap(),
+                ),
+                (
+                    data["sentences"].as_u64().unwrap(),
+                    data["tokens"].as_u64().unwrap(),
+                    data["counts"]["noun"].as_u64().unwrap_or(0),
+                ),
+            )
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(actual, expected.into_iter().collect::<Vec<_>>());
+
+    let oversized = lingrep()
+        .args([
+            "--json",
+            "summarize",
+            "--by-window",
+            "3",
+            "--max-tokenized-bytes",
+            "1",
+            "--pattern",
+            "[upos=NOUN].",
+            "--corpus",
+        ])
+        .arg(&corpus)
+        .output()
+        .unwrap();
+    assert_eq!(oversized.status.code(), Some(1));
+    let incomplete = parse_jsonl(&oversized.stdout);
+    assert_eq!(incomplete.len(), 1);
+    assert_eq!(incomplete[0]["type"], "run");
+
+    for (args, message) in [
+        (
+            vec!["summarize", "--by-window", "3"],
+            "--by-window requires --json",
+        ),
+        (
+            vec!["--json", "summarize", "--by-window", "0"],
+            "invalid value",
+        ),
+        (
+            vec!["--json", "summarize", "--by-window", "3", "--sample", "0.5"],
+            "cannot be used with",
+        ),
+    ] {
+        let rejected = lingrep()
+            .args(args)
+            .args(["--pattern", "[].", "--corpus"])
+            .arg(&corpus)
+            .output()
+            .unwrap();
+        assert_eq!(rejected.status.code(), Some(2));
+        let error = String::from_utf8_lossy(&rejected.stderr);
+        assert!(error.contains(message), "{error}");
+    }
+}
