@@ -17,6 +17,11 @@ evidence.
 | `lingrep.tokenize-tsv/v1` | `tokenize` | `corpus_sentence_ordinal`, `source_name`, `document_ordinal`, `document_sentence_ordinal`, `token_index`, `orth`, `lemma`, `pos`, `cform` | Canonical corpus sentence and token order. | Complete token evidence unless the command fails. |
 <!-- END GENERATED TSV CONTRACTS -->
 
+In `ling tokenize --tsv`, the sixth column, `orth`, contains the source
+spelling from `surface` when available. It falls back to `text` and is empty
+when neither attribute is available. Use `attributes.text` in JSONL for the
+match key.
+
 For a projected key, the TSV `group` field is a compact JSON object whose
 properties retain authored projection order. `lingrep.query/v2` JSONL
 represents the same typed value as a `fields` array.

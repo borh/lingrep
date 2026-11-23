@@ -20,7 +20,7 @@ use crate::output::{TokenizeTsvRow, write_tokenize_tsv};
 use crate::presentation::{OutputMode, ResultDelivery, resolve_match_limit};
 use crate::protocol::query::{
     Coverage, ExecutionLimits, PublishedProjection, ResourceHighWater, RunCorpus,
-    TemporaryStorageLimits, Termination,
+    TemporaryStorageLimits, Termination, TokenEvidence,
 };
 use crate::protocol::tokenize::{
     SentenceData, TokenizeComplete, TokenizeEnvelope, TokenizeEvent, TokenizeRun,
@@ -343,6 +343,13 @@ fn publish_projection_buffered<W: Write>(
     }
 }
 
+fn token_surface(token: &TokenEvidence) -> Option<&str> {
+    token
+        .attributes
+        .get("surface")
+        .or_else(|| token.attributes.get("text"))
+}
+
 fn publish_projection<W: Write>(
     writer: &mut W,
     envelope: &TokenizeEnvelope,
@@ -356,22 +363,7 @@ fn publish_projection<W: Write>(
                 write!(writer, "sentence {}:", sentence.corpus_sentence_ordinal)
                     .map_err(execution_output_io)?;
                 for token in &sentence.tokens {
-                    // `surface` where the schema carries it, otherwise the
-                    // portable `text` key; never `orth`. `orth` is UniDic's
-                    // name for this field and is in no published namespace, so
-                    // the lookup missed on every token of every run and the
-                    // fallback rendered whole corpora as `?`. Nothing caught
-                    // it because no test read a rendered token.
-                    //
-                    // The sentinel is the one TSV already uses for an absent
-                    // context surface, and it is lossy for the same reason:
-                    // corpus text can contain that string. JSONL stays
-                    // authoritative.
-                    let surface = token
-                        .attributes
-                        .get("surface")
-                        .or_else(|| token.attributes.get("text"))
-                        .unwrap_or("⟨missing⟩");
+                    let surface = token_surface(token).unwrap_or("⟨missing⟩");
                     write!(writer, " {}", crate::output::sanitize_terminal(surface))
                         .map_err(execution_output_io)?;
                 }
@@ -397,13 +389,7 @@ fn publish_projection<W: Write>(
                             document_ordinal: sentence.document_ordinal,
                             document_sentence_ordinal: sentence.document_sentence_ordinal,
                             token_index: token.index,
-                            // Published keys, not the UniDic/lingrep patterns-era spellings.
-                            // `orth`, `pos` and `cform` are in no published
-                            // namespace, so three of the four content columns
-                            // were empty on every row of every run — the
-                            // `unwrap_or_default()` turned a total miss into a
-                            // well-formed record instead of a failure.
-                            orth: attribute("text"),
+                            orth: token_surface(token).unwrap_or_default().to_owned(),
                             lemma: attribute("lemma"),
                             pos: attribute("upos"),
                             cform: attribute("unidic.cform"),

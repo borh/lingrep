@@ -141,11 +141,11 @@ fn human_tokenize_defaults_to_one_hundred_sentences_and_all_removes_the_cap() {
 }
 
 #[test]
-fn tokenize_tsv_process_smoke_emits_escaped_fixed_rows() {
+fn tokenize_tsv_preserves_fullwidth_surfaces_in_escaped_rows() {
     let dictionary = MiniDictionary::new();
     let directory = TempDir::new().unwrap();
     let corpus = directory.path().join("doc\tname.txt");
-    std::fs::write(&corpus, "猫。\n").unwrap();
+    std::fs::write(&corpus, "１ 猫\n").unwrap();
 
     let output = lingrep()
         .args(["tokenize", "--tsv", "--dict-path"])
@@ -163,9 +163,11 @@ fn tokenize_tsv_process_smoke_emits_escaped_fixed_rows() {
     let rows = String::from_utf8(output.stdout).unwrap();
     let rows = rows.lines().collect::<Vec<_>>();
     assert_eq!(rows.len(), 2);
-    for (token_index, row) in rows.iter().enumerate() {
+    for (token_index, (row, surface)) in rows.iter().zip(["１", "猫"]).enumerate() {
         assert!(
-            row.starts_with(&format!("0\t\"doc\tname.txt\"\t0\t0\t{token_index}\t")),
+            row.starts_with(&format!(
+                "0\t\"doc\tname.txt\"\t0\t0\t{token_index}\t{surface}\t"
+            )),
             "{row:?}"
         );
     }

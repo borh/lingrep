@@ -125,6 +125,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- The `orth` column in `ling tokenize --tsv` preserves source spelling, including
+  fullwidth characters, when the token carries a `surface` attribute.
 - The Workbench has higher-contrast placeholder text in both themes, larger
   provenance labels, and the same focus ring on buttons, links, selects,
   checkboxes, and disclosure summaries.
