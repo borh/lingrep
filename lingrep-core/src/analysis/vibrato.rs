@@ -329,29 +329,29 @@ pub fn resolve_pos(
     if let Some(orth_map) = TAG_ORTH_MAP.get(tag)
         && let Some(&pos) = orth_map.get(orth)
     {
-        return (pos.to_string().into(), None);
+        return (CompactString::const_new(pos), None);
     }
 
     if let Some(next_tag) = next_tag
         && let Some(&(current_pos, next_pos)) = TAG_BIGRAM_MAP.get(&(tag, next_tag))
     {
         return (
-            current_pos
-                .map_or_else(
-                    || TAG_MAP.get(tag).unwrap_or(&"").to_string(),
-                    std::string::ToString::to_string,
-                )
-                .into(),
-            next_pos.map(|pos| pos.to_string().into()),
+            CompactString::const_new(
+                current_pos.unwrap_or_else(|| TAG_MAP.get(tag).copied().unwrap_or("")),
+            ),
+            next_pos.map(CompactString::const_new),
         );
     }
 
     // Without a following token, the potentially dependent verb is independent.
     if next_tag.is_none() && tag == "動詞-非自立可能" {
-        return ("VERB".to_string().into(), None);
+        return (CompactString::const_new("VERB"), None);
     }
 
-    (TAG_MAP.get(tag).unwrap_or(&"").to_string().into(), None)
+    (
+        CompactString::const_new(TAG_MAP.get(tag).copied().unwrap_or("")),
+        None,
+    )
 }
 
 /// The normalized form of a UniDic lemma — what `norm` means.
@@ -398,7 +398,7 @@ fn normalized_lemma(lemma: &CompactString) -> CompactString {
     }
 }
 
-/// Splits one UniDic feature record into its fields.
+/// Visits each CSV field of one UniDic feature record with its column index.
 ///
 /// The record is CSV, not a comma-joined list: vibrato stores it verbatim from
 /// the lexicon, where a field containing a comma or a quote is quoted with `"`
@@ -408,21 +408,25 @@ fn normalized_lemma(lemma: &CompactString) -> CompactString {
 /// two and shifts every column after it, which silently corrupted `orth`,
 /// `orthBase`, `goshu` and everything past them.
 ///
-/// Borrowed whenever the record carries no quote at all, which is all but a
-/// fraction of a percent of tokens, so the common path stays allocation-free.
-fn feature_fields(feature: &str) -> Vec<Cow<'_, str>> {
+/// Borrowed and allocation-free whenever the record carries no quote at all,
+/// which is all but a fraction of a percent of tokens.
+fn for_each_feature_field(feature: &str, mut visit: impl FnMut(usize, &str)) {
     if !feature.contains('"') {
-        return feature.split(',').map(Cow::Borrowed).collect();
+        for (i, field) in feature.split(',').enumerate() {
+            visit(i, field);
+        }
+        return;
     }
-    let mut fields = Vec::new();
     let mut rest = feature;
+    let mut i = 0;
     loop {
         let (field, remainder) = next_feature_field(rest);
-        fields.push(field);
+        visit(i, field.as_ref());
         let Some(remainder) = remainder else {
-            return fields;
+            return;
         };
         rest = remainder;
+        i += 1;
     }
 }
 
@@ -463,6 +467,19 @@ pub fn featurize(token: &Token, next_token: Option<&Token>) -> TokenInfo {
     ))
 }
 
+/// Joins up to four POS components into a hyphen-separated `CompactString`
+/// without intermediate `Vec` or `String` allocations.
+fn push_pos_tag<'a>(parts: impl IntoIterator<Item = &'a str>) -> CompactString {
+    let mut tag = CompactString::default();
+    for part in parts {
+        if !tag.is_empty() {
+            tag.push('-');
+        }
+        tag.push_str(part);
+    }
+    tag
+}
+
 /// `surface` is the source slice that produced `token`, which the analyzer
 /// read in its folded view.
 fn featurize_selected(
@@ -479,37 +496,54 @@ fn featurize_selected(
     let mut values: [Option<CompactString>; TokenAttributeIndex::COUNT] =
         [const { None }; TokenAttributeIndex::COUNT];
 
-    let feature_array = feature_fields(token.feature());
+    let needs_pos = requested[Pos as usize];
+    let needs_tag = requested[Tag as usize] || needs_pos;
+    let needs_lemma = requested[Lemma as usize] || requested[Norm as usize];
 
-    for (i, &index) in TokenAttributeIndex::ALL.iter().enumerate() {
-        let needed_for_derivation = matches!(index, Pos1 | Pos2 | Pos3 | Pos4 | Lemma | Orth);
-        if (requested[index as usize] || needed_for_derivation)
-            && let Some(s) = feature_array.get(i)
-        {
-            values[index as usize] = Some(s.as_ref().into());
+    for_each_feature_field(token.feature(), |i, field| {
+        let Some(&index) = TokenAttributeIndex::ALL.get(i) else {
+            return;
+        };
+        let needed_for_derivation = match index {
+            Pos1 | Pos2 | Pos3 | Pos4 => needs_tag,
+            Lemma => needs_lemma,
+            Orth => needs_pos,
+            _ => false,
+        };
+        if requested[index as usize] || needed_for_derivation {
+            values[index as usize] = Some(CompactString::from(field));
         }
-    }
+    });
 
-    let tag: CompactString = [
-        values[Pos1 as usize].as_ref(),
-        values[Pos2 as usize].as_ref(),
-        values[Pos3 as usize].as_ref(),
-        values[Pos4 as usize].as_ref(),
-    ]
-    .iter()
-    .filter_map(|s| s.as_ref())
-    .filter(|s| !s.is_empty() && **s != "*")
-    .map(|s| CompactString::from(s.as_str()))
-    .collect::<Vec<_>>()
-    .join("-")
-    .into();
-    if requested[Tag as usize] {
-        values[Tag as usize] = Some(tag.clone());
-    }
+    let tag = if needs_tag {
+        let tag = push_pos_tag(
+            [
+                values[Pos1 as usize].as_deref(),
+                values[Pos2 as usize].as_deref(),
+                values[Pos3 as usize].as_deref(),
+                values[Pos4 as usize].as_deref(),
+            ]
+            .into_iter()
+            .flatten()
+            .filter(|s| !s.is_empty() && *s != "*"),
+        );
+        if requested[Tag as usize] {
+            values[Tag as usize] = Some(tag.clone());
+        }
+        Some(tag)
+    } else {
+        None
+    };
 
-    let orth = values[Orth as usize]
-        .clone()
-        .unwrap_or_else(|| CompactString::from(token.surface()));
+    let orth_for_pos = if needs_pos {
+        Some(
+            values[Orth as usize]
+                .take()
+                .unwrap_or_else(|| CompactString::from(token.surface())),
+        )
+    } else {
+        None
+    };
     if requested[Orth as usize] {
         values[Orth as usize] = Some(CompactString::from(text_key(surface)));
     }
@@ -520,7 +554,7 @@ fn featurize_selected(
     if token.lex_type() == LexType::Unknown {
         for attribute in [OrthBase, Lemma] {
             if values[attribute as usize].is_none()
-                && (requested[attribute as usize] || attribute == Lemma)
+                && (requested[attribute as usize] || (attribute == Lemma && needs_lemma))
             {
                 values[attribute as usize] = Some(CompactString::from(token.surface()));
             }
@@ -539,36 +573,34 @@ fn featurize_selected(
     }
     if requested[LexTypeAttr as usize] {
         values[LexTypeAttr as usize] = Some(match token.lex_type() {
-            LexType::System => "system".into(),
-            LexType::User => "user".into(),
-            LexType::Unknown => "unknown".into(),
+            LexType::System => CompactString::const_new("system"),
+            LexType::User => CompactString::const_new("user"),
+            LexType::Unknown => CompactString::const_new("unknown"),
         });
     }
 
-    // Resolve POS
-    let next_tag: Option<CompactString> = next_token.map(|t| {
-        CompactString::from(
-            t.feature()
-                .split(',')
-                .take(4)
-                .filter(|&s| s != "*")
-                .collect::<Vec<_>>()
-                .join("-"),
-        )
-    });
-    let (pos, _) = resolve_pos(orth.as_str(), &tag, next_tag.as_deref());
-    if pos.is_empty() {
-        #[expect(
-            clippy::panic,
-            reason = "a resolved token always carries a non-empty pos field"
-        )]
-        {
-            panic!(
-                "Empty 'pos' field encountered for surface {:?}",
-                token.surface()
-            );
+    if needs_pos {
+        let next_tag =
+            next_token.map(|t| push_pos_tag(t.feature().split(',').take(4).filter(|&s| s != "*")));
+        let orth = orth_for_pos
+            .as_deref()
+            .expect("orth_for_pos is computed whenever needs_pos is true");
+        let tag = tag
+            .as_deref()
+            .expect("tag is computed whenever needs_pos is true");
+        let (pos, _) = resolve_pos(orth, tag, next_tag.as_deref());
+        if pos.is_empty() {
+            #[expect(
+                clippy::panic,
+                reason = "a resolved token always carries a non-empty pos field"
+            )]
+            {
+                panic!(
+                    "Empty 'pos' field encountered for surface {:?}",
+                    token.surface()
+                );
+            }
         }
-    } else if requested[Pos as usize] {
         values[Pos as usize] = Some(pos);
     }
 
@@ -999,10 +1031,9 @@ mod tests {
     #[test]
     fn feature_fields_matches_the_csv_semantics_the_dictionary_was_built_with() {
         let fields = |record| {
-            feature_fields(record)
-                .into_iter()
-                .map(std::borrow::Cow::into_owned)
-                .collect::<Vec<_>>()
+            let mut out = Vec::new();
+            for_each_feature_field(record, |_, field| out.push(field.to_owned()));
+            out
         };
 
         // vibrato's `test_parse_csv_row` and `test_parse_csv_row_with_quote`.
