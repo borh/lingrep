@@ -315,10 +315,12 @@ pub struct DiskLeftover {
 pub enum LeftoverStatus {
     /// A process holds the lock.
     Live,
-    /// The lock records this host and is free: its build has stopped, and the
-    /// next build of the same name on this host removes it.
+    /// Its build has stopped: the lock records this host and is free, or there
+    /// is no lock file and the recorded process is not running on this host.
+    /// The next build of the same name on this host removes it.
     Abandoned,
-    /// No lock file, or one recording another or no host name.
+    /// A lock file recording another or no host name, or no lock file and a
+    /// recorded process that is running on this host.
     Unknown,
     /// A realization or count table left under its hidden removal name.
     /// An eligible leftover is removed on a subsequent execute run.

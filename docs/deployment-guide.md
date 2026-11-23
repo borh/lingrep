@@ -362,13 +362,19 @@ seconds for them to remove their staging directories and lock files before it
 exits. A build that is killed, or that has not stopped when that wait ends or
 a second signal arrives, leaves its staging directory and lock file behind.
 The next build of the same artifact on the same host removes them. It removes
-a staging directory only when its lock file records the current host name
-and the build can acquire its exclusive lock.
+a staging directory that has a lock file only when the lock file records the
+current host name and the build can acquire its exclusive lock. It removes a
+staging directory without a lock file, which a build by a release before 0.8.0
+or a failed removal can leave, only when no process on the current host has the
+`PID` in its name.
 
-A later build leaves a staging directory in place in three cases: the
-directory's lock file is missing; the lock file records another host name;
-or the artifact name has since changed with the dictionary or analyzer. Remove
-those directories by hand.
+A later build leaves a staging directory in place in three cases: its lock
+file records another host name; it has no lock file and the `PID` in its name
+is in use on the current host; or the artifact name has since changed with the
+dictionary or analyzer. Remove those directories by hand.
+A release before 0.8.0 must not build into a directory shared with another host
+or PID namespace while a current release builds there, because its staging
+directories have no lock file.
 Two hosts that report the same host name must not build into one shared
 directory on a filesystem that does not propagate `flock` locks between hosts.
 
