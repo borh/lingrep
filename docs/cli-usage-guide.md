@@ -148,7 +148,10 @@ No action is offered when the list already holds the sentence or when the
 definition inherits the list from `defaults` or a bundle.
 
 A hit's detail in the Workbench links to the Sample debugger with that corpus
-sentence and the Workbench's pattern. The sentence is then explained with the
+sentence and the pattern of the search that found the hit. The link's address
+names the sentence, the corpus and the search, so it also opens in a new tab;
+once the Workbench shows a later search, the address opens the sentence with
+the server's default pattern. The sentence is then explained with the
 tokens stored in the corpus artifact, under the corpus's token schema, and the
 results name the corpus's analyzer; the catalog's claims are not checked in
 that state, and enhanced dependency relations are not evaluated. Editing the

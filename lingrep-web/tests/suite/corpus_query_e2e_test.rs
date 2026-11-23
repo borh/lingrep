@@ -354,6 +354,7 @@ async fn kwic_views_surface_section_and_document_provenance() {
     async fn get(store: &RequestStore, uri: &str) -> String {
         let response = Router::new()
             .merge(lingrep_web::handlers::pattern_detail::routes())
+            .merge(lingrep_web::handlers::sample::page_routes())
             .with_state(store.clone())
             .oneshot(Request::builder().uri(uri).body(Body::empty()).unwrap())
             .await
@@ -433,11 +434,31 @@ async fn kwic_views_surface_section_and_document_provenance() {
         !detail0.contains("methods"),
         "the hit outside the div must show no section"
     );
-    assert!(
-        detail0.contains(r#"data-debug-sentence=""#),
-        "a hit links to the Sample debugger"
-    );
     let detail1 = get(&store, "/hit-detail/prov-e2e/1/0/1").await;
+    // The link is complete without script, so it opens in a new tab.
+    assert!(
+        detail1.contains(
+            r#"data-debug-sentence href="sample?sentence=1&#38;corpus=default&#38;workbench=prov-e2e&#38;revision=1""#
+        ),
+        "a hit links to its sentence in the Sample debugger: {detail1}"
+    );
+    let debugger = get(
+        &store,
+        "/sample?sentence=1&corpus=default&workbench=prov-e2e&revision=1",
+    )
+    .await;
+    assert!(debugger.contains(r#"name="corpus_sentence" value="1""#));
+    assert!(
+        debugger.contains(">verb := [upos=VERB].</textarea>"),
+        "the page opens with the run's pattern: {debugger}"
+    );
+    let stale = get(
+        &store,
+        "/sample?sentence=1&corpus=default&workbench=prov-e2e&revision=2",
+    )
+    .await;
+    assert!(stale.contains(r#"name="corpus_sentence" value="1""#));
+    assert!(!stale.contains(">verb := [upos=VERB].</textarea>"));
     assert!(detail1.contains("provenance-panel"));
     assert!(detail1.contains("methods"));
     assert!(detail1.contains("01.md")); // source basename, not a path

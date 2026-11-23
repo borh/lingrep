@@ -151,8 +151,6 @@ export function transitionPageState(state, action) {
   };
 }
 
-const PATTERN_HANDOFF_KEY = "lingrep:sample-pattern-handoff";
-
 function loadKwicPageSize(storage = localStorage) {
   try {
     return parseKwicPageSize(storage.getItem(KWIC_PAGE_SIZE_KEY));
@@ -1834,22 +1832,6 @@ if (typeof document !== "undefined") {
       const url = readerUrl(compared.dataset.compareRead, "document");
       addressReader(url);
       openAddressedReader(readerAddress(new URL(url, location.href).hash));
-      return;
-    }
-    const debugSentence = event.target.closest("[data-debug-sentence]");
-    if (debugSentence) {
-      const corpus = document.querySelector("[data-corpus-search] input[name=corpus]")?.value;
-      const [sentence] = debugSentence.dataset.debugSentence.split(".");
-      const url = new URL("sample", document.baseURI);
-      url.searchParams.set("sentence", sentence);
-      if (corpus) url.searchParams.set("corpus", corpus);
-      debugSentence.href = url.href;
-      // The Sample page opens with the pattern that produced this hit list.
-      const pattern = document.getElementById("corpus-pattern")?.value;
-      try {
-        if (pattern) sessionStorage.setItem(PATTERN_HANDOFF_KEY, pattern);
-      } catch (_error) {
-      }
       return;
     }
 

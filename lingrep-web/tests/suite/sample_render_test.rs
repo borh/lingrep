@@ -286,6 +286,13 @@ fn a_run_names_its_tokenizer_its_missing_attributes_and_each_failed_claim() {
     assert!(html.contains("<code>conllu pretokenized</code>"));
     assert!(html.contains("data-sample-unavailable"));
     assert!(html.contains("<code>dep.rel</code>"));
+    // `i18n.js` replaces a translated element's text, so the element holds
+    // text only.
+    assert!(html.contains(
+        "<span data-i18n=\"sample.attribute_unavailable_note\">. Comparisons on this \
+         attribute fail on every token. The complement !(…) of a failed comparison \
+         succeeds.</span>"
+    ));
     assert!(html.contains(r#"data-sample-claims="unverifiable""#));
 
     let html = render(

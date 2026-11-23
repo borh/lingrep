@@ -7,7 +7,7 @@
   {% if unavailable.len() > 0 %}
   <ul class="sample-run-warnings" data-sample-unavailable>
   {% for item in unavailable %}
-    <li class="sample-run-warning"><span data-i18n="sample.attribute_unavailable">The sample tokenizer does not supply</span> <code>{{ item.attribute }}</code>{% if item.definitions.len() > 0 %} <span data-i18n="sample.attribute_referenced_by">(referenced by</span> {% for definition in item.definitions %}<code>{{ definition }}</code>{% if !loop.last %}, {% endif %}{% endfor %}){% endif %}<span data-i18n="sample.attribute_unavailable_note">. Comparisons on this attribute fail on every token. The complement <code>!(…)</code> of a failed comparison succeeds.</span></li>
+    <li class="sample-run-warning"><span data-i18n="sample.attribute_unavailable">The sample tokenizer does not supply</span> <code>{{ item.attribute }}</code>{% if item.definitions.len() > 0 %} <span data-i18n="sample.attribute_referenced_by">(referenced by</span> {% for definition in item.definitions %}<code>{{ definition }}</code>{% if !loop.last %}, {% endif %}{% endfor %}){% endif %}<span data-i18n="sample.attribute_unavailable_note">. Comparisons on this attribute fail on every token. The complement !(…) of a failed comparison succeeds.</span></li>
   {% endfor %}
   </ul>
   {% endif %}

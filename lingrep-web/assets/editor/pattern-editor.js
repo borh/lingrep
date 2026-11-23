@@ -53,18 +53,6 @@ function followedLink() {
     performance.getEntriesByType("navigation")[0]?.type === "navigate";
 }
 
-/** The pattern a Workbench hit's debug link left for the Sample page, once. */
-function takeHandoff(textarea) {
-  if (textarea.id !== "sample-pattern") return null;
-  try {
-    const handed = sessionStorage.getItem("lingrep:sample-pattern-handoff");
-    sessionStorage.removeItem("lingrep:sample-pattern-handoff");
-    return handed;
-  } catch (_error) {
-    return null;
-  }
-}
-
 function attachDraftPersistence(textarea) {
   if (textarea.dataset.lxDraft === "attached") return;
   textarea.dataset.lxDraft = "attached";
@@ -74,8 +62,6 @@ function attachDraftPersistence(textarea) {
     followedLink: followedLink(),
   });
   if (draft !== null) textarea.value = draft;
-  const handed = takeHandoff(textarea);
-  if (handed !== null) textarea.value = handed;
   textarea.addEventListener("input", () => {
     try {
       localStorage.setItem(draftKey(textarea), storedDraft(textarea.defaultValue, textarea.value));
