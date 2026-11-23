@@ -1202,7 +1202,7 @@ fn aggregation_group_display(group: &AggregationGroup) -> String {
 fn summary_data(pattern: &str, row: &SummaryRow) -> SummaryData {
     SummaryData {
         pattern: pattern.to_owned(),
-        document: row.partition.document_ordinal,
+        document: row.partition.document_ordinal(),
         group: match &row.group {
             AggregationGroup::Surface(value) => SummaryGroupData::Surface {
                 value: value.clone(),
@@ -1293,13 +1293,16 @@ impl SummarySink<'_> {
         pattern_ordinal: u64,
         location: &lingrep_core::execution::SentenceLocation,
     ) -> SummaryPartition {
-        SummaryPartition {
-            pattern_ordinal,
-            document_ordinal: self
-                .documents
-                .is_some()
-                .then_some(location.document_ordinal),
-            sentence_ordinal: self.sentences.then_some(location.corpus_sentence_ordinal),
+        if self.sentences {
+            SummaryPartition::sentence(
+                pattern_ordinal,
+                location.document_ordinal,
+                location.corpus_sentence_ordinal,
+            )
+        } else if self.documents.is_some() {
+            SummaryPartition::document(pattern_ordinal, location.document_ordinal)
+        } else {
+            SummaryPartition::pattern(pattern_ordinal)
         }
     }
 
