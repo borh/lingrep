@@ -47,16 +47,15 @@ impl DiagramCatalog {
     /// Checks source syntax and shape; callers requiring reference binding must compile the catalog first.
     pub fn parse(source: PatternSource<'_>, limits: CompileLimits) -> Result<Self, DiagramError> {
         let program = lower_authored_document(&source, &limits)?;
-        let source = parser_text(source.text).into_owned();
         let mut parser = Parser::new();
         parser
             .set_language(&LANGUAGE.into())
             .map_err(|_| DiagramError::SourceShape)?;
         let tree = parser
-            .parse(&source, None)
+            .parse(parser_text(source.text).as_ref(), None)
             .ok_or(DiagramError::SourceShape)?;
         Ok(Self {
-            source,
+            source: source.text.to_owned(),
             tree,
             program,
             limits,
@@ -811,7 +810,7 @@ impl PatternDiagram {
             .enumerate()
             .map(|(i, label)| format!("[L{}] {label}", i + 1))
             .collect::<Vec<_>>();
-        notes.extend(self.annotations.iter().map(|note| safe(note)));
+        notes.extend(self.annotations.iter().cloned());
         Ok((drawings, notes))
     }
 
@@ -829,7 +828,7 @@ impl PatternDiagram {
         }
         for note in notes {
             append(&mut output, "\n")?;
-            for line in wrap(&note, width) {
+            for line in wrap_note(&note, width) {
                 append(&mut output, &format!("{line}\n"))?;
             }
         }
@@ -851,7 +850,7 @@ impl PatternDiagram {
         notes.extend(self.publication_note.map(str::to_owned));
         let note_lines = notes
             .iter()
-            .flat_map(|note| wrap(note, width))
+            .flat_map(|note| wrap_note(note, width))
             .collect::<Vec<_>>();
         let heading = wrap(&self.name, width);
         let height = 4
@@ -955,6 +954,10 @@ fn append(output: &mut String, value: &str) -> Result<(), DiagramError> {
     Ok(())
 }
 
+fn wrap_note(note: &str, width: usize) -> impl Iterator<Item = String> + '_ {
+    note.lines().flat_map(move |line| wrap(&safe(line), width))
+}
+
 fn wrap(text: &str, width: usize) -> Vec<String> {
     let mut result = Vec::new();
     let mut line = String::new();
@@ -975,9 +978,7 @@ fn wrap(text: &str, width: usize) -> Vec<String> {
             last_space = Some(line.len());
         }
     }
-    if !line.is_empty() {
-        result.push(line);
-    }
+    result.push(line);
     result
 }
 
@@ -1307,6 +1308,31 @@ mod tests {
     }
 
     #[test]
+    fn multiline_where_clauses_preserve_line_breaks_and_indentation() {
+        let clause = "where $v -[obj]-> $a,\r\n\r\n      not $v -[aux:pass]-> _";
+        let catalog = catalog(&format!("p := (?<a> []) (?<v> []) {clause}."));
+        let diagram = catalog.diagram("p", false).unwrap();
+        let lines = clause.lines().collect::<Vec<_>>();
+        let expected = format!("\n{}\n", lines.join("\n"));
+
+        for ascii in [false, true] {
+            let text = diagram.render_text(80, ascii).unwrap();
+            assert!(text.ends_with(&expected), "{text}");
+        }
+
+        for svg in [diagram.render_svg(80), diagram.render_embedded_svg(80)] {
+            let svg = svg.unwrap();
+            let document = roxmltree::Document::parse(&svg).unwrap();
+            let text = document
+                .descendants()
+                .filter(|node| node.has_tag_name("text"))
+                .map(|node| node.text().unwrap_or_default())
+                .collect::<Vec<_>>();
+            assert!(text.ends_with(&lines), "{svg}");
+        }
+    }
+
+    #[test]
     fn diagram_limits_fail_before_rendering_oversized_layouts() {
         let source = format!("p := {}.", "[] ".repeat(MAX_NODES + 1));
         assert!(matches!(
@@ -1346,7 +1372,7 @@ mod tests {
         let diagram = PatternDiagram {
             name: "controls".into(),
             expression: Flow::Leaf("[text=\u{1b}[31m\u{202e}]".into()),
-            annotations: vec!["note\n\t\u{009b}".into()],
+            annotations: vec!["note \\n\n\t\r\u{009b}".into()],
             publication_note: None,
         };
         let text = diagram.render_text(32, false).unwrap();
@@ -1354,6 +1380,7 @@ mod tests {
         assert!(!text.contains('\u{202e}'));
         assert!(!text.contains('\u{009b}'));
         assert!(text.contains("\\u{202e}"));
+        assert!(text.ends_with("\nnote \\n\n\\t\\r\\u{9b}\n"));
     }
 
     #[test]
