@@ -17,11 +17,12 @@ SCRIPT_NAME="$(basename "$SELF_REAL")"
 
 usage() {
     cat <<EOF
-Usage: $SCRIPT_NAME [--clean-targets] [--remove-merged] [--yes]
+Usage: $SCRIPT_NAME [--extents | [--clean-targets] [--remove-merged] [--yes]]
 
-No arguments: report mode (read-only). Prints one row per worktree with its
-target/ size, lifecycle class, and recommended action.
+Run without arguments for a read-only report of target/ sizes and worktree status.
 
+  --extents         add Btrfs total, exclusive, and set-shared extent sizes
+                    to the read-only report (scans individual files)
   --clean-targets   remove target/ dirs for MAIN and ACTIVE trees
   --remove-merged   'git worktree remove' MERGED trees (reclaims target/
                      with them)
@@ -35,12 +36,14 @@ EOF
 DO_CLEAN=0
 DO_REMOVE=0
 ASSUME_YES=0
+SHOW_EXTENTS=0
 
 for arg in "$@"; do
     case "$arg" in
         --clean-targets) DO_CLEAN=1 ;;
         --remove-merged) DO_REMOVE=1 ;;
         --yes) ASSUME_YES=1 ;;
+        --extents) SHOW_EXTENTS=1 ;;
         -h | --help)
             usage
             exit 0
@@ -52,6 +55,11 @@ for arg in "$@"; do
             ;;
     esac
 done
+
+if [ "$SHOW_EXTENTS" -eq 1 ] && { [ "$DO_CLEAN" -eq 1 ] || [ "$DO_REMOVE" -eq 1 ]; }; then
+    echo "Use --extents in read-only report mode." >&2
+    exit 2
+fi
 
 # --- worktree enumeration -------------------------------------------------
 #
@@ -107,12 +115,10 @@ fi
 
 # --- per-tree helpers ------------------------------------------------------
 
-# Populates global array TARGET_DIRS with every target/ dir under $1,
-# pruning .worktrees so scanning one tree never descends into another's
-# files.
+# An outer target directory already accounts for its nested target directories.
 target_dirs_for() {
     local tree="$1"
-    mapfile -t TARGET_DIRS < <(find "$tree" -name .worktrees -prune -o -name target -type d -print 2>/dev/null)
+    mapfile -t TARGET_DIRS < <(find "$tree" -name .worktrees -prune -o -name target -type d -print -prune 2>/dev/null)
 }
 
 # Sums the size (MB) of the dirs currently in TARGET_DIRS.
@@ -206,6 +212,7 @@ action_for_class() {
 
 CLASS=()
 SIZE_MB=()
+EXTENT_TARGETS=()
 
 for i in "${!WT_PATH[@]}"; do
     tree="${WT_PATH[$i]}"
@@ -223,23 +230,56 @@ for i in "${!WT_PATH[@]}"; do
 
     target_dirs_for "$tree"
     SIZE_MB+=("$(sum_target_mb)")
+    if [ "$SHOW_EXTENTS" -eq 1 ]; then
+        EXTENT_TARGETS+=("${TARGET_DIRS[@]}")
+    fi
 done
 
 print_report() {
     local total_mb=0
-    printf '%-58s %-24s %10s %-8s %s\n' "WORKTREE" "BRANCH" "TARGET/ MB" "CLASS" "ACTION"
+    printf '%-58s %-24s %11s %-8s %s\n' "WORKTREE" "BRANCH" "TARGET/ MiB" "CLASS" "ACTION"
     for i in "${!WT_PATH[@]}"; do
         local branch_disp="${WT_BRANCH[$i]:-(detached)}"
-        printf '%-58s %-24s %10s %-8s %s\n' \
+        printf '%-58s %-24s %11s %-8s %s\n' \
             "${WT_PATH[$i]}" "$branch_disp" "${SIZE_MB[$i]}" "${CLASS[$i]}" "$(action_for_class "${CLASS[$i]}")"
         total_mb=$((total_mb + SIZE_MB[i]))
     done
     echo
-    awk -v mb="$total_mb" 'BEGIN { printf "Total target/ across all worktrees: %d MB (%.1f GB)\n", mb, mb / 1024 }'
+    awk -v mb="$total_mb" 'BEGIN { printf "Sum of target directory sizes: %d MiB (%.1f GiB, shared extents can be counted more than once)\n", mb, mb / 1024 }'
+}
+
+print_extents() {
+    local dir filesystem
+    local btrfs_targets=()
+
+    if ! command -v btrfs >/dev/null; then
+        echo "The --extents report requires the btrfs command." >&2
+        return 1
+    fi
+
+    echo
+    for dir in "${EXTENT_TARGETS[@]}"; do
+        filesystem="$(stat -f -c %T -- "$dir")"
+        if [ "$filesystem" = btrfs ]; then
+            btrfs_targets+=("$dir")
+        else
+            printf 'Excluded from Btrfs accounting (%s) %s\n' "$filesystem" "$dir"
+        fi
+    done
+
+    if [ "${#btrfs_targets[@]}" -eq 0 ]; then
+        echo "No Btrfs target directories found."
+        return 0
+    fi
+    echo "Btrfs extents by target directory. Set shared counts overlapping shared extents once within each directory."
+    btrfs filesystem du --summarize "${btrfs_targets[@]}"
 }
 
 if [ "$DO_CLEAN" -eq 0 ] && [ "$DO_REMOVE" -eq 0 ]; then
     print_report
+    if [ "$SHOW_EXTENTS" -eq 1 ]; then
+        print_extents
+    fi
     exit 0
 fi
 
@@ -316,14 +356,14 @@ fi
 echo "The following changes would be made:"
 plan_mb=0
 for i in "${to_clean_idx[@]}"; do
-    printf '  clean target/  %-58s (%s MB)\n' "${WT_PATH[$i]}" "${SIZE_MB[$i]}"
+    printf '  clean target/  %-58s (%s MiB of target data)\n' "${WT_PATH[$i]}" "${SIZE_MB[$i]}"
     plan_mb=$((plan_mb + SIZE_MB[i]))
 done
 for i in "${to_remove_idx[@]}"; do
-    printf '  remove worktree %-57s (%s MB)\n' "${WT_PATH[$i]}" "${SIZE_MB[$i]}"
+    printf '  remove worktree %-57s (%s MiB of target data)\n' "${WT_PATH[$i]}" "${SIZE_MB[$i]}"
     plan_mb=$((plan_mb + SIZE_MB[i]))
 done
-awk -v mb="$plan_mb" 'BEGIN { printf "Bytes at stake: %d MB (%.1f GB)\n", mb, mb / 1024 }'
+awk -v mb="$plan_mb" 'BEGIN { printf "Sum of selected target sizes: %d MiB (%.1f GiB, shared extents can be counted more than once)\n", mb, mb / 1024 }'
 echo
 
 confirm() {
