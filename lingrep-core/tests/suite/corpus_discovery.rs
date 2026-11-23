@@ -552,8 +552,16 @@ fn discovery_normalizes_source_names_and_rejects_nfc_collisions()
         .collect();
     assert_eq!(names, ["ガ/ガ.md"]);
 
-    fs::create_dir(directory.path().join("ガ"))?;
-    fs::write(directory.path().join("ガ").join("ガ.md"), "ガ")?;
+    let composed = directory.path().join("ガ");
+    match fs::create_dir(&composed) {
+        Ok(()) => {}
+        Err(error) if error.kind() == io::ErrorKind::AlreadyExists => {
+            assert_eq!(fs::read_to_string(composed.join("ガ.md"))?, "ガ");
+            return Ok(());
+        }
+        Err(error) => return Err(error.into()),
+    }
+    fs::write(composed.join("ガ.md"), "ガ")?;
     match documents(directory.path()) {
         Err(DiscoveryError::NfcNameCollision { first, second }) => {
             let mut names = [first, second];
