@@ -195,6 +195,9 @@ impl ResultIndexState {
     }
 
     fn finish(&mut self) -> Result<(), crate::result_index::ResultIndexError> {
+        if !matches!(self, Self::Recording(_)) {
+            return Ok(());
+        }
         if let Self::Recording(recorder) = std::mem::take(self) {
             let index = recorder.journal.finish()?;
             *self = Self::Finalized {

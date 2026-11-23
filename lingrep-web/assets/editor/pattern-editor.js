@@ -1032,13 +1032,18 @@ function patternDiagram(state, textarea) {
     const source = state.source();
     const offset = state.view?.state.selection.main.head ?? textarea.selectionStart ?? 0;
     const definition = definitionAtOffset(source, offset);
+    // A response to an earlier source must not replace the diagram.
+    controller?.abort();
     if (definition === null) {
       if (!body.firstChild) say("editor.diagram_none");
       return;
     }
     const key = JSON.stringify([source, definition, expand.checked]);
-    if (key === shown) return;
-    controller?.abort();
+    if (key === shown) {
+      panel.removeAttribute("data-stale");
+      say(null);
+      return;
+    }
     controller = new AbortController();
     try {
       const response = await fetch("api/pattern/diagram", {
@@ -1627,8 +1632,11 @@ function sampleSourceMarks(state, cm) {
 
 const PORTABLE_ATTRIBUTES = PATTERN_ATTRIBUTES.map(([key]) => key).filter((key) => !key.includes("."));
 
-export function localSyntaxMessage(errorText) {
-  const name = /^[\s&|!(]*([A-Za-z_][A-Za-z0-9_]*)\s*(?:!?[=~]|\s(?:not\s+)?in\b)/.exec(errorText)?.[1];
+// `preceding` is the last non-space character before the error. An error is a
+// token test only after `[` or a test operator, or when it begins with one.
+export function localSyntaxMessage(errorText, preceding = "[") {
+  const inTest = "[&|!(".includes(preceding || " ") || /^\s*[&|!(]/.test(errorText);
+  const name = inTest && /^[\s&|!(]*([A-Za-z_][A-Za-z0-9_]*)\s*(?:!?[=~]|\s(?:not\s+)?in\b)/.exec(errorText)?.[1];
   if (!name || PORTABLE_ATTRIBUTES.includes(name)) return { key: "editor.diag_syntax_local", args: null };
   return {
     key: name === "orth" || name === "form" ? "editor.diag_unknown_attribute_written" : "editor.diag_unknown_attribute",
@@ -1655,7 +1663,7 @@ function localSyntaxDiagnostics(state) {
           from: Math.min(start, docLength),
           to: Math.min(end, docLength),
           severity: "error",
-          message: cursor.nodeIsMissing ? t("editor.diag_missing", { node: node.type }) : (({ key, args }) => t(key, args))(localSyntaxMessage(node.text)),
+          message: cursor.nodeIsMissing ? t("editor.diag_missing", { node: node.type }) : (({ key, args }) => t(key, args))(localSyntaxMessage(node.text, state.view.state.doc.sliceString(Math.max(0, start - 64), start).trimEnd().slice(-1))),
           source: "pattern (local)",
         });
         continue; // do not descend into error subtrees
