@@ -168,10 +168,10 @@ impl SpawnTable {
                 });
             }
             for (label, next) in transitions.get(state).map_or(&[][..], Vec::as_slice) {
-                match label.kind() {
-                    TransitionKind::Consume => {}
-                    TransitionKind::Epsilon => work.push((*next, mask)),
-                    TransitionKind::Assert(assertion) => {
+                match label {
+                    TransitionLabel::Consume(_) => {}
+                    TransitionLabel::Epsilon => work.push((*next, mask)),
+                    TransitionLabel::Assert(assertion) => {
                         let assertion = predicates.intern_position_assertion(assertion);
                         let id = conditions
                             .iter()
@@ -201,7 +201,7 @@ impl SpawnTable {
                     .map_or(&[][..], Vec::as_slice)
                     .iter()
                     .enumerate()
-                    .filter(|(_, (label, _))| matches!(label.kind(), TransitionKind::Consume))
+                    .filter(|(_, (label, _))| matches!(label, TransitionLabel::Consume(_)))
                     .map(|(index, _)| index)
                     .collect();
                 (!consume_transitions.is_empty()).then_some(SpawnBuildEntry {
@@ -219,7 +219,7 @@ impl SpawnTable {
         for (entry_index, entry) in build_entries.iter().enumerate() {
             for &transition_index in &entry.consume_transitions {
                 let (label, _) = &transitions[entry.state][transition_index];
-                let predicate = predicates.intern(&label.attrs);
+                let predicate = predicates.intern(label.attrs());
                 let group_index = grouped_entries
                     .iter()
                     .position(|(known, _)| *known == predicate)

@@ -469,25 +469,24 @@ impl Matcher {
 
                 {
                     let transitions = dense.transitions(current_state.state);
-                    for (transition_index, (token_spec, next_state_id)) in
-                        transitions.iter().enumerate()
+                    for (transition_index, (label, next_state_id)) in transitions.iter().enumerate()
                     {
-                        if !matches!(token_spec.kind(), TransitionKind::Consume) {
+                        let TransitionLabel::Consume(attrs) = label else {
                             continue;
-                        }
+                        };
                         let matched = Self::spec_matches_at::<PREDICATE_SITE_DENSE_MAIN, _>(
                             dense,
                             predicates,
                             current_state.state,
                             transition_index,
-                            token_spec,
+                            attrs,
                             tokens,
                             index,
                         );
 
                         trace!(
                             "    Transition: {}→{} matched={} attrs={:?}",
-                            current_state.state, next_state_id, matched, token_spec.attrs
+                            current_state.state, next_state_id, matched, attrs
                         );
 
                         if !matched {
@@ -619,11 +618,11 @@ impl Matcher {
         predicates: &PredicateSession<'_>,
         state: usize,
         transition_index: usize,
-        spec: &TokenSpec,
+        attrs: &[SymbolicAttrValue],
         tokens: &S,
         position: usize,
     ) -> bool {
-        if spec.attrs.is_empty() {
+        if attrs.is_empty() {
             return true;
         }
         let predicate_id = dense.predicate_id[dense.transition_base[state] + transition_index];
@@ -710,13 +709,13 @@ impl Matcher {
             while cursor < closure.len() {
                 let state_info = closure[cursor];
                 cursor += 1;
-                for (transition_index, (token_spec, next_state)) in
+                for (transition_index, (label, next_state)) in
                     dense.transitions(state_info.state).iter().enumerate()
                 {
-                    let assertion_matches = match token_spec.kind() {
-                        TransitionKind::Epsilon => true,
-                        TransitionKind::Consume => false,
-                        TransitionKind::Assert(_) => tokens.is_some_and(|(_, position)| {
+                    let assertion_matches = match label {
+                        TransitionLabel::Epsilon => true,
+                        TransitionLabel::Consume(_) => false,
+                        TransitionLabel::Assert(_) => tokens.is_some_and(|(_, position)| {
                             assertion_holds(
                                 dense.assertion(state_info.state, transition_index),
                                 position,

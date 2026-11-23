@@ -2,7 +2,7 @@
 
 use super::predicate::{CompiledPositionAssertion, PredicateCatalog, PredicateId};
 use super::spawn::{SpawnDecline, SpawnTable};
-use crate::fsm::types::{FinalState, TransitionKind, TransitionLabel};
+use crate::fsm::types::{FinalState, TransitionLabel};
 use crate::token_match::AttributeKey;
 use compact_str::CompactString;
 use std::collections::{HashMap, HashSet};
@@ -83,13 +83,13 @@ impl DenseMachine {
         let mut predicate_id = Vec::with_capacity(total_transitions);
         let mut compiled_assertion = Vec::with_capacity(total_transitions);
         for outgoing in &state_transitions {
-            for (spec, _) in outgoing {
-                predicate_id.push(predicates.intern(&spec.attrs));
-                compiled_assertion.push(match spec.kind() {
-                    TransitionKind::Assert(assertion) => {
+            for (label, _) in outgoing {
+                predicate_id.push(predicates.intern(label.attrs()));
+                compiled_assertion.push(match label {
+                    TransitionLabel::Assert(assertion) => {
                         Some(predicates.intern_position_assertion(assertion))
                     }
-                    _ => None,
+                    TransitionLabel::Epsilon | TransitionLabel::Consume(_) => None,
                 });
             }
         }
@@ -127,7 +127,7 @@ impl DenseMachine {
     pub(crate) fn required_attributes(&self) -> impl Iterator<Item = AttributeKey> + '_ {
         self.transitions
             .iter()
-            .flat_map(|(spec, _)| spec.attrs.iter().map(|attribute| attribute.attr.clone()))
+            .flat_map(|(label, _)| label.attrs().iter().map(|attribute| attribute.attr.clone()))
     }
 
     #[inline(always)]

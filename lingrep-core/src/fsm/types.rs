@@ -462,13 +462,6 @@ pub(crate) struct TokenSpec {
     pub attrs: Vec<SymbolicAttrValue>,
 }
 
-impl TokenSpec {
-    /// Creates an epsilon transition (empty transition that doesn't consume input)
-    pub fn epsilon() -> Self {
-        TokenSpec { attrs: Vec::new() }
-    }
-}
-
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub(crate) struct AssertionOccurrenceId(u32);
 
@@ -510,65 +503,48 @@ pub(crate) enum PositionAssertion {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
-pub(crate) enum TransitionKind {
+pub(crate) enum TransitionLabel {
     Epsilon,
-    Consume,
+    Consume(Box<[SymbolicAttrValue]>),
     Assert(PositionAssertion),
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, Hash)]
-pub(crate) struct TransitionLabel {
-    kind: TransitionKind,
-    spec: TokenSpec,
 }
 
 impl TransitionLabel {
     pub fn epsilon() -> Self {
-        Self {
-            kind: TransitionKind::Epsilon,
-            spec: TokenSpec::epsilon(),
-        }
+        Self::Epsilon
     }
 
     pub fn consume(spec: TokenSpec) -> Self {
-        Self {
-            kind: TransitionKind::Consume,
-            spec,
-        }
+        Self::Consume(spec.attrs.into_boxed_slice())
     }
 
     pub fn assertion(assertion: PositionAssertion) -> Self {
-        let attrs = match &assertion {
-            PositionAssertion::PreviousToken(attrs) => attrs.to_vec(),
-            PositionAssertion::SentenceStart
-            | PositionAssertion::SentenceEnd
-            | PositionAssertion::Lookaround(_) => Vec::new(),
-        };
-        Self {
-            kind: TransitionKind::Assert(assertion),
-            spec: TokenSpec { attrs },
+        Self::Assert(assertion)
+    }
+
+    /// Attributes referenced by this transition (consuming token test or
+    /// previous-token assertion; empty for epsilon and other assertions).
+    #[inline]
+    pub fn attrs(&self) -> &[SymbolicAttrValue] {
+        match self {
+            Self::Consume(attrs) => attrs,
+            Self::Assert(PositionAssertion::PreviousToken(attrs)) => attrs,
+            Self::Epsilon
+            | Self::Assert(
+                PositionAssertion::SentenceStart
+                | PositionAssertion::SentenceEnd
+                | PositionAssertion::Lookaround(_),
+            ) => &[],
         }
-    }
-
-    pub fn kind(&self) -> &TransitionKind {
-        &self.kind
-    }
-}
-
-impl std::ops::Deref for TransitionLabel {
-    type Target = TokenSpec;
-
-    fn deref(&self) -> &Self::Target {
-        &self.spec
     }
 }
 
 impl fmt::Display for TransitionLabel {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match &self.kind {
-            TransitionKind::Epsilon => formatter.write_str("ε"),
-            TransitionKind::Consume => self.spec.fmt(formatter),
-            TransitionKind::Assert(assertion) => write!(formatter, "assert({assertion:?})"),
+        match self {
+            Self::Epsilon => formatter.write_str("ε"),
+            Self::Consume(attrs) => write!(formatter, "Token({attrs:?})"),
+            Self::Assert(assertion) => write!(formatter, "assert({assertion:?})"),
         }
     }
 }
@@ -686,5 +662,14 @@ mod tests {
         assert_eq!(earlier.cmp(&later), Ordering::Less);
         assert_eq!(later.cmp(&earlier), Ordering::Greater);
         assert_eq!(earlier.partial_cmp(&later), Some(Ordering::Less));
+    }
+
+    #[test]
+    fn transition_label_stays_compact_for_dense_machine_cache_density() {
+        assert!(
+            std::mem::size_of::<TransitionLabel>() <= 24,
+            "TransitionLabel grew to {} bytes",
+            std::mem::size_of::<TransitionLabel>()
+        );
     }
 }
