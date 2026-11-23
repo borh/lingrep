@@ -2747,10 +2747,12 @@ holds anything but the header and section files that its format defines is
 A leftover is a staging directory or lock file from a build that did not
 publish; an entry with such a name that is not a directory or a regular file
 respectively, such as a FIFO or a symbolic link, is not reported or opened. It
-is `live` while a process holds its lock, `abandoned` when its lock records this
-host and is free, and `unknown` otherwise (when the lock file is missing or
-records another host). The next build of the same name on the same host removes
-abandoned leftovers; see the
+is `live` while a process holds its lock. It is `abandoned` when its lock
+records this host and is free, or when it has no lock file and the process ID in
+its name is not running on this host. It is `unknown` otherwise: the lock
+records another host, or the lock file is missing and that process ID is in use.
+The next build of the same name on the same host removes abandoned leftovers;
+see the
 [deployment guide](deployment-guide.md#interrupted-corpus-builds) for the
 others.
 

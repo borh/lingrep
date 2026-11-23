@@ -205,8 +205,9 @@ impl Drop for StagingLock {
     }
 }
 
-/// Removes staging directories for `name` only when their lock files record
-/// this host and can be locked exclusively.
+/// Removes the staging directories for `name` whose build has stopped: the
+/// lock file records this host and can be locked exclusively, or there is no
+/// lock file and [`unlocked_owner_is_gone`].
 pub(crate) fn reclaim_orphaned_staging(parent: &Path, name: &str) {
     let Some(host) = host_name() else {
         return;
@@ -220,25 +221,64 @@ pub(crate) fn reclaim_orphaned_staging(parent: &Path, name: &str) {
         return;
     };
     let lock_prefix = format!(".{name}.stagelock-");
+    let staging_prefix = format!(".{name}.staging-");
     for entry in entries.flatten() {
-        let lock_name = entry.file_name();
-        let Some(suffix) = lock_name
-            .to_str()
-            .and_then(|lock_name| lock_name.strip_prefix(&lock_prefix))
-        else {
+        let entry_name = entry.file_name();
+        let Some(entry_name) = entry_name.to_str() else {
             continue;
         };
-        let (staging, lock_path) = staging_paths(parent, name, suffix);
-        let Some(_lock) = lock_if_abandoned(&lock_path, &host) else {
-            continue;
-        };
-        match fs::remove_dir_all(&staging) {
-            Err(error) if error.kind() != io::ErrorKind::NotFound => {}
-            _ => {
-                let _ = fs::remove_file(&lock_path);
+        if let Some(suffix) = entry_name.strip_prefix(&lock_prefix) {
+            let (staging, lock_path) = staging_paths(parent, name, suffix);
+            let Some(_lock) = lock_if_abandoned(&lock_path, &host) else {
+                continue;
+            };
+            match fs::remove_dir_all(&staging) {
+                Err(error) if error.kind() != io::ErrorKind::NotFound => {}
+                _ => {
+                    let _ = fs::remove_file(&lock_path);
+                }
+            }
+        } else if let Some(suffix) = entry_name.strip_prefix(&staging_prefix) {
+            let (staging, lock_path) = staging_paths(parent, name, suffix);
+            if !unlocked_owner_is_gone(suffix) {
+                continue;
+            }
+            // Holding the lock name keeps a build on another host from
+            // allocating this staging name while it is removed.
+            let Ok(Some(_lock)) = StagingLock::acquire(lock_path) else {
+                continue;
+            };
+            if fs::symlink_metadata(&staging).is_ok_and(|entry| entry.is_dir()) {
+                let _ = fs::remove_dir_all(&staging);
             }
         }
     }
+}
+
+/// Whether the process that a staging name without a lock file records is not
+/// running on this host.
+///
+/// A build holds its lock file for as long as its staging directory exists, so
+/// a directory without one belongs to no running build of this format. The
+/// process check covers a build by a release before 0.8.0, which wrote no lock
+/// file, on this host.
+#[cfg(unix)]
+fn unlocked_owner_is_gone(suffix: &str) -> bool {
+    let Some(pid) = suffix
+        .split_once('-')
+        .and_then(|(pid, _)| pid.parse::<libc::pid_t>().ok())
+        .filter(|pid| *pid > 0)
+    else {
+        return false;
+    };
+    // SAFETY: signal 0 delivers nothing; the call only reports whether `pid` exists.
+    let missing = unsafe { libc::kill(pid, 0) } == -1;
+    missing && io::Error::last_os_error().raw_os_error() == Some(libc::ESRCH)
+}
+
+#[cfg(not(unix))]
+fn unlocked_owner_is_gone(_suffix: &str) -> bool {
+    false
 }
 
 /// Opens and exclusively locks the lock file at `lock_path` when it records
@@ -264,11 +304,13 @@ fn lock_if_abandoned(lock_path: &Path, host: &[u8]) -> Option<File> {
 pub enum StagingStatus {
     /// A process holds the lock file's exclusive lock.
     Live,
-    /// The lock file records this host and its lock is free, so the build
-    /// that created it has stopped. The next build of the same name on this
-    /// host removes it.
+    /// The build that created it has stopped: the lock file records this
+    /// host and its lock is free, or there is no lock file and the process the
+    /// staging name records is not running on this host. The next build of
+    /// the same name on this host removes it.
     Abandoned,
-    /// Neither: the lock file is missing, or records another or no host name.
+    /// Neither: the lock file records another or no host name, or it is
+    /// missing and the recorded process is running or cannot be probed.
     Unknown,
 }
 
@@ -327,7 +369,11 @@ pub fn staging_leftovers(dir: &Path) -> io::Result<Vec<StagingLeftover>> {
         .map(|((published_name, suffix), (has_staging, has_lock))| {
             let (staging, lock) = staging_paths(dir, &published_name, &suffix);
             let status = if !has_lock {
-                StagingStatus::Unknown
+                if has_staging && host.is_some() && unlocked_owner_is_gone(&suffix) {
+                    StagingStatus::Abandoned
+                } else {
+                    StagingStatus::Unknown
+                }
             } else if crate::artifact::open_regular(File::options().read(true), &lock)
                 .is_ok_and(|file| file.try_lock_shared().is_err())
             {
@@ -1035,6 +1081,22 @@ mod tests {
         (staging, lock)
     }
 
+    /// A staging directory without a lock file, named for a process that has
+    /// exited.
+    fn unlocked_leftover_of_an_exited_process(parent: &Path) -> PathBuf {
+        let mut child = std::process::Command::new(std::env::current_exe().unwrap())
+            .arg("--list")
+            .stdout(std::process::Stdio::null())
+            .spawn()
+            .unwrap();
+        let pid = child.id();
+        child.wait().unwrap();
+        let (staging, _) = staging_paths(parent, "science.lingcorpus", &format!("{pid}-0"));
+        std::fs::create_dir(&staging).unwrap();
+        std::fs::write(staging.join("tokens.v1.zst"), b"partial").unwrap();
+        staging
+    }
+
     #[tokio::test]
     async fn a_build_reclaims_only_the_staging_of_a_dead_builder_on_this_host() {
         let directory = tempfile::tempdir().unwrap();
@@ -1045,14 +1107,24 @@ mod tests {
             killed_builder_leftovers(directory.path(), "1-1", b"another-host.invalid");
         let (other_artifact, _) = staging_paths(directory.path(), "history.lingcorpus", "1-0");
         std::fs::create_dir(&other_artifact).unwrap();
+        // Process 1 is running, so its unlocked staging may belong to a build.
         let unlocked = directory.path().join(".science.lingcorpus.staging-1-2");
         std::fs::create_dir(&unlocked).unwrap();
+        let unlocked_dead = unlocked_leftover_of_an_exited_process(directory.path());
         let mut live = complete_staging(&destination);
         let live_staging = live.path().to_path_buf();
 
         drop(complete_staging(&destination));
 
         assert!(!dead.exists() && !dead_lock.exists());
+        assert!(!unlocked_dead.exists());
+        assert!(
+            super::staging_leftovers(directory.path())
+                .unwrap()
+                .iter()
+                .all(|leftover| leftover.staging.is_some()),
+            "reclaiming an unlocked staging directory leaves no lock file"
+        );
         assert!(other_host.exists() && other_host_lock.exists());
         assert!(other_artifact.exists());
         assert!(unlocked.exists());
@@ -1078,6 +1150,7 @@ mod tests {
             killed_builder_leftovers(directory.path(), "1-1", b"another-host.invalid");
         let unlocked = directory.path().join(".science.lingcorpus.staging-1-2");
         std::fs::create_dir(&unlocked).unwrap();
+        let unlocked_dead = unlocked_leftover_of_an_exited_process(directory.path());
 
         let leftovers = super::staging_leftovers(directory.path()).unwrap();
         let status = |staging: &Path| {
@@ -1086,7 +1159,7 @@ mod tests {
                 .find(|leftover| leftover.staging.as_deref() == Some(staging))
                 .map(|leftover| leftover.status)
         };
-        assert_eq!(leftovers.len(), 4, "{leftovers:?}");
+        assert_eq!(leftovers.len(), 5, "{leftovers:?}");
         assert!(
             leftovers
                 .iter()
@@ -1095,8 +1168,13 @@ mod tests {
         assert_eq!(status(&dead), Some(super::StagingStatus::Abandoned));
         assert_eq!(status(&other_host), Some(super::StagingStatus::Unknown));
         assert_eq!(status(&unlocked), Some(super::StagingStatus::Unknown));
+        assert_eq!(
+            status(&unlocked_dead),
+            Some(super::StagingStatus::Abandoned)
+        );
         assert_eq!(status(live.path()), Some(super::StagingStatus::Live));
         assert!(dead.exists() && dead_lock.exists() && other_host.exists());
+        assert!(unlocked_dead.exists());
     }
 
     #[tokio::test]
