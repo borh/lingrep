@@ -381,6 +381,9 @@ pub struct HitDetailFragment<'a> {
     pub provenance: Option<crate::provenance_view::HitProvenance>,
     /// The hit as `sentence.start.end`, its address in the reader's URL.
     pub read: String,
+    /// The Sample debugger opened on the hit's sentence with this revision's
+    /// pattern, relative to the page.
+    pub debug_href: String,
 }
 
 pub fn format_count(value: u64) -> String {

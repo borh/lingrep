@@ -94,6 +94,11 @@ async fn hit_detail(
         Ok(mut overlaps) => overlaps.pop().unwrap_or_default(),
         Err(response) => return response,
     };
+    let corpus = store
+        .corpora
+        .iter()
+        .find(|(_, slot)| std::sync::Arc::ptr_eq(&slot.runtime, &runtime))
+        .map(|(name, _)| name.as_str());
     render_hit_detail(
         &workbench_id,
         revision,
@@ -107,6 +112,20 @@ async fn hit_detail(
             "{}.{}.{}",
             reference.sentence_index, reference.span.start, reference.span.end
         ),
+        debug_href(corpus, &workbench_id, revision, reference.sentence_index),
+    )
+}
+
+/// The `/sample` address for `sentence` of `corpus`, seeded with the pattern
+/// of `revision`. Without `corpus` the page reads the default corpus.
+fn debug_href(corpus: Option<&str>, workbench_id: &str, revision: u64, sentence: u64) -> String {
+    let (sentence, revision) = (sentence.to_string(), revision.to_string());
+    let mut query = vec![("sentence", sentence.as_str())];
+    query.extend(corpus.map(|corpus| ("corpus", corpus)));
+    query.extend([("workbench", workbench_id), ("revision", &revision)]);
+    format!(
+        "sample?{}",
+        serde_urlencoded::to_string(query).unwrap_or_default()
     )
 }
 
@@ -120,6 +139,7 @@ fn render_hit_detail(
     provenance: Option<HitProvenance>,
     overlaps: Vec<crate::inspection::OverlapCandidate>,
     read: String,
+    debug_href: String,
 ) -> Response {
     let captures = inspection
         .captures
@@ -177,6 +197,7 @@ fn render_hit_detail(
             .collect(),
         provenance,
         read,
+        debug_href,
     };
     super::render_or_500(fragment)
 }
@@ -445,5 +466,22 @@ fn retained_hit_text(
         right,
         section_labels,
         in_chain,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::debug_href;
+
+    #[test]
+    fn the_debug_link_percent_encodes_its_values() {
+        assert_eq!(
+            debug_href(Some("default"), "a&b=\"c\" 文#", 3, 7),
+            "sample?sentence=7&corpus=default&workbench=a%26b%3D%22c%22+%E6%96%87%23&revision=3"
+        );
+        assert_eq!(
+            debug_href(None, "w", 1, 0),
+            "sample?sentence=0&workbench=w&revision=1"
+        );
     }
 }

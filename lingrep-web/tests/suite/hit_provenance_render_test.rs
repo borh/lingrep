@@ -34,6 +34,7 @@ fn fragment(provenance: Option<HitProvenance>) -> String {
         graph_bindings: Vec::new(),
         provenance,
         read: "0.0.1".into(),
+        debug_href: "sample?sentence=0".into(),
     }
     .render()
     .unwrap()

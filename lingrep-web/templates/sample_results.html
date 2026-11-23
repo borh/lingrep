@@ -7,7 +7,7 @@
   {% if unavailable.len() > 0 %}
   <ul class="sample-run-warnings" data-sample-unavailable>
   {% for item in unavailable %}
-    <li class="sample-run-warning"><span data-i18n="sample.attribute_unavailable">The sample tokenizer does not supply</span> <code>{{ item.attribute }}</code>{% if item.definitions.len() > 0 %} <span data-i18n="sample.attribute_referenced_by">(referenced by</span> {% for definition in item.definitions %}<code>{{ definition }}</code>{% if !loop.last %}, {% endif %}{% endfor %}){% endif %}<span data-i18n="sample.attribute_unavailable_note">. Comparisons on this attribute fail on every token. The complement <code>!(…)</code> of a failed comparison succeeds.</span></li>
+    <li class="sample-run-warning"><span data-i18n="sample.attribute_unavailable">The sample tokenizer does not supply</span> <code>{{ item.attribute }}</code>{% if item.definitions.len() > 0 %} <span data-i18n="sample.attribute_referenced_by">(referenced by</span> {% for definition in item.definitions %}<code>{{ definition }}</code>{% if !loop.last %}, {% endif %}{% endfor %}){% endif %}<span data-i18n="sample.attribute_unavailable_note">. Comparisons on this attribute fail on every token. The complement !(…) of a failed comparison succeeds.</span></li>
   {% endfor %}
   </ul>
   {% endif %}
@@ -32,6 +32,9 @@
     {% else %}
     <p class="sample-claims-summary" data-i18n="sample.claims_hold" data-i18n-args='{"checked": {{ report.checked }}}'>Example and counterexample checks passed ({{ report.checked }}).</p>
     {% endif %}
+    {% if report.unchecked > 0 %}
+    <p class="sample-run-warning" data-sample-claims-unchecked data-i18n="sample.claims_unchecked" data-i18n-args='{"unchecked": {{ report.unchecked }}, "limit": {{ report.checked }}}'>Examples and counterexamples not checked ({{ report.unchecked }}). The sample debugger checks the first {{ report.checked }} entries of a catalog.</p>
+    {% endif %}
     {% if report.vacuous.len() > 0 %}
     <div class="sample-claims-vacuous" data-sample-claims-vacuous>
       <p data-i18n="sample.claims_vacuous" data-i18n-args='{"count": {{ report.vacuous.len() }}}'>Counterexamples that do not test a constraint ({{ report.vacuous.len() }}). The definition does not match them with any one attribute test, token element or lookaround removed.</p>
@@ -41,6 +44,9 @@
       {% endfor %}
       </ul>
     </div>
+    {% endif %}
+    {% if report.unrelaxed > 0 %}
+    <p class="sample-run-warning" data-sample-claims-unrelaxed data-i18n="sample.claims_unrelaxed" data-i18n-args='{"count": {{ report.unrelaxed }}}'>Counterexamples not examined for the constraint they test ({{ report.unrelaxed }}). The sample debugger ran out of time for this catalog.</p>
     {% endif %}
     <p class="sample-claims-note" data-i18n="sample.claims_note">These checks compare the catalog's expectations with match results from the sample tokenizer.</p>
   </section>

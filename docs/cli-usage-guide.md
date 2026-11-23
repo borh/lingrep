@@ -115,7 +115,11 @@ use the server's Vibrato dictionary to tokenize each example and counterexample
 independently of the sample text. They check these claims when the catalog binds
 to the sample token schema and all referenced attributes are available. Otherwise,
 the debugger reports the schema error or lists the missing attributes. Select a
-failed claim's text to add it to the sample for inspection.
+failed claim's text to add it to the sample for inspection. One run checks the
+first 256 claims of a catalog in catalog order and reports the number it did
+not check. It stops testing counterexamples for vacuity after two seconds and
+reports the number it did not test. `ling check --verify-examples` has neither
+limit.
 
 Each `expected_match` failure carries an `explanation` of why the definition
 published no match for that example. Its `outcome` is one of:
@@ -145,7 +149,10 @@ No action is offered when the list already holds the sentence or when the
 definition inherits the list from `defaults` or a bundle.
 
 A hit's detail in the Workbench links to the Sample debugger with that corpus
-sentence and the Workbench's pattern. The sentence is then explained with the
+sentence and the pattern of the search that found the hit. The link's address
+names the sentence, the corpus and the search, so it also opens in a new tab;
+once the Workbench shows a later search, the address opens the sentence with
+the server's default pattern. The sentence is then explained with the
 tokens stored in the corpus artifact, under the corpus's token schema, and the
 results name the corpus's analyzer; the catalog's claims are not checked in
 that state, and enhanced dependency relations are not evaluated. Editing the

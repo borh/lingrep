@@ -143,7 +143,7 @@ fn new_entry(workbench: &WorkbenchId, slot: &CorpusSlot, touch: u64) -> Entry {
 }
 
 /// Document reads that may run at once, each bounded by the reading limits.
-const READING_CONCURRENCY: usize = 2;
+pub(crate) const READING_CONCURRENCY: usize = 2;
 /// Pattern compilation / inspection tasks that may run at once.
 const COMPILE_CONCURRENCY: usize = 2;
 

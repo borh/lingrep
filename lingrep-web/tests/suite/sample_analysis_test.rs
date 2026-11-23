@@ -288,6 +288,13 @@ fn characters(text: &str) -> Vec<TokenInfo> {
 }
 
 fn run_of(source: &str) -> lingrep_web::sample::SampleRun {
+    run_within(source, lingrep_web::sample::ClaimBudget::REQUEST)
+}
+
+fn run_within(
+    source: &str,
+    budget: lingrep_web::sample::ClaimBudget,
+) -> lingrep_web::sample::SampleRun {
     let output =
         lingrep_web::patterns::compile_web_pattern(source).expect("the test catalog compiles");
     lingrep_web::sample::sample_run(
@@ -296,7 +303,76 @@ fn run_of(source: &str) -> lingrep_web::sample::SampleRun {
         &lingrep_core::token_match::TokenSchema::unidic_morphology(),
         "test".into(),
         &characters,
+        budget,
     )
+}
+
+#[test]
+fn claims_beyond_the_request_budget_are_counted_and_not_checked() {
+    use lingrep_web::sample::{ClaimBudget, ClaimFailureKind, SampleClaims};
+    assert_eq!(ClaimBudget::REQUEST.claims, 256);
+    // The first counterexample fails and the last one would: the last is past
+    // the budget, so only the first is reported.
+    let filler = "\"丁\", ".repeat(ClaimBudget::REQUEST.claims - 2);
+    let source = format!(
+        "examples: [\"甲\"] counterexamples: [\"甲\", {filler}\"丙\", \"丁\", \"甲\"] \
+         pattern a := 甲."
+    );
+    let SampleClaims::Checked(report) = run_of(&source).claims else {
+        panic!("the claims are checked");
+    };
+    assert_eq!(
+        (report.checked, report.unchecked),
+        (ClaimBudget::REQUEST.claims, 3)
+    );
+    assert_eq!(
+        report
+            .failures
+            .iter()
+            .map(|failure| (failure.example.as_str(), failure.kind))
+            .collect::<Vec<_>>(),
+        vec![("甲", ClaimFailureKind::UnexpectedMatch)]
+    );
+    assert_eq!(report.unrelaxed, 0);
+}
+
+#[test]
+fn every_tracked_catalog_is_within_the_request_claim_budget() {
+    use lingrep_core::fsm::{CompileLimits, PatternSource, compile_catalog, declared_claims};
+    let mut largest = 0;
+    for (name, text) in lingrep_core::testing::catalogs::tracked_catalog_sources() {
+        let output = compile_catalog(PatternSource::named(&name, &text), CompileLimits::default())
+            .unwrap_or_else(|error| panic!("{name} must compile: {error}"));
+        let claims = declared_claims(&output.matcher).count();
+        assert!(
+            claims <= lingrep_web::sample::ClaimBudget::REQUEST.claims,
+            "{name} declares {claims} claims"
+        );
+        largest = largest.max(claims);
+    }
+    assert_ne!(largest, 0, "the tracked catalogs declare claims");
+}
+
+#[test]
+fn counterexamples_are_not_relaxed_once_the_relaxation_time_is_spent() {
+    use lingrep_web::sample::{ClaimBudget, SampleClaims};
+    let run = run_within(
+        "counterexamples: [\"甲丁\", \"丁丁丁\", \"甲乙\"] pattern a := 甲 乙.",
+        ClaimBudget {
+            relaxation: std::time::Duration::ZERO,
+            ..ClaimBudget::REQUEST
+        },
+    );
+    let SampleClaims::Checked(report) = run.claims else {
+        panic!("the claims are checked");
+    };
+    assert_eq!(report.checked, 3);
+    assert_eq!(report.failures.len(), 1, "`甲乙` matches");
+    assert_eq!(report.vacuous, Vec::new());
+    assert_eq!(
+        report.unrelaxed, 2,
+        "a failed counterexample is not relaxed"
+    );
 }
 
 #[test]
@@ -360,6 +436,8 @@ fn claims_are_checked_against_the_definition_and_against_what_policy_publishes()
                 ),
             ],
             vacuous: Vec::new(),
+            unchecked: 0,
+            unrelaxed: 0,
         })
     );
     assert_eq!(run_of("pattern a := 甲.").claims, SampleClaims::Undeclared);

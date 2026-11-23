@@ -286,6 +286,13 @@ fn a_run_names_its_tokenizer_its_missing_attributes_and_each_failed_claim() {
     assert!(html.contains("<code>conllu pretokenized</code>"));
     assert!(html.contains("data-sample-unavailable"));
     assert!(html.contains("<code>dep.rel</code>"));
+    // `i18n.js` replaces a translated element's text, so the element holds
+    // text only.
+    assert!(html.contains(
+        "<span data-i18n=\"sample.attribute_unavailable_note\">. Comparisons on this \
+         attribute fail on every token. The complement !(…) of a failed comparison \
+         succeeds.</span>"
+    ));
     assert!(html.contains(r#"data-sample-claims="unverifiable""#));
 
     let html = render(
@@ -318,6 +325,8 @@ fn a_run_names_its_tokenizer_its_missing_attributes_and_each_failed_claim() {
                 }))),
             }],
             vacuous: Vec::new(),
+            unchecked: 0,
+            unrelaxed: 0,
         }),
     );
     assert!(!html.contains("data-sample-unavailable"));
@@ -362,6 +371,8 @@ fn a_run_names_its_tokenizer_its_missing_attributes_and_each_failed_claim() {
                 why_not: None,
             }],
             vacuous: Vec::new(),
+            unchecked: 0,
+            unrelaxed: 0,
         }),
     );
     assert!(html.contains("Examples and counterexamples checked (0)."));
@@ -377,11 +388,38 @@ fn a_run_names_its_tokenizer_its_missing_attributes_and_each_failed_claim() {
                 example: "<丁>".into(),
                 tried: 4,
             }],
+            unchecked: 0,
+            unrelaxed: 0,
         }),
     );
+    assert!(!html.contains("data-sample-claims-unchecked"));
+    assert!(!html.contains("data-sample-claims-unrelaxed"));
     assert!(html.contains("data-sample-refused"));
     assert!(html.contains(r#"data-sample-claims="hold""#));
     assert!(html.contains("data-sample-claims-vacuous"));
     assert!(html.contains(r#"<code>v</code> <span lang="ja">&#60;丁&#62;</span>"#));
     assert!(html.contains("(4 relaxations tried)"));
+
+    let html = render(
+        SampleBinding::Bound {
+            unavailable: Vec::new(),
+        },
+        SampleClaims::Checked(ClaimsReport {
+            checked: 256,
+            failures: Vec::new(),
+            vacuous: Vec::new(),
+            unchecked: 44,
+            unrelaxed: 7,
+        }),
+    );
+    assert!(html.contains(
+        "data-sample-claims-unchecked data-i18n=\"sample.claims_unchecked\" \
+         data-i18n-args='{\"unchecked\": 44, \"limit\": 256}'>\
+         Examples and counterexamples not checked (44). \
+         The sample debugger checks the first 256 entries of a catalog.</p>"
+    ));
+    assert!(html.contains(
+        "data-sample-claims-unrelaxed data-i18n=\"sample.claims_unrelaxed\" \
+         data-i18n-args='{\"count\": 7}'>"
+    ));
 }

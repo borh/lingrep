@@ -589,6 +589,7 @@ async fn reader_fixture() -> (reading_support::ArtifactFixture, FixtureServer) {
         graph_bindings: Vec::new(),
         provenance: None,
         read: "0.0.1".into(),
+        debug_href: "sample?sentence=0".into(),
     }
     .render()
     .unwrap();
@@ -4175,6 +4176,7 @@ fn provenance_fixture_html() -> String {
                 sections: Box::new([]),
             }),
             read: "0.0.1".into(),
+            debug_href: "sample?sentence=0".into(),
         }.render().unwrap());
     }
     html.push_str("</body></html>");

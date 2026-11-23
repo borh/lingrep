@@ -24,6 +24,11 @@ mod support;
 
 const SEED: &str = "seed := [upos=NOUN].\n";
 
+const HANDED: &str = "handed := [text=x].";
+
+/// A Sample draft edited from some other seed, as `pattern-editor.js` stores it.
+const SAVED_DRAFT: &str = r#"{"seed":"0:0","draft":"saved := [].\n"}"#;
+
 const GATEWAY_PAGE: &str =
     "<html><head><title>503</title></head><body><h1>Service Unavailable</h1></body></html>";
 
@@ -635,28 +640,70 @@ async fn a_hit_opens_in_the_sample_debugger_with_stored_tokens_until_the_text_is
         return Ok(());
     };
     let served = serve().await;
-    let index = format!("{}workbench", served.base.trim_end_matches("sample"));
+    let query = lingrep_web::permalink::encode_query_only(HANDED, "default", None, None).unwrap();
+    let index = format!("{}workbench{query}", served.base.trim_end_matches("sample"));
     let result: WebDriverResult<()> = async {
-        driver.goto(&index).await?;
-        wait_for(
-            &driver,
-            "return !!document.querySelector('.pattern-editor .cm-content')",
-            "the editor on Corpus Search",
-        )
-        .await?;
-        // The link a hit's detail renders, clicked with the Workbench's pattern.
+        driver.goto(&served.base).await?;
         driver
             .execute(
-                "const pattern = document.querySelector('#corpus-pattern'); \
-                 pattern.value = 'handed := [text=x].\\n'; \
-                 const link = document.createElement('a'); \
-                 link.dataset.debugSentence = '0.0.1'; \
-                 link.href = 'sample'; \
-                 document.body.append(link); \
-                 link.click();",
-                vec![],
+                "localStorage.setItem('pattern-draft:sample-pattern', arguments[0])",
+                vec![json!(SAVED_DRAFT)],
             )
             .await?;
+        driver.goto(&index).await?;
+        let row = driver
+            .query(By::Css(".kwic-row"))
+            .wait(
+                std::time::Duration::from_secs(10),
+                std::time::Duration::from_millis(50),
+            )
+            .and_clickable()
+            .first()
+            .await?;
+        crate::frequency_e2e_test::two_frames(&driver).await?;
+        row.click().await?;
+        let link = driver
+            .query(By::Css("a[data-debug-sentence]"))
+            .wait(
+                std::time::Duration::from_secs(10),
+                std::time::Duration::from_millis(50),
+            )
+            .and_clickable()
+            .first()
+            .await?;
+        let workbench = driver.window().await?;
+        // A modified click opens the link's own address in a new tab; no
+        // script on the Workbench completes it.
+        driver
+            .action_chain()
+            .key_down(crate::MOD)
+            .click_element(&link)
+            .key_up(crate::MOD)
+            .perform()
+            .await?;
+        let mut opened = None;
+        for _ in 0..200 {
+            opened = driver
+                .windows()
+                .await?
+                .into_iter()
+                .find(|window| *window != workbench);
+            if opened.is_some() {
+                break;
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(25)).await;
+        }
+        let opened = opened.expect("the debug link opens a new tab");
+        observed(
+            &driver,
+            "return [location.pathname.endsWith('/workbench'), \
+               localStorage.getItem('pattern-draft:sample-pattern'), \
+               Object.keys(sessionStorage).filter((key) => key.includes('handoff'))]",
+            json!([true, SAVED_DRAFT, []]),
+            "the Workbench tab and the saved Sample draft after the link opens elsewhere",
+        )
+        .await?;
+        driver.switch_to_window(opened).await?;
         wait_for(
             &driver,
             "return location.pathname.endsWith('/sample') \
@@ -667,7 +714,7 @@ async fn a_hit_opens_in_the_sample_debugger_with_stored_tokens_until_the_text_is
         .await?;
         wait_for(
             &driver,
-            "return document.querySelector('#sample-pattern').value === 'handed := [text=x].\\n' \
+            "return document.querySelector('#sample-pattern').value === 'handed := [text=x].' \
                && document.querySelectorAll('.sample-match').length === 1 \
                && document.querySelector('#sample-text').value === 'x'",
             "the Workbench pattern matching the stored sentence",

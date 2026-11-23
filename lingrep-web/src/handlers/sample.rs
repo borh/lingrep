@@ -1,10 +1,11 @@
 //! The sample-text debugger: the `GET /sample` page and the `POST /api/sample`
 //! endpoint that page (and nothing else) drives.
 //!
-//! The page holds no workbench and takes no revision, and it does not re-post
-//! the corpus search's live pattern. It reads a corpus only to load the stored
-//! sentence a `sentence` reference names; without one it renders while every
-//! declared corpus is still building.
+//! The page holds no workbench and does not re-post the corpus search's live
+//! pattern. A hit's debug link names a workbench revision, which the page
+//! reads once for the pattern to open with. It reads a corpus only to load the
+//! stored sentence a `sentence` reference names; without one it renders while
+//! every declared corpus is still building.
 //!
 //! Admission runs in strict order so the cheapest checks reject first: size
 //! caps (413) need no dictionary or worker slot; the semaphore (429) needs no
@@ -113,6 +114,9 @@ pub fn page_routes() -> Router<RequestStore> {
 struct SampleQuery {
     corpus: Option<String>,
     sentence: Option<u64>,
+    /// With `revision`, the Workbench run whose pattern seeds the page.
+    workbench: Option<String>,
+    revision: Option<u64>,
 }
 
 /// The corpus sentence the page opens with.
@@ -132,9 +136,11 @@ struct SamplePage {
     catalog_keys: Vec<String>,
 }
 
-/// Seeded from the same `--patterns` default the index seeds from, so landing
-/// here first still starts from the server's catalog. The two pages then
-/// diverge: each pattern box persists its own draft under its own id.
+/// Seeded from the pattern of the Workbench run a hit's debug link names while
+/// that run is displayed, and otherwise from the same `--patterns` default the
+/// index seeds from, so landing here first still starts from the server's
+/// catalog. The two pages then diverge: each pattern box persists its own
+/// draft under its own id.
 async fn sample_page(
     State(store): State<RequestStore>,
     axum::extract::Query(query): axum::extract::Query<SampleQuery>,
@@ -150,9 +156,21 @@ async fn sample_page(
             text: lingrep_core::token_match::display_text(&words, 0..words.len()),
         });
     }
+    let mut seed_pattern = None;
+    if let (Some(workbench), Some(revision)) = (query.workbench.as_deref(), query.revision)
+        && let Ok(snapshot) = store
+            .coordinators
+            .displayed_snapshot(
+                &crate::revision::WorkbenchId::new(workbench),
+                crate::revision::RevisionId(revision),
+            )
+            .await
+    {
+        seed_pattern = Some(snapshot.source.to_string());
+    }
     SamplePage {
         opened,
-        seed_pattern: store.default_pattern.to_string(),
+        seed_pattern: seed_pattern.unwrap_or_else(|| store.default_pattern.to_string()),
         current_page: "sample",
         frequency_view: !store.frequency.is_empty(),
         catalog_keys: store.catalogs.keys().map(str::to_owned).collect(),

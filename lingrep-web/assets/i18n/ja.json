@@ -615,6 +615,8 @@
   "sample.claims_violated": "検証した例と反例は {checked} 件です。検証の失敗または無効な項目が {failed} 件あります。",
   "sample.claims_hold": "例と反例の検証で {checked} 件が成功しました。",
   "sample.claims_note": "サンプルの解析器で得た一致結果が、カタログで指定した例と反例に合っているかを検証します。",
+  "sample.claims_unchecked": "検証していない例と反例が {unchecked} 件あります。サンプルデバッガーが検証するのは、カタログの先頭 {limit} 件までです。",
+  "sample.claims_unrelaxed": "どの制約を検証しているかを調べていない反例が {count} 件あります。このカタログの検証は、サンプルデバッガーの制限時間に達しました。",
   "sample.claim_expected_match": "は example に一致しません",
   "sample.claim_unexpected_match": "は counterexample に一致します",
   "sample.claim_malformed": "の例または反例の指定が無効です。文字列のリストを指定してください。",
