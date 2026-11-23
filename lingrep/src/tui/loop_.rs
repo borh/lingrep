@@ -818,16 +818,19 @@ fn view_context_widget(f: &mut Frame, model: &Model, area: Rect) {
 fn right_aligned_tail(text: &str, width: usize) -> String {
     use unicode_width::UnicodeWidthChar;
     let mut columns = 0;
-    let mut start = text.len();
-    for (index, character) in text.char_indices().rev() {
+    let mut tail = Vec::new();
+    for character in text.chars().rev() {
         let character_columns = character.width().unwrap_or(0);
         if columns + character_columns > width {
             break;
         }
         columns += character_columns;
-        start = index;
+        tail.push(character);
     }
-    format!("{}{}", " ".repeat(width - columns), &text[start..])
+    " ".repeat(width - columns)
+        .chars()
+        .chain(tail.into_iter().rev())
+        .collect()
 }
 
 fn view_parsed_widget(f: &mut Frame, model: &Model, area: Rect) {
