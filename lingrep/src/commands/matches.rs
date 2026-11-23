@@ -889,6 +889,7 @@ pub fn run(
         )?;
         let scope_report = completed.metrics.scope.report_after_run(
             scope_clause.as_ref(),
+            completed.metrics.source_stats.scope_counts(),
             limited,
             config,
             &run_id,
@@ -906,11 +907,14 @@ pub fn run(
         let completion = resolve_matches_completion(
             terminal,
             || {
-                completed.lifecycle.complete(if limited {
-                    FilesystemCompletion::PrefixUnavailable
-                } else {
-                    FilesystemCompletion::Full
-                })
+                completed.lifecycle.complete(
+                    if limited {
+                        FilesystemCompletion::PrefixUnavailable
+                    } else {
+                        FilesystemCompletion::Full
+                    },
+                    completed.metrics.source_stats.filesystem_observation(),
+                )
             },
             || {
                 completed

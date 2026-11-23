@@ -238,7 +238,7 @@ fn a_section_leaf_never_displaces_a_metadata_reason() {
     }
 }
 
-use lingrep_core::corpus::{AdmittedCorpus, AdmittedCorpusEvent, CorpusEvent, ScopeObservation};
+use lingrep_core::corpus::{AdmittedCorpus, AdmittedCorpusEvent, CorpusEvent, ScopeCounts};
 
 fn document(year: &str, sentences: &[(&str, &[&str])]) -> Vec<std::io::Result<CorpusEvent>> {
     let mut events = vec![
@@ -267,18 +267,17 @@ fn document(year: &str, sentences: &[(&str, &[&str])]) -> Vec<std::io::Result<Co
 fn admitted_texts(
     events: Vec<std::io::Result<CorpusEvent>>,
     clause: &str,
-    observation: &ScopeObservation,
-) -> Vec<String> {
-    AdmittedCorpus::new(events.into_iter())
-        .with_scope(
-            ScopeClause::parse(clause).expect("clause parses"),
-            observation.clone(),
-        )
+) -> (Vec<String>, ScopeCounts) {
+    let mut corpus = AdmittedCorpus::new(events.into_iter())
+        .with_scope(ScopeClause::parse(clause).expect("clause parses"));
+    let texts = corpus
+        .by_ref()
         .filter_map(|event| match event.expect("reader") {
             AdmittedCorpusEvent::Sentence(sentence) => Some(sentence.text),
             _ => None,
         })
-        .collect()
+        .collect();
+    (texts, corpus.into_parts().1)
 }
 
 #[test]
@@ -292,11 +291,9 @@ fn a_section_clause_selects_sentences_within_one_document() {
             ("鳥が一", &[]),
         ],
     );
-    let observation = ScopeObservation::default();
-    let texts = admitted_texts(events, "@section = methods", &observation);
+    let (texts, counts) = admitted_texts(events, "@section = methods");
     assert_eq!(texts, vec!["猫が鳥".to_owned(), "猫は犬".to_owned()]);
 
-    let counts = observation.counts().expect("counts");
     assert_eq!(counts.sentences_admitted, 2);
     assert_eq!(counts.sentences_excluded_by_predicate, 2);
     assert_eq!(counts.sentences_excluded_missing_field, 0);
@@ -316,10 +313,7 @@ fn section_exclusion_compacts_direct_ordinals() {
         ],
     );
     let ordinals: Vec<u64> = AdmittedCorpus::new(events.into_iter())
-        .with_scope(
-            ScopeClause::parse("@section = methods").expect("parses"),
-            ScopeObservation::default(),
-        )
+        .with_scope(ScopeClause::parse("@section = methods").expect("parses"))
         .filter_map(|event| match event.expect("reader") {
             AdmittedCorpusEvent::Sentence(sentence) => Some(sentence.id.get()),
             _ => None,
@@ -333,15 +327,9 @@ fn section_exclusion_compacts_direct_ordinals() {
 #[test]
 fn a_document_can_be_admitted_with_no_admitted_sentences() {
     let events = document("2013", &[("猫が鳥", &["references"])]);
-    let observation = ScopeObservation::default();
-    let texts = admitted_texts(
-        events,
-        "@document.year >= 2010 & @section = methods",
-        &observation,
-    );
+    let (texts, counts) = admitted_texts(events, "@document.year >= 2010 & @section = methods");
     assert!(texts.is_empty());
 
-    let counts = observation.counts().expect("counts");
     assert_eq!(counts.documents_admitted, 1);
     assert_eq!(counts.sentences_admitted, 0);
     assert_eq!(counts.sentences_excluded_by_predicate, 1);
@@ -352,15 +340,9 @@ fn a_document_can_be_admitted_with_no_admitted_sentences() {
 #[test]
 fn a_metadata_excluded_document_keeps_its_own_reason_under_a_section_clause() {
     let events = document("2005", &[("猫が鳥", &["methods"])]);
-    let observation = ScopeObservation::default();
-    let texts = admitted_texts(
-        events,
-        "@document.year >= 2010 & @section = methods",
-        &observation,
-    );
+    let (texts, counts) = admitted_texts(events, "@document.year >= 2010 & @section = methods");
     assert!(texts.is_empty());
 
-    let counts = observation.counts().expect("counts");
     assert_eq!(counts.documents_excluded_by_predicate, 1);
     assert_eq!(counts.sentences_excluded_by_predicate, 1);
 }

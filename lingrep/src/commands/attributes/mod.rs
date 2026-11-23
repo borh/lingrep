@@ -141,10 +141,14 @@ pub fn run(
         // Every count is final before the first record is written: this is an
         // aggregate, and a partially-observed corpus cannot answer "is this
         // attribute absent anywhere?".
-        let scope_report =
-            stream
-                .scope
-                .report_after_run(scope_clause.as_ref(), false, config, &run_id)?;
+        let source_stats = stream.source.into_stats();
+        let scope_report = stream.scope.report_after_run(
+            scope_clause.as_ref(),
+            source_stats.scope_counts(),
+            false,
+            config,
+            &run_id,
+        )?;
         if !terminal.try_claim_completion() {
             return Ok(CommandOutcome::Cancelled);
         }
@@ -159,7 +163,7 @@ pub fn run(
                 token_schema_identity: encode_digest(stream.schema.digest().as_bytes()),
                 admitted_tokens: coverage.admitted_tokens(),
                 admitted_sentences,
-                admitted_documents: stream.source.into_stats().documents_admitted(),
+                admitted_documents: source_stats.documents_admitted(),
                 scope: scope_report
                     .as_ref()
                     .map(serde_json::to_value)

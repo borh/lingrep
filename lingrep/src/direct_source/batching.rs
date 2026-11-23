@@ -159,8 +159,8 @@ impl<I> DirectSentenceSource<I> {
         self
     }
 
-    pub fn into_stats(self) -> DirectSourceStats {
-        self.stats
+    pub fn into_parts(self) -> (I, DirectSourceStats) {
+        (self.events, self.stats)
     }
 }
 
@@ -755,7 +755,7 @@ mod tests {
         );
         assert!(source.next_batch(&small_limits()).unwrap().is_none());
         assert_eq!(
-            source.into_stats().oversized_sentence_omissions(),
+            source.into_parts().1.oversized_sentence_omissions(),
             Some(OversizedSentenceOmissionSummary {
                 count: 1,
                 first_source_name: "a.md".into(),
@@ -779,7 +779,11 @@ mod tests {
         let mut source = source_from_events_skipping_oversized(events.into_iter());
 
         assert!(source.next_batch(&small_limits()).unwrap().is_none());
-        let summary = source.into_stats().oversized_sentence_omissions().unwrap();
+        let summary = source
+            .into_parts()
+            .1
+            .oversized_sentence_omissions()
+            .unwrap();
         assert_eq!(summary.count, 1_000);
         assert_eq!(summary.first_source_name, "first.md");
         assert_eq!(summary.first_ordinal, 0);

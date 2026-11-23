@@ -4,12 +4,11 @@
 use std::fs::File;
 use std::io::{self, BufReader};
 use std::path::{Path, PathBuf};
-use std::sync::{Arc, Mutex};
 
 use lingrep_core::corpus::{
     AdmittedCorpus, CorpusDiscovery, CorpusEvent, CorpusFileKind, CorpusReadConfig, DiscoveryError,
-    DiscoveryReport, InputFormat, MarkdownDiagnostics, ScopeObservation, SourceDocument,
-    TraversalLimits, ValidatedCorpusRoot, stream_input_events,
+    DiscoveryReport, InputFormat, MarkdownDiagnostics, SourceDocument, TraversalLimits,
+    ValidatedCorpusRoot, stream_input_events,
 };
 use lingrep_core::execution::{BoundedRecordError, BoundedRecordReader, ExecutionError};
 use lingrep_core::scope::ScopeClause;
@@ -17,7 +16,7 @@ use lingrep_corpus::SourceObservation;
 
 use super::batching::TerminalFailure;
 use super::hashing::{
-    HashingReader, OrderedInventoryObservation, StdinObservation, identity_io_error,
+    HashingReader, OrderedInventoryObservation, StdinObservation, StdinReader, identity_io_error,
 };
 
 #[derive(Debug, thiserror::Error)]
@@ -171,18 +170,11 @@ pub(crate) fn execution_discovery_error(error: &DiscoveryError) -> ExecutionErro
     terminal_failure_from_discovery(error).execution_error()
 }
 
-/// Final identity and traversal state shared with the command after execution.
-#[derive(Clone)]
+/// Identity and traversal facts for the filesystem sources read by a run.
 pub struct FilesystemObservation {
     pub source: SourceObservation,
     pub inventory: OrderedInventoryObservation,
-    report: Arc<Mutex<Option<DiscoveryReport>>>,
-}
-
-impl FilesystemObservation {
-    pub fn discovery_report(&self) -> Option<DiscoveryReport> {
-        self.report.lock().ok()?.clone()
-    }
+    pub report: Option<DiscoveryReport>,
 }
 
 /// Raw multi-file corpus stream built on the shared bounded discovery cursor.
@@ -222,7 +214,7 @@ impl FilesystemCorpusEvents {
         config: CorpusReadConfig,
         limits: TraversalLimits,
         record_limit: usize,
-    ) -> Result<(Self, FilesystemObservation, MarkdownDiagnostics), ExecutionError> {
+    ) -> Result<(Self, MarkdownDiagnostics), ExecutionError> {
         let validated = CorpusDiscovery::validate_root(root, limits.clone())
             .map_err(|error| execution_discovery_error(&error))?;
         validate_root_reader_compatibility(&validated, &config)
@@ -230,7 +222,7 @@ impl FilesystemCorpusEvents {
         let observation = FilesystemObservation {
             source: SourceObservation::new(),
             inventory: OrderedInventoryObservation::default(),
-            report: Arc::new(Mutex::new(None)),
+            report: None,
         };
         let diagnostics = MarkdownDiagnostics::default();
         let discovery = if matches!(config, CorpusReadConfig::Bccwj) {
@@ -254,21 +246,24 @@ impl FilesystemCorpusEvents {
                 current_source_name: None,
                 config,
                 record_limit,
-                observation: observation.clone(),
+                observation,
                 diagnostics: diagnostics.clone(),
             },
-            observation,
             diagnostics,
         ))
     }
 
+    pub(crate) fn into_observation(self) -> FilesystemObservation {
+        self.observation
+    }
+
     fn open_document(
-        &self,
+        &mut self,
         document: &SourceDocument,
     ) -> io::Result<Box<dyn Iterator<Item = io::Result<CorpusEvent>> + Send>> {
         open_corpus_document(
             &self.observation.source,
-            Some(&self.observation.inventory),
+            Some(&mut self.observation.inventory),
             Some(&self.diagnostics),
             &self.config,
             self.record_limit,
@@ -325,9 +320,7 @@ impl Iterator for FilesystemCorpusEvents {
                     // value with itself and it could not fail — while for
                     // every other format it proves the sources read are the
                     // sources discovered, in order.
-                    if let Ok(mut stored) = self.observation.report.lock() {
-                        *stored = Some(cursor.report());
-                    }
+                    self.observation.report = Some(cursor.report());
                     return None;
                 };
                 let zip = match cursor.zip_for(&document) {
@@ -336,7 +329,7 @@ impl Iterator for FilesystemCorpusEvents {
                 };
                 let opened = stream.open_observing_labels(
                     &self.observation.source,
-                    Some(&self.observation.inventory),
+                    Some(&mut self.observation.inventory),
                     &zip,
                     &self.diagnostics,
                 );
@@ -381,9 +374,7 @@ impl Iterator for FilesystemCorpusEvents {
                     };
                     match discovery.finish() {
                         Ok(report) => {
-                            if let Ok(mut stored) = self.observation.report.lock() {
-                                *stored = Some(report);
-                            }
+                            self.observation.report = Some(report);
                             return None;
                         }
                         Err(error) => return Some(Err(discovery_io_error(error))),
@@ -420,17 +411,9 @@ pub fn admitted_filesystem_events(events: FilesystemCorpusEvents) -> AdmittedFil
 }
 
 /// Applies a scope clause at sentence admission, if one was given.
-///
-/// The caller keeps its own clone of `observation`: this reader is handed to a
-/// source by value and the source is moved into the execution runner, so the
-/// counts have to leave through a shared handle.
-pub fn scoped<I>(
-    corpus: AdmittedCorpus<I>,
-    clause: Option<&ScopeClause>,
-    observation: &ScopeObservation,
-) -> AdmittedCorpus<I> {
+pub fn scoped<I>(corpus: AdmittedCorpus<I>, clause: Option<&ScopeClause>) -> AdmittedCorpus<I> {
     match clause {
-        Some(clause) => corpus.with_scope(clause.clone(), observation.clone()),
+        Some(clause) => corpus.with_scope(clause.clone()),
         None => corpus,
     }
 }
@@ -475,8 +458,7 @@ pub(crate) fn stdin_events(
     StdinObservation,
     Box<dyn Iterator<Item = io::Result<CorpusEvent>> + Send>,
 ) {
-    let observation = StdinObservation::default();
-    let reader = observation.reader(io::stdin());
+    let (reader, observation) = StdinReader::new(io::stdin());
     if matches!(config, CorpusReadConfig::Tei) {
         let events = match lingrep_core::corpus::tei::TeiEvents::new(
             reader,
@@ -502,12 +484,12 @@ pub(crate) fn stdin_events(
 /// format-typed events with the diagnostics sink (direct seam only).
 ///
 /// The seam **loops** that feed this stay separate: their side channels
-/// differ (the `DiscoveredDocuments` queue in prepare, lazy versus
+/// differ (the discovered documents in prepare, lazy versus
 /// eager discovery open, error styles), and extracting the loop would force
 /// a callback interface larger than either existing one.
 pub(crate) fn open_corpus_document(
     source: &SourceObservation,
-    inventory: Option<&OrderedInventoryObservation>,
+    inventory: Option<&mut OrderedInventoryObservation>,
     diagnostics: Option<&MarkdownDiagnostics>,
     config: &CorpusReadConfig,
     record_limit: usize,

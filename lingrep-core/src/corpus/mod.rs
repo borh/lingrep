@@ -31,7 +31,7 @@ pub use markdown_dialect::{
     DEFAULT_SELF_LABELS, MARKDOWN_READER_SCHEMA_REVISION, MarkdownDiagnostics,
     MarkdownReaderConfig, read_markdown_events,
 };
-pub use scope_observation::{ScopeCounts, ScopeObservation};
+pub use scope_observation::ScopeCounts;
 pub use section_policy::{DEFAULT_EXCLUDED_SECTIONS, SectionPolicy};
 pub use source::{
     CorpusFormat, CorpusReadConfig, CorpusSource, CorpusStream, CorpusStructuredStream,

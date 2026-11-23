@@ -1,15 +1,6 @@
-//! Scope accounting shared between a reader and the command that owns it.
-//!
-//! The counts cannot be read off the reader at completion. A command hands its
-//! event iterator to a source by value and the source is then moved into the
-//! execution runner, so nothing holds the `AdmittedCorpus` by the time a
-//! completion record is built. This is the shape the direct path already uses
-//! for exactly that reason — see `StdinObservation` and `FilesystemObservation`
-//! in `ling` — a cheap clonable handle over shared state, one clone kept
-//! by the command and one by the reader.
+//! Counts at the document and sentence grains for a scoped reader.
 
 use std::io;
-use std::sync::{Arc, Mutex};
 
 use crate::scope::{ExclusionReason, Verdict};
 
@@ -31,41 +22,6 @@ pub struct ScopeCounts {
 }
 
 impl ScopeCounts {
-    /// Adds one document's tallies into a running total.
-    fn merge(&mut self, other: Self) -> Option<()> {
-        for (into, from) in [
-            (&mut self.documents_admitted, other.documents_admitted),
-            (
-                &mut self.documents_excluded_by_predicate,
-                other.documents_excluded_by_predicate,
-            ),
-            (
-                &mut self.documents_excluded_missing_field,
-                other.documents_excluded_missing_field,
-            ),
-            (
-                &mut self.documents_excluded_shape_mismatch,
-                other.documents_excluded_shape_mismatch,
-            ),
-            (&mut self.sentences_admitted, other.sentences_admitted),
-            (
-                &mut self.sentences_excluded_by_predicate,
-                other.sentences_excluded_by_predicate,
-            ),
-            (
-                &mut self.sentences_excluded_missing_field,
-                other.sentences_excluded_missing_field,
-            ),
-            (
-                &mut self.sentences_excluded_shape_mismatch,
-                other.sentences_excluded_shape_mismatch,
-            ),
-        ] {
-            *into = into.checked_add(from)?;
-        }
-        Some(())
-    }
-
     pub(crate) fn record_document(&mut self, verdict: Verdict) -> io::Result<()> {
         increment(match verdict {
             Verdict::Admitted => &mut self.documents_admitted,
@@ -99,66 +55,4 @@ fn increment(bucket: &mut u64) -> io::Result<()> {
         .checked_add(1)
         .ok_or_else(|| io::Error::other("scope accounting overflowed"))?;
     Ok(())
-}
-
-#[derive(Debug, Default)]
-struct Shared {
-    counts: ScopeCounts,
-    /// Set when a merge could not be represented. `counts` then describes less
-    /// than the run did, so reporting it would be a false denominator.
-    overflowed: bool,
-}
-
-/// A clonable handle over one run's [`ScopeCounts`].
-///
-/// The reader tallies into a plain [`ScopeCounts`] it owns and publishes here
-/// **once per document**, not once per sentence. This keeps locking off the
-/// per-sentence ingestion path.
-#[derive(Clone, Debug, Default)]
-pub struct ScopeObservation {
-    state: Arc<Mutex<Shared>>,
-}
-
-impl ScopeObservation {
-    /// A snapshot of the counts published so far.
-    ///
-    /// Complete once the reader has been dropped: the reader publishes each
-    /// document as it closes and flushes any partially-read tail on drop.
-    ///
-    /// # Errors
-    ///
-    /// Returns an error if the shared state was poisoned by a panic, or if the
-    /// accounting overflowed — reporting a truncated universe as though it
-    /// were the whole one is the failure this report exists to prevent.
-    pub fn counts(&self) -> io::Result<ScopeCounts> {
-        let shared = self
-            .state
-            .lock()
-            .map_err(|_| io::Error::other("scope observation lock poisoned"))?;
-        if shared.overflowed {
-            return Err(io::Error::other("scope accounting overflowed"));
-        }
-        Ok(shared.counts)
-    }
-
-    /// Publishes one document's tallies.
-    pub(crate) fn publish(&self, pending: ScopeCounts) -> io::Result<()> {
-        let mut shared = self
-            .state
-            .lock()
-            .map_err(|_| io::Error::other("scope observation lock poisoned"))?;
-        if shared.counts.merge(pending).is_none() {
-            shared.overflowed = true;
-            return Err(io::Error::other("scope accounting overflowed"));
-        }
-        Ok(())
-    }
-
-    pub(crate) fn publish_on_drop(&self, pending: ScopeCounts) {
-        if let Ok(mut shared) = self.state.lock()
-            && shared.counts.merge(pending).is_none()
-        {
-            shared.overflowed = true;
-        }
-    }
 }

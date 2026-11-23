@@ -281,7 +281,10 @@ pub fn run(
             Termination::Eof => (Coverage::Full, FilesystemCompletion::Full),
             Termination::ResultLimit => (Coverage::Prefix, FilesystemCompletion::PrefixUnavailable),
         };
-        let (complete_corpus, inventory) = stream.lifecycle.complete(filesystem_completion)?;
+        let source_stats = stream.source.into_stats();
+        let (complete_corpus, inventory) = stream
+            .lifecycle
+            .complete(filesystem_completion, source_stats.filesystem_observation())?;
 
         if !terminal.try_claim_completion() {
             return Ok(CommandOutcome::Cancelled);
@@ -300,9 +303,7 @@ pub fn run(
                 tokens_emitted,
                 elapsed_millis: started.elapsed().as_millis().try_into().unwrap_or(u64::MAX),
                 resources: ResourceHighWater {
-                    staged_raw_bytes: stream
-                        .source
-                        .into_stats()
+                    staged_raw_bytes: source_stats
                         .max_staged_raw_bytes()
                         .try_into()
                         .unwrap_or(u64::MAX),

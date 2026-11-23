@@ -285,7 +285,7 @@ pub(crate) fn ensure_artifact(
         schema,
     )?;
     let observation = builder.source_observation();
-    let (events, documents, report) = PreparedBuildEvents::new(
+    let events = PreparedBuildEvents::new(
         validated,
         reader_config,
         config.limits.max_input_record_bytes,
@@ -324,7 +324,7 @@ pub(crate) fn ensure_artifact(
             && window_bytes < config.limits.max_stage_input_bytes
         {
             let event = admitted.next().transpose().map_err(build_input_error)?;
-            let drained = documents.drain()?;
+            let drained = admitted.events_mut().take_documents();
             let metadata_bytes = match event.as_ref() {
                 Some(AdmittedCorpusEvent::DocumentStart { metadata, .. }) => {
                     lingrep_core::corpus::divisions::validate_metadata(metadata)
@@ -419,10 +419,9 @@ pub(crate) fn ensure_artifact(
     // Before publication, and on stderr regardless of `--progress`: this is not
     // progress, it is a statement that the artifact about to be written is not
     // a faithful copy of its source.
-    let discovery = report
-        .lock()
-        .map_err(|_| CliError::Corpus("prepared discovery report lock poisoned".into()))?
-        .clone()
+    let (events, _) = admitted.into_parts();
+    let discovery = events
+        .into_discovery_report()
         .ok_or_else(|| CliError::Corpus("prepared discovery did not reach clean EOF".into()))?;
     if let Some(session) = session.as_mut() {
         session.finish().map_err(CliError::from)?;
@@ -1010,7 +1009,7 @@ pub(crate) fn observe_root(
     let validated = CorpusDiscovery::validate_root(root, config.traversal.clone())
         .map_err(|error| execution_discovery_error(&error))?;
     let observation = SourceObservation::new();
-    let (mut events, documents, report) = PreparedBuildEvents::new(
+    let mut events = PreparedBuildEvents::new(
         validated,
         reader_config.clone(),
         config.limits.max_input_record_bytes,
@@ -1024,7 +1023,7 @@ pub(crate) fn observe_root(
             return Ok(None);
         }
         let event = events.next().transpose().map_err(build_input_error)?;
-        let discovered = documents.drain()?;
+        let discovered = events.take_documents();
         let drained = discovered.len() as u64;
         discovered.into_iter().for_each(&mut *on_document);
         if drained > 0 {
@@ -1037,10 +1036,8 @@ pub(crate) fn observe_root(
     }
     progress.end_stage();
 
-    let discovery = report
-        .lock()
-        .map_err(|_| CliError::Corpus("prepared discovery report lock poisoned".into()))?
-        .clone()
+    let discovery = events
+        .into_discovery_report()
         .ok_or_else(|| CliError::Corpus("preflight discovery did not reach clean EOF".into()))?;
     let observed = observation.finish().map_err(CliError::corpus)?;
     if observed.document_count() != discovery.inventory.documents {

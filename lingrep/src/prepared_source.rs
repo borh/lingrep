@@ -1,35 +1,18 @@
 //! Prepared-corpus build and execution adapters.
 //!
 //! The build iterator owns one bounded discovery cursor and opens one admitted
-//! source at a time. The paired queue exposes exactly the discovery record
+//! source at a time. The pending documents expose the discovery records
 //! whose `DocumentStart` is next, so `CorpusBuilder` can bind physical
 //! discovery facts to the same single admitted event stream it consumes.
 
-use std::collections::VecDeque;
 use std::io;
 use std::path::Path;
-use std::sync::{Arc, Mutex};
 
 use lingrep_core::corpus::{
     CorpusDiscovery, CorpusEvent, CorpusFormat, CorpusReadConfig, DiscoveryError, DiscoveryReport,
     SourceDocument, ValidatedCorpusRoot,
 };
 use lingrep_corpus::SourceObservation;
-
-#[derive(Clone, Default)]
-pub(crate) struct DiscoveredDocuments {
-    pending: Arc<Mutex<VecDeque<SourceDocument>>>,
-}
-
-impl DiscoveredDocuments {
-    pub(crate) fn drain(&self) -> Result<Vec<SourceDocument>, io::Error> {
-        let mut pending = self
-            .pending
-            .lock()
-            .map_err(|_| io::Error::other("prepared source queue lock poisoned"))?;
-        Ok(pending.drain(..).collect())
-    }
-}
 
 /// The prepared build's document cursor: the generic Markdown/plain walk,
 /// or the BCCWJ inventory (one document stream per zip; the entries are the
@@ -68,8 +51,8 @@ pub(crate) struct PreparedBuildEvents {
     config: CorpusReadConfig,
     record_limit: usize,
     observation: SourceObservation,
-    documents: DiscoveredDocuments,
-    report: Arc<Mutex<Option<DiscoveryReport>>>,
+    documents: Vec<SourceDocument>,
+    report: Option<DiscoveryReport>,
 }
 
 impl PreparedBuildEvents {
@@ -79,14 +62,7 @@ impl PreparedBuildEvents {
         record_limit: usize,
         observation: SourceObservation,
         limits: &lingrep_core::corpus::TraversalLimits,
-    ) -> Result<
-        (
-            Self,
-            DiscoveredDocuments,
-            Arc<Mutex<Option<DiscoveryReport>>>,
-        ),
-        DiscoveryError,
-    > {
+    ) -> Result<Self, DiscoveryError> {
         crate::direct_source::validate_root_reader_compatibility(&validated, &config)?;
         let discovery = if matches!(config, CorpusReadConfig::Bccwj) {
             let (cursor, stream) = crate::direct_source::open_bccwj_discovery(
@@ -102,22 +78,24 @@ impl PreparedBuildEvents {
                 validated, file_kind,
             )?))
         };
-        let documents = DiscoveredDocuments::default();
-        let report = Arc::new(Mutex::new(None));
-        Ok((
-            Self {
-                discovery: Some(discovery),
-                current: None,
-                current_document: None,
-                config,
-                record_limit,
-                observation,
-                documents: documents.clone(),
-                report: Arc::clone(&report),
-            },
-            documents,
-            report,
-        ))
+        Ok(Self {
+            discovery: Some(discovery),
+            current: None,
+            current_document: None,
+            config,
+            record_limit,
+            observation,
+            documents: Vec::new(),
+            report: None,
+        })
+    }
+
+    pub(crate) fn take_documents(&mut self) -> Vec<SourceDocument> {
+        std::mem::take(&mut self.documents)
+    }
+
+    pub(crate) fn into_discovery_report(self) -> Option<DiscoveryReport> {
+        self.report
     }
 
     fn open_document(
@@ -169,17 +147,8 @@ impl Iterator for PreparedBuildEvents {
             match discovery.next_document() {
                 Ok(Some(document)) => match self.open_document(&document) {
                     Ok(events) => {
-                        let mut pending = match self.documents.pending.lock() {
-                            Ok(pending) => pending,
-                            Err(_) => {
-                                return Some(Err(io::Error::other(
-                                    "prepared source queue lock poisoned",
-                                )));
-                            }
-                        };
                         self.current_document = Some(document.logical_name.clone());
-                        pending.push_back(document);
-                        drop(pending);
+                        self.documents.push(document);
                         self.current = Some(events);
                     }
                     Err(error) => return Some(Err(error)),
@@ -190,17 +159,10 @@ impl Iterator for PreparedBuildEvents {
                         .take()
                         .expect("open discovery was just borrowed");
                     match discovery.finish() {
-                        Ok(report) => match self.report.lock() {
-                            Ok(mut stored) => {
-                                *stored = Some(report);
-                                return None;
-                            }
-                            Err(_) => {
-                                return Some(Err(io::Error::other(
-                                    "prepared discovery report lock poisoned",
-                                )));
-                            }
-                        },
+                        Ok(report) => {
+                            self.report = Some(report);
+                            return None;
+                        }
                         Err(error) => return Some(Err(io::Error::other(error))),
                     }
                 }

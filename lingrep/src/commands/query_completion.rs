@@ -14,7 +14,6 @@ use crate::protocol::query::{
 
 pub(crate) enum CompletionObservation {
     Filesystem {
-        observation: FilesystemObservation,
         analysis: AnalysisInputs,
     },
     Stdin {
@@ -60,6 +59,7 @@ impl CompletionObservation {
     pub(crate) fn complete(
         self,
         filesystem: FilesystemCompletion,
+        observation: Option<&FilesystemObservation>,
     ) -> Result<(CompleteCorpus, Option<InventoryStats>), CliError> {
         match self {
             Self::Stdin {
@@ -85,15 +85,14 @@ impl CompletionObservation {
                     None,
                 ))
             }
-            Self::Filesystem {
-                observation,
-                analysis,
-            } => {
-                let discovery = observation.discovery_report().ok_or_else(|| {
-                    CliError::Corpus("filesystem discovery did not reach clean EOF".into())
-                })?;
+            Self::Filesystem { analysis } => {
+                let (observation, discovery) = observation
+                    .and_then(|observation| Some((observation, observation.report.as_ref()?)))
+                    .ok_or_else(|| {
+                        CliError::Corpus("filesystem discovery did not reach clean EOF".into())
+                    })?;
                 let observed = observation.source.finish().map_err(CliError::corpus)?;
-                validate_ordered_inventory(&observation.inventory, &discovery)?;
+                validate_ordered_inventory(&observation.inventory, discovery)?;
                 if observed.document_count() != discovery.inventory.documents {
                     return Err(ExecutionError::InventoryMismatch.into());
                 }
@@ -155,7 +154,7 @@ mod tests {
         assert_eq!(observation.run_inventory(), Some(inventory.clone()));
         assert_eq!(
             observation
-                .complete(FilesystemCompletion::Full)
+                .complete(FilesystemCompletion::Full, None)
                 .expect("prepared completion is infallible"),
             (
                 CompleteCorpus::Prepared {

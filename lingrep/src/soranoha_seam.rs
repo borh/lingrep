@@ -34,7 +34,7 @@ use crate::direct_source::{HashingReader, OrderedInventoryObservation, identity_
 /// the source, or the archive is not a readable Soranoha archive.
 pub(crate) fn open(
     source: &SourceObservation,
-    inventory: Option<&OrderedInventoryObservation>,
+    inventory: Option<&mut OrderedInventoryObservation>,
     document: &SourceDocument,
     record_limit: usize,
     tei: bool,

@@ -1,7 +1,7 @@
 //! Raw-byte identity hashing, stdin observation, and ordered inventory checks.
 
 use std::io::{self, Read};
-use std::sync::{Arc, Mutex};
+use std::sync::mpsc::{self, Receiver, Sender};
 
 use blake3::Hasher;
 use lingrep_core::corpus::DiscoveryReport;
@@ -52,37 +52,36 @@ impl<R: Read> Read for HashingReader<R> {
 
 /// Run-local observation of stdin bytes. It cannot produce a durable corpus
 /// identity because stdin has no reopenable logical source name.
-#[derive(Clone, Default)]
-pub struct StdinObservation {
-    state: Arc<Mutex<StdinObservationState>>,
-}
-
-#[derive(Clone, Default)]
-struct StdinObservationState {
-    digest: Hasher,
-    eof: bool,
-}
+pub struct StdinObservation(Receiver<blake3::Hash>);
 
 impl StdinObservation {
-    pub fn reader<R: Read>(&self, reader: R) -> StdinReader<R> {
-        StdinReader {
-            reader,
-            observation: self.clone(),
-        }
-    }
-
     /// Returns the digest only after an observed EOF.
-    pub fn observed_content_digest(&self) -> Option<String> {
-        let state = self.state.lock().ok()?;
-        state
-            .eof
-            .then(|| encode_digest(state.digest.clone().finalize().as_bytes()))
+    pub fn observed_content_digest(self) -> Option<String> {
+        self.0
+            .try_recv()
+            .ok()
+            .map(|digest| encode_digest(digest.as_bytes()))
     }
 }
 
 pub struct StdinReader<R> {
     reader: R,
-    observation: StdinObservation,
+    digest: Hasher,
+    completion: Option<Sender<blake3::Hash>>,
+}
+
+impl<R: Read> StdinReader<R> {
+    pub fn new(reader: R) -> (Self, StdinObservation) {
+        let (sender, receiver) = mpsc::channel();
+        (
+            Self {
+                reader,
+                digest: Hasher::new(),
+                completion: Some(sender),
+            },
+            StdinObservation(receiver),
+        )
+    }
 }
 
 impl<R: Read> Read for StdinReader<R> {
@@ -91,42 +90,34 @@ impl<R: Read> Read for StdinReader<R> {
             return self.reader.read(buffer);
         }
         let read = self.reader.read(buffer)?;
-        let mut state = self
-            .observation
-            .state
-            .lock()
-            .map_err(|_| io::Error::other("stdin observation lock poisoned"))?;
         if read == 0 {
-            state.eof = true;
+            if let Some(completion) = self.completion.take() {
+                let _ = completion.send(self.digest.finalize());
+            }
         } else {
-            state.digest.update(&buffer[..read]);
+            self.digest.update(&buffer[..read]);
         }
         Ok(read)
     }
 }
 
-#[derive(Clone, Default)]
+#[derive(Default)]
 pub struct OrderedInventoryObservation {
-    state: Arc<Mutex<(blake3::Hasher, u64)>>,
+    digest: Hasher,
+    documents: u64,
 }
 
 impl OrderedInventoryObservation {
-    pub fn observe(&self, logical_name: &str) -> Result<(), IdentityError> {
+    pub fn observe(&mut self, logical_name: &str) -> Result<(), IdentityError> {
         let length =
             u64::try_from(logical_name.len()).map_err(|_| IdentityError::LengthOverflow)?;
-        let mut state = self.state.lock().map_err(|_| IdentityError::InvalidState)?;
-        state.0.update(&length.to_le_bytes());
-        state.0.update(logical_name.as_bytes());
-        state.1 = state
-            .1
+        self.documents = self
+            .documents
             .checked_add(1)
             .ok_or(IdentityError::LengthOverflow)?;
+        self.digest.update(&length.to_le_bytes());
+        self.digest.update(logical_name.as_bytes());
         Ok(())
-    }
-
-    fn snapshot(&self) -> Result<([u8; 32], u64), IdentityError> {
-        let state = self.state.lock().map_err(|_| IdentityError::InvalidState)?;
-        Ok((*state.0.clone().finalize().as_bytes(), state.1))
     }
 }
 
@@ -142,10 +133,9 @@ pub fn validate_ordered_inventory(
     observed: &OrderedInventoryObservation,
     discovery: &DiscoveryReport,
 ) -> Result<(), ExecutionError> {
-    let (digest, documents) = observed
-        .snapshot()
-        .map_err(|_| ExecutionError::ResourceAccounting)?;
-    if documents != discovery.inventory.documents || digest != discovery.ordered_inventory_digest {
+    if observed.documents != discovery.inventory.documents
+        || observed.digest.finalize().as_bytes() != &discovery.ordered_inventory_digest
+    {
         Err(ExecutionError::InventoryMismatch)
     } else {
         Ok(())

@@ -119,7 +119,7 @@ impl BccwjStream {
     pub(crate) fn open(
         &self,
         source: &SourceObservation,
-        inventory: Option<&OrderedInventoryObservation>,
+        inventory: Option<&mut OrderedInventoryObservation>,
         zip: &BccwjZip,
     ) -> io::Result<Box<dyn Iterator<Item = io::Result<CorpusEvent>> + Send>> {
         use std::io::Seek;
@@ -161,7 +161,7 @@ impl BccwjStream {
     pub(crate) fn open_observing_labels(
         &self,
         source: &SourceObservation,
-        inventory: Option<&OrderedInventoryObservation>,
+        inventory: Option<&mut OrderedInventoryObservation>,
         zip: &BccwjZip,
         diagnostics: &MarkdownDiagnostics,
     ) -> io::Result<Box<dyn Iterator<Item = io::Result<CorpusEvent>> + Send>> {
@@ -300,7 +300,7 @@ mod tests {
         ];
         let report = BccwjCursor::new(names.iter().copied().map(zip).collect()).report();
 
-        let read_in_order = OrderedInventoryObservation::default();
+        let mut read_in_order = OrderedInventoryObservation::default();
         for name in names {
             read_in_order.observe(name).expect("observe");
         }
@@ -309,7 +309,7 @@ mod tests {
 
         // And the check can actually fail: the same names in a different
         // order must not validate.
-        let read_reordered = OrderedInventoryObservation::default();
+        let mut read_reordered = OrderedInventoryObservation::default();
         for name in [names[1], names[0], names[2]] {
             read_reordered.observe(name).expect("observe");
         }

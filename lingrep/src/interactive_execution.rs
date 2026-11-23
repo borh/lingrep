@@ -335,7 +335,7 @@ impl InteractiveExecution {
                 None => Box::new(source),
             });
         };
-        let (events, _, _) = FilesystemCorpusEvents::new(
+        let (events, _) = FilesystemCorpusEvents::new(
             root,
             reader_config.clone(),
             self.config.traversal.clone(),

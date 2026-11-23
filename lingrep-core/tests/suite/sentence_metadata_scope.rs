@@ -17,8 +17,7 @@ use std::io;
 
 use crate::support::metadata;
 use lingrep_core::corpus::{
-    AdmittedCorpus, AdmittedCorpusEvent, CorpusEvent, Metadata, ScopeObservation,
-    metadata_from_json,
+    AdmittedCorpus, AdmittedCorpusEvent, CorpusEvent, Metadata, metadata_from_json,
 };
 use lingrep_core::scope::{DocumentOutcome, ExclusionReason, ScopeClause, Verdict};
 
@@ -148,9 +147,9 @@ fn conllu_like_stream() -> Vec<io::Result<CorpusEvent>> {
 #[test]
 fn admission_selects_exactly_the_cited_sentence_and_counts_the_rest() {
     let clause = ScopeClause::parse("@sentence.sent_id = s2").expect("parses");
-    let observation = ScopeObservation::default();
-    let admitted = AdmittedCorpus::new(conllu_like_stream().into_iter())
-        .with_scope(clause, observation.clone())
+    let mut corpus = AdmittedCorpus::new(conllu_like_stream().into_iter()).with_scope(clause);
+    let admitted = corpus
+        .by_ref()
         .collect::<io::Result<Vec<_>>>()
         .expect("admission succeeds");
 
@@ -163,7 +162,7 @@ fn admission_selects_exactly_the_cited_sentence_and_counts_the_rest() {
     assert_eq!(sentences[0].id.get(), 0);
     assert_eq!(sentences[0].document_sentence_ordinal, 1);
 
-    let counts = observation.counts().expect("counts publish");
+    let counts = corpus.into_parts().1;
     assert_eq!(counts.documents_admitted, 1);
     assert_eq!(counts.sentences_admitted, 1);
     assert_eq!(counts.sentences_excluded_by_predicate, 1);
@@ -175,9 +174,9 @@ fn explicit_sentence_ownership_is_independent_of_format_key_declarations() {
     // The same events without the declaration: the document pass decides
     // missing-field for the whole document, the path every other format takes.
     let clause = ScopeClause::parse("@sentence.sent_id = s2").expect("parses");
-    let observation = ScopeObservation::default();
-    let admitted = AdmittedCorpus::new(conllu_like_stream().into_iter())
-        .with_scope(clause, observation.clone())
+    let mut corpus = AdmittedCorpus::new(conllu_like_stream().into_iter()).with_scope(clause);
+    let admitted = corpus
+        .by_ref()
         .collect::<io::Result<Vec<_>>>()
         .expect("admission succeeds");
 
@@ -188,7 +187,7 @@ fn explicit_sentence_ownership_is_independent_of_format_key_declarations() {
             .count(),
         1
     );
-    let counts = observation.counts().expect("counts publish");
+    let counts = corpus.into_parts().1;
     assert_eq!(counts.documents_admitted, 1);
     assert_eq!(counts.sentences_excluded_missing_field, 1);
 }

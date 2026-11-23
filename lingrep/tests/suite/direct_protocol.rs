@@ -17,7 +17,7 @@ use std::process::{Child, Output, Stdio};
 
 use lingrep::direct_source::{
     BoundedRecordError, BoundedRecordReader, HashingReader, OrderedInventoryObservation,
-    StdinObservation, matched_orth_tokens, matched_surface, project_context, source_from_events,
+    StdinReader, matched_orth_tokens, matched_surface, project_context, source_from_events,
     validate_ordered_inventory,
 };
 use lingrep::protocol::validate_query_jsonl;
@@ -1853,10 +1853,10 @@ fn dictionary_mirror_authentication_is_sent_without_credentials_in_diagnostics()
 
 #[test]
 fn empty_read_buffers_do_not_claim_source_eof() {
-    let stdin = StdinObservation::default();
-    let mut stdin_reader = stdin.reader(Cursor::new(b"stdin"));
+    let (mut stdin_reader, stdin) = StdinReader::new(Cursor::new(b"stdin"));
     assert_eq!(stdin_reader.read(&mut []).unwrap(), 0);
     assert_eq!(stdin.observed_content_digest(), None);
+    let (mut stdin_reader, stdin) = StdinReader::new(Cursor::new(b"stdin"));
     let mut bytes = Vec::new();
     stdin_reader.read_to_end(&mut bytes).unwrap();
     assert_eq!(bytes, b"stdin");
@@ -1910,7 +1910,7 @@ fn bounded_record_reader_preserves_normal_multi_sentence_records() {
 
 #[test]
 fn completed_identity_requires_the_exact_ordered_logical_inventory_digest() {
-    let observation = OrderedInventoryObservation::default();
+    let mut observation = OrderedInventoryObservation::default();
     observation.observe("a.md").unwrap();
     let discovery = lingrep_core::corpus::DiscoveryReport {
         inventory: lingrep_core::corpus::InventoryStats {

@@ -10,7 +10,7 @@ use std::sync::Arc;
 
 use crate::scope::{DocumentOutcome, ScopeClause, Verdict};
 
-use super::scope_observation::{ScopeCounts, ScopeObservation};
+use super::scope_observation::ScopeCounts;
 
 pub const MAX_METADATA_FIELDS: usize = 256;
 pub const MAX_METADATA_ARRAY_ELEMENTS: usize = 1_024;
@@ -662,9 +662,6 @@ pub struct AdmittedCorpus<I> {
     next_division: u64,
     pending_events: VecDeque<AdmittedCorpusEvent>,
     finished: bool,
-    /// `None` on an unscoped run, and structurally so: there is no clause to
-    /// evaluate *and* no handle to lock. Guarding the two separately would
-    /// leave a per-sentence mutex on the path every existing run takes.
     scope: Option<Scoped>,
     /// The current document's outcome, recomputed once per `DocumentStart`.
     outcome: DocumentOutcome,
@@ -675,10 +672,7 @@ pub struct AdmittedCorpus<I> {
 
 struct Scoped {
     clause: ScopeClause,
-    observation: ScopeObservation,
-    /// Tallied here and published per document, keeping locking off the
-    /// per-sentence ingestion path.
-    pending: ScopeCounts,
+    counts: ScopeCounts,
     /// The current document's metadata, retained **only** while its outcome is
     /// [`DocumentOutcome::RequiresSentences`]. A metadata-only clause therefore
     /// never clones a document's frontmatter, which is the common case and the
@@ -710,21 +704,27 @@ impl<I> AdmittedCorpus<I> {
     }
 
     /// Restricts the stream to documents the clause admits.
-    ///
-    /// The caller keeps its own clone of `observation`: this reader is handed
-    /// to a source by value and the source is moved into the execution runner,
-    /// so the counts have to leave through a shared handle rather than through
-    /// the reader itself.
-    ///
     #[must_use]
-    pub fn with_scope(mut self, clause: ScopeClause, observation: ScopeObservation) -> Self {
+    pub fn with_scope(mut self, clause: ScopeClause) -> Self {
         self.scope = Some(Scoped {
             clause,
-            observation,
-            pending: ScopeCounts::default(),
+            counts: ScopeCounts::default(),
             document_metadata: Metadata::default(),
         });
         self
+    }
+
+    pub fn events_mut(&mut self) -> &mut I {
+        &mut self.events
+    }
+
+    /// Returns the underlying stream and counts observed through the last read.
+    pub fn into_parts(self) -> (I, ScopeCounts) {
+        (
+            self.events,
+            self.scope
+                .map_or_else(ScopeCounts::default, |scope| scope.counts),
+        )
     }
 
     fn invalid(message: &'static str) -> io::Error {
@@ -913,7 +913,7 @@ impl<I> AdmittedCorpus<I> {
                     // at document grain: it was *in scope*, whether or not any
                     // of its sentences turn out to be. The two grains can
                     // diverge, and the report records each grain separately.
-                    scoped.pending.record_document(match self.outcome {
+                    scoped.counts.record_document(match self.outcome {
                         DocumentOutcome::Decided(verdict) => verdict,
                         DocumentOutcome::RequiresSentences => Verdict::Admitted,
                     })?;
@@ -1081,10 +1081,10 @@ impl<I> AdmittedCorpus<I> {
                         ),
                     };
                     if let Verdict::Excluded(reason) = verdict {
-                        scoped.pending.record_excluded_sentence(reason)?;
+                        scoped.counts.record_excluded_sentence(reason)?;
                         return Ok(None);
                     }
-                    scoped.pending.record_admitted_sentence()?;
+                    scoped.counts.record_admitted_sentence()?;
                 }
                 let id = SentenceId::new(Self::take(&mut self.next_sentence, "sentence ID")?);
                 Ok(Some(AdmittedCorpusEvent::Sentence(AdmittedSentence {
@@ -1121,30 +1121,9 @@ impl<I> AdmittedCorpus<I> {
                 if !self.active_divisions.is_empty() {
                     return Err(Self::invalid("document ended with open divisions"));
                 }
-                if let Some(scoped) = &mut self.scope {
-                    let pending = std::mem::take(&mut scoped.pending);
-                    scoped.observation.publish(pending)?;
-                }
                 self.pending_events
                     .push_back(AdmittedCorpusEvent::DocumentEnd { id });
                 Ok(None)
-            }
-        }
-    }
-}
-
-impl<I> Drop for AdmittedCorpus<I> {
-    /// Publishes a partially-read document's tallies.
-    ///
-    /// A `--limit`ed run stops with the reader inside a document, so the
-    /// `DocumentEnd` that would have published it never arrives. Without this
-    /// the run would report a universe smaller than the reader actually
-    /// observed.
-    fn drop(&mut self) {
-        if let Some(scoped) = &mut self.scope {
-            let pending = std::mem::take(&mut scoped.pending);
-            if pending != ScopeCounts::default() {
-                scoped.observation.publish_on_drop(pending);
             }
         }
     }

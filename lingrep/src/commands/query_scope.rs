@@ -2,7 +2,7 @@
 
 use std::collections::BTreeSet;
 
-use lingrep_core::corpus::ScopeObservation;
+use lingrep_core::corpus::ScopeCounts;
 use lingrep_core::scope::ScopeClause;
 use lingrep_corpus::BlockingProvenance;
 
@@ -63,22 +63,19 @@ pub(crate) fn resolve_prepared_scope(
 pub(crate) fn build_scope_report(
     clause: Option<&ScopeClause>,
     prepared: Option<&ScopeResolution>,
-    observation: &ScopeObservation,
+    counts: ScopeCounts,
     limited: bool,
-) -> Result<Option<ScopeReport>, CliError> {
-    let Some(clause) = clause else {
-        return Ok(None);
-    };
+) -> Option<ScopeReport> {
+    let clause = clause?;
     if let Some(resolved) = prepared {
-        return Ok(Some(ScopeReport {
+        return Some(ScopeReport {
             clause: clause.source().to_owned(),
             basis: ScopeBasis::Corpus,
             documents: resolved.documents.clone(),
             sentences: resolved.sentences.clone(),
-        }));
+        });
     }
-    let counts = observation.counts().map_err(CliError::Io)?;
-    Ok(Some(ScopeReport {
+    Some(ScopeReport {
         clause: clause.source().to_owned(),
         basis: if limited {
             ScopeBasis::ObservedPrefix
@@ -97,7 +94,7 @@ pub(crate) fn build_scope_report(
             excluded_missing_field: counts.sentences_excluded_missing_field,
             excluded_shape_mismatch: counts.sentences_excluded_shape_mismatch,
         },
-    }))
+    })
 }
 
 /// Each document's ID, corpus sentence range and values of `key`

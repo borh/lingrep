@@ -6,7 +6,7 @@ use std::sync::Arc;
 
 use lingrep_core::analysis::AnalyzerSession;
 use lingrep_core::corpus::{
-    AdmittedCorpus, CorpusFormat, CorpusReadConfig, ScopeObservation, SectionPolicy,
+    AdmittedCorpus, CorpusFormat, CorpusReadConfig, ScopeCounts, SectionPolicy,
     SourceMetadataProjection, resolve_input_format,
 };
 use lingrep_core::execution::{
@@ -75,7 +75,6 @@ pub(crate) struct QueryRunFacts {
 
 #[derive(Default)]
 pub(crate) struct QueryScope {
-    pub(crate) scope_observation: ScopeObservation,
     pub(crate) prepared_scope: Option<ScopeResolution>,
     pub(crate) section_labels: BTreeSet<String>,
     pub(crate) markdown_diagnostics: Option<lingrep_core::corpus::MarkdownDiagnostics>,
@@ -108,6 +107,7 @@ impl QueryScope {
     pub(crate) fn report_after_run(
         &self,
         clause: Option<&ScopeClause>,
+        counts: ScopeCounts,
         limited: bool,
         config: &ExecutionCliConfig,
         run_id: &str,
@@ -120,12 +120,12 @@ impl QueryScope {
                 run_id,
             )?;
         }
-        super::query_scope::build_scope_report(
+        Ok(super::query_scope::build_scope_report(
             clause,
             self.prepared_scope.as_ref(),
-            &self.scope_observation,
+            counts,
             limited,
-        )
+        ))
     }
 }
 
@@ -632,7 +632,6 @@ impl<'a> OpenedCorpus<'a> {
                             source_from_events(scoped(
                                 AdmittedCorpus::new(events),
                                 spec.scope_clause,
-                                &scope.scope_observation,
                             ))
                             .with_normalization(config.normalization)
                             .with_segmentation(config.segmentation)
@@ -647,18 +646,14 @@ impl<'a> OpenedCorpus<'a> {
                     )
                 } else {
                     let root = root.expect("filesystem root");
-                    let (events, observation, diagnostics) = FilesystemCorpusEvents::new(
+                    let (events, diagnostics) = FilesystemCorpusEvents::new(
                         root,
                         reader_config,
                         config.traversal.clone(),
                         config.limits.max_input_record_bytes,
                     )?;
                     scope.markdown_diagnostics = Some(diagnostics);
-                    let admitted = scoped(
-                        admitted_filesystem_events(events),
-                        spec.scope_clause,
-                        &scope.scope_observation,
-                    );
+                    let admitted = scoped(admitted_filesystem_events(events), spec.scope_clause);
                     let source = if spec.skip_oversized_direct_markdown
                         && format == CorpusFormat::Markdown
                     {
@@ -674,7 +669,6 @@ impl<'a> OpenedCorpus<'a> {
                     (
                         Box::new(source),
                         CompletionObservation::Filesystem {
-                            observation,
                             analysis: analysis_inputs,
                         },
                     )

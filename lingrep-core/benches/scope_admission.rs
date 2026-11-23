@@ -18,9 +18,7 @@
 static GLOBAL: tikv_jemallocator::Jemalloc = tikv_jemallocator::Jemalloc;
 
 use criterion::{Criterion, criterion_group, criterion_main};
-use lingrep_core::corpus::{
-    AdmittedCorpus, AdmittedCorpusEvent, CorpusEvent, ScopeObservation, metadata_from_json,
-};
+use lingrep_core::corpus::{AdmittedCorpus, AdmittedCorpusEvent, CorpusEvent, metadata_from_json};
 use lingrep_core::scope::ScopeClause;
 use std::hint::black_box;
 
@@ -108,8 +106,8 @@ fn admission(criterion: &mut Criterion) {
     group.bench_function("scoped_admits_all", |bencher| {
         let clause = ScopeClause::parse("subject_area = 社会学").expect("clause parses");
         bencher.iter(|| {
-            let corpus = AdmittedCorpus::new(events.iter().map(clone_event))
-                .with_scope(clause.clone(), ScopeObservation::default());
+            let corpus =
+                AdmittedCorpus::new(events.iter().map(clone_event)).with_scope(clause.clone());
             black_box(drain(corpus))
         });
     });
@@ -117,8 +115,8 @@ fn admission(criterion: &mut Criterion) {
     group.bench_function("scoped_admits_half", |bencher| {
         let clause = ScopeClause::parse("year >= 2010").expect("clause parses");
         bencher.iter(|| {
-            let corpus = AdmittedCorpus::new(events.iter().map(clone_event))
-                .with_scope(clause.clone(), ScopeObservation::default());
+            let corpus =
+                AdmittedCorpus::new(events.iter().map(clone_event)).with_scope(clause.clone());
             black_box(drain(corpus))
         });
     });
@@ -126,8 +124,8 @@ fn admission(criterion: &mut Criterion) {
     group.bench_function("scoped_by_section", |bencher| {
         let clause = ScopeClause::parse("@section in {methods, results}").expect("clause parses");
         bencher.iter(|| {
-            let corpus = AdmittedCorpus::new(events.iter().map(clone_event))
-                .with_scope(clause.clone(), ScopeObservation::default());
+            let corpus =
+                AdmittedCorpus::new(events.iter().map(clone_event)).with_scope(clause.clone());
             black_box(drain(corpus))
         });
     });

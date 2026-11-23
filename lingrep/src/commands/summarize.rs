@@ -899,8 +899,10 @@ pub fn run(
             ..
         } = sink;
 
-        let (complete_corpus, inventory) =
-            completed.lifecycle.complete(FilesystemCompletion::Full)?;
+        let (complete_corpus, inventory) = completed.lifecycle.complete(
+            FilesystemCompletion::Full,
+            completed.metrics.source_stats.filesystem_observation(),
+        )?;
         let pattern_names = descriptors
             .iter()
             .map(|descriptor| catalog_policy.published_name(descriptor.name.as_str()))
@@ -1024,6 +1026,7 @@ pub fn run(
         // completion: its basis is the corpus on both paths.
         let scope_report = completed.metrics.scope.report_after_run(
             scope_clause.as_ref(),
+            completed.metrics.source_stats.scope_counts(),
             false,
             config,
             &run_id,
