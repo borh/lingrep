@@ -676,7 +676,7 @@ async fn results_keep_the_available_projection_while_inspection_keeps_all_attrib
 }
 
 #[tokio::test]
-async fn oversized_aggregate_preview_terminates_with_a_failed_update_but_keeps_paging_and_export() {
+async fn aggregate_preview_budget_keeps_search_complete_with_paging_and_export() {
     let text = "猫".repeat(14 * 1024);
     let sentence = vec![TokenInfo::default().with_orth(&text).with_lemma("cat")];
     let (fixture, runtime) =
@@ -685,28 +685,8 @@ async fn oversized_aggregate_preview_terminates_with_a_failed_update_but_keeps_p
     let app = lingrep_web::app_router(store.clone());
     let id = submit(&app, "first := [].\nsecond := [].", "", None).await;
     let frames = updates(&app, &id).await;
-    let failure = frames.last().unwrap();
-    assert_eq!(failure["patch"]["phase"], "failed");
-    let message = "The result preview is too large to display. Search fewer patterns.";
-    assert_eq!(failure["patch"]["error"], message);
-    assert_eq!(
-        failure["patch"]["search_complete"], true,
-        "the final frame must say that the search completed although its preview failed: {failure}"
-    );
-    assert_eq!(
-        failure["patch"]["exportable"], true,
-        "export does not apply the aggregate preview budget: {failure}"
-    );
-    assert_eq!(failure["patch"]["counts"], json!({"first":30,"second":30}));
-    assert_eq!(failure["patch"]["received"], 60);
-    assert!(
-        frames[..frames.len() - 1]
-            .iter()
-            .any(|frame| frame["patch"].get("phase").is_none()
-                && frame["patch"]["counts"] == json!({"first":30,"second":30})),
-        "counts must keep arriving while the preview cannot be displayed: {frames:?}"
-    );
-    assert!(failure["append"].as_object().unwrap().is_empty());
+    let final_patch = &frames.last().unwrap()["patch"];
+    assert_eq!(final_patch["phase"], "complete", "{final_patch}");
     let snapshot = json_response(
         request(
             &app,
@@ -718,29 +698,14 @@ async fn oversized_aggregate_preview_terminates_with_a_failed_update_but_keeps_p
         StatusCode::OK,
     )
     .await;
-    assert_eq!(
-        (
-            &snapshot["phase"],
-            &snapshot["search_complete"],
-            &snapshot["exportable"],
-            &snapshot["error"],
-            &snapshot["counts"],
-            &snapshot["received"],
-            &snapshot["rows"],
-            &snapshot["definitions"],
-        ),
-        (
-            &json!("failed"),
-            &json!(true),
-            &json!(true),
-            &json!(message),
-            &json!({"first":30,"second":30}),
-            &json!(60),
-            &json!({}),
-            &json!(["first", "second"]),
-        ),
-        "a reload reads the same terminal state the event stream ended with: {snapshot}"
-    );
+    assert_eq!(snapshot["phase"], "complete");
+    assert!(snapshot["error"].is_null());
+    assert_eq!(snapshot["counts"], json!({"first":30,"second":30}));
+    assert_eq!(snapshot["received"], 60);
+    assert_eq!(snapshot["definitions"], json!(["first", "second"]));
+    assert_eq!(snapshot["rows"]["first"].as_array().unwrap().len(), 30);
+    assert!(snapshot["rows"].get("second").is_none());
+    assert!(serde_json::to_vec(&snapshot["rows"]).unwrap().len() <= 4 * 1024 * 1024);
     let inspected = json_response(
         request(
             &app,
@@ -757,7 +722,7 @@ async fn oversized_aggregate_preview_terminates_with_a_failed_update_but_keeps_p
         request(
             &app,
             Method::GET,
-            &format!("/api/questions/runs/{id}/documents?pattern=first&continuous=1&limit=30"),
+            &format!("/api/questions/runs/{id}/documents?pattern=second&continuous=1&limit=30"),
             None,
         )
         .await,
@@ -867,22 +832,32 @@ async fn unreferenced_large_attributes_do_not_block_projected_pages_or_complete_
     for record in records.iter().filter(|record| record["type"] == "match") {
         assert_surface_projection(&record["data"]);
     }
-    let selected = submit(&app, "p := [lemma~x].", "", None).await;
+    let selected = submit(&app, "p := [lemma~x | lemma=cat].", "", None).await;
     let frames = updates(&app, &selected).await;
-    assert_eq!(frames.last().unwrap()["patch"]["phase"], "failed");
-    assert_eq!(
-        frames.last().unwrap()["patch"]["error"],
-        "An example in these results is too large to display."
-    );
-    assert_eq!(frames.last().unwrap()["patch"]["exportable"], true);
+    assert_eq!(frames.last().unwrap()["patch"]["phase"], "complete");
+    let page = json_response(
+        request(
+            &app,
+            Method::GET,
+            &format!(
+                "/api/questions/runs/{selected}/documents?pattern=p&continuous=1&after=14&limit=2"
+            ),
+            None,
+        )
+        .await,
+        StatusCode::OK,
+    )
+    .await;
+    assert_eq!(page["matches_total"], 17);
+    assert_eq!(page["rows"][0]["surface"], "cat");
+    assert_eq!(page["rows"][1]["corpus_sentence_ordinal"], 16);
+    assert_eq!(page["rows"][1]["preview_omitted"], true);
+    assert_eq!(page["rows"][1]["tokens"], json!([]));
     let records = export_records(&app, &selected).await;
-    let types = records
-        .iter()
-        .map(|record| record["type"].as_str().unwrap())
-        .collect::<Vec<_>>();
-    assert_eq!(types, ["run", "match", "complete"]);
+    assert_eq!(records.len(), 19);
+    assert_eq!(records.last().unwrap()["type"], "complete");
     assert_eq!(
-        records[1]["data"]["tokens"][0]["attributes"],
+        records[17]["data"]["tokens"][0]["attributes"],
         json!({"text":"cat","lemma":"x".repeat(1024 * 1024 + 1)}),
         "export writes the oversized example in full"
     );
@@ -939,7 +914,7 @@ async fn a_complete_run_exports_an_oversized_example_outside_its_preview() {
 }
 
 #[tokio::test]
-async fn a_preview_that_cannot_be_projected_ends_the_stream_only_after_the_search_completes() {
+async fn an_omitted_example_keeps_its_position_in_stream_and_snapshot() {
     let mut sentences = vec![vec![
         TokenInfo::default()
             .with_orth("cat")
@@ -957,17 +932,7 @@ async fn a_preview_that_cannot_be_projected_ends_the_stream_only_after_the_searc
     let id = submit(&app, "p := [lemma~x].", "", None).await;
     let frames = updates(&app, &id).await;
     let (last, earlier) = frames.split_last().unwrap();
-    assert_eq!(last["patch"]["phase"], "failed");
-    assert_eq!(
-        last["patch"]["error"],
-        "An example in these results is too large to display."
-    );
-    assert_eq!(last["patch"]["search_complete"], true, "{last}");
-    assert_eq!(
-        last["patch"]["exportable"], true,
-        "export does not apply the per-example display limit: {last}"
-    );
-    assert_eq!(last["patch"]["counts"], json!({"p":1}));
+    assert_eq!(last["patch"]["phase"], "complete");
     for frame in earlier {
         assert!(
             frame["patch"]
@@ -976,7 +941,6 @@ async fn a_preview_that_cannot_be_projected_ends_the_stream_only_after_the_searc
             "{frame}"
         );
         assert!(frame["patch"]["error"].is_null(), "{frame}");
-        assert!(frame["append"].as_object().unwrap().is_empty(), "{frame}");
     }
     let view = store
         .coordinators
@@ -999,22 +963,15 @@ async fn a_preview_that_cannot_be_projected_ends_the_stream_only_after_the_searc
         StatusCode::OK,
     )
     .await;
-    assert_eq!(
-        (
-            &snapshot["phase"],
-            &snapshot["search_complete"],
-            &snapshot["exportable"],
-            &snapshot["error"],
-            &snapshot["counts"],
-        ),
-        (
-            &json!("failed"),
-            &json!(true),
-            &json!(true),
-            &json!("An example in these results is too large to display."),
-            &json!({"p":1}),
-        ),
-        "{snapshot}"
+    assert_eq!(snapshot["phase"], "complete");
+    assert!(snapshot["error"].is_null());
+    assert_eq!(snapshot["counts"], json!({"p":1}));
+    let row = &snapshot["rows"]["p"][0];
+    assert_eq!(row["preview_omitted"], true);
+    assert_eq!(row["sequence"], 0);
+    assert!(
+        frames.iter().any(|frame| frame["append"]["p"][0] == *row),
+        "the same example address is sent over SSE"
     );
     let records = export_records(&app, &id).await;
     assert_eq!(

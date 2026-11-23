@@ -987,7 +987,11 @@ function renderLines(panel: HTMLElement,run: RunSnapshot | undefined,_force=fals
       desired.push(heading);previousDocument=row.document_ordinal;
     }
     const link=node(`match:${row.sequence}`,'a','kwic-row') as HTMLAnchorElement;
-    if(!link.hasAttribute('data-sequence')){link.dataset.sequence=String(row.sequence);link.setAttribute('data-view','');}
+    if(!link.hasAttribute('data-sequence'))link.dataset.sequence=String(row.sequence);
+    const omitted=row.preview_omitted===true;
+    link.toggleAttribute('data-view',!omitted);
+    if(omitted)link.setAttribute('aria-disabled','true');else link.removeAttribute('aria-disabled');
+    const matchText=omitted?(locale==='ja'?'用例の全文は JSONL で確認できます':'Full example in JSONL download'):row.surface;
     const ordinal=grouped?index+1:view.start+allRows.indexOf(row)+1;
     const expanded=String(inspecting?.run.id===run.id&&inspecting.row.sequence===row.sequence&&!tokenLab.hidden);if(link.getAttribute('aria-expanded')!==expanded)link.setAttribute('aria-expanded',expanded);
     let content=concordanceContent.get(link);
@@ -998,20 +1002,20 @@ function renderLines(panel: HTMLElement,run: RunSnapshot | undefined,_force=fals
     }
     const rowChanged=content.row!==row;
     if(rowChanged||content.hrefScope!==hrefScope){
-      link.href=hrefFor(run,hitLocation(run,row,'example'));
+      if(omitted)link.removeAttribute('href');else link.href=hrefFor(run,hitLocation(run,row,'example'));
       content.hrefScope=hrefScope;
     }
-    if(rowChanged||content.ordinal!==ordinal){
-      link.setAttribute('aria-label',`${documentTitle(row)}, ${ordinal}: ${lineText(row)}`);
+    if(rowChanged||content.ordinal!==ordinal||omitted){
+      link.setAttribute('aria-label',`${documentTitle(row)}, ${ordinal}: ${omitted?matchText:lineText(row)}`);
       setConcordanceText(content.number,String(ordinal));
       content.ordinal=ordinal;
     }
     const sentence=grouped&&zoom===2?row.sentence_text:null;
     const contextKey=grouped?(sentence?-1:-(context+2)):context;
-    if(rowChanged||content.context!==contextKey){
+    if(rowChanged||content.context!==contextKey||omitted){
       link.classList.toggle('has-sentence',!!sentence);
       const bound=boundOutside(row,row.span.end+(row.right_context?.length??0));
-      setConcordanceText(content.hit,row.surface);
+      setConcordanceText(content.hit,matchText);
       const left=context?(row.left_context??[]).slice(-context):[],right=(row.right_context??[]).slice(0,context);
       if(sentence){
         const [before,match,after]=sentence;
@@ -1155,6 +1159,7 @@ function filterEmpty(element:HTMLElement,run:RunSnapshot,pattern:string,filter:s
   }else element.append(locale==='ja'?' 絞り込みは表示中の用例だけを対象にします。コーパス全体で探すには、パターンを変えて検索してください。':' The filter searches only these lines. To search the whole corpus, change the pattern and search again.');
 }
 async function inspect(run: RunSnapshot,row: MatchRecord,button: HTMLElement) {
+  if(row.preview_omitted)return;
   const epoch=++inspectionEpoch;inspectionFailure=null;
   button.setAttribute('aria-busy','true');
   try {
@@ -1185,6 +1190,12 @@ async function inspect(run: RunSnapshot,row: MatchRecord,button: HTMLElement) {
   finally{button.removeAttribute('aria-busy');}
 }
 
+function adjacentExample(rows:readonly MatchRecord[],sequence:number,step:number):MatchRecord|undefined {
+  const at=rows.findIndex(row=>row.sequence===sequence);
+  return step<0?rows.slice(0,Math.max(0,at)).findLast(row=>!row.preview_omitted)
+    :rows.slice(at+1).find(row=>!row.preview_omitted);
+}
+
 function renderExampleSteps(){
   if(!inspecting)return;
   const {run,row}=inspecting,previous=$<HTMLButtonElement>('[data-example-step="-1"]',exampleSteps),next=$<HTMLButtonElement>('[data-example-step="1"]',exampleSteps);
@@ -1196,14 +1207,13 @@ function renderExampleSteps(){
   }
   const panel=panels.get(run.id),samples=panel&&byWork(run)?workRows.get(panel):undefined;
   if(samples){
-    const position=samples.findIndex(value=>value.sequence===row.sequence);
-    previous.disabled=position<=0;next.disabled=position<0||position===samples.length-1;
+    previous.disabled=!adjacentExample(samples,row.sequence,-1);next.disabled=!adjacentExample(samples,row.sequence,1);
     $('#token-origin').textContent=documentTitle(row);
     return;
   }
   const page=documentView(run,row.pattern),position=page.rows.findIndex(value=>value.sequence===row.sequence);
-  previous.disabled=position<=0&&page.previousAfter==null;
-  next.disabled=position===page.rows.length-1&&page.next==null;
+  previous.disabled=!adjacentExample(page.rows,row.sequence,-1)&&page.previousAfter==null;
+  next.disabled=!adjacentExample(page.rows,row.sequence,1)&&page.next==null;
   $('#token-origin').textContent=`${documentTitle(row)} · ${count(position<0?row.sequence+1:page.start+position+1)}`;
 }
 async function openEntryLine(run:RunSnapshot,at:number){
@@ -1215,17 +1225,17 @@ async function openEntryLine(run:RunSnapshot,at:number){
 for(const control of exampleSteps.querySelectorAll<HTMLButtonElement>('button'))control.addEventListener('click',async()=>{
   const origin=inspecting;if(!origin)return;
   if(entryActive()){control.disabled=true;try{await openEntryLine(origin.run,entryLines!.at+Number(control.dataset.exampleStep));}finally{if(inspecting===origin)renderExampleSteps();}return;}
-  const {run,row}=origin,step=Number(control.dataset.exampleStep),view=documentView(run,row.pattern),position=view.rows.findIndex(value=>value.sequence===row.sequence);
+  const {run,row}=origin,step=Number(control.dataset.exampleStep),view=documentView(run,row.pattern);
   const panel=panels.get(run.id),samples=panel&&byWork(run)?workRows.get(panel):undefined;
   const top=tokenLab.getBoundingClientRect().top,epoch=navigationEpoch,hadFocus=document.activeElement===control;let successor:number|null=null;control.disabled=true;
   try{
-    const sample=samples?.[samples.findIndex(value=>value.sequence===row.sequence)+step];
-    if(samples&&!sample)return;
-    let next=sample??view.rows[position+step];let page:DocumentPage|undefined;
+    let next=adjacentExample(samples??view.rows,row.sequence,step);let page:DocumentPage|undefined;
+    if(samples&&!next)return;
     if(!next){
-      const query=new URLSearchParams({pattern:row.pattern,limit:String(controls.state.lines),continuous:view.scopeDocument==null?'1':'0',after:String(step<0?view.previousAfter??-1:row.sequence),q:view.query});
+      const query=new URLSearchParams({pattern:row.pattern,limit:String(controls.state.lines),continuous:view.scopeDocument==null?'1':'0',after:String(step<0?view.previousAfter??-1:view.next??row.sequence),q:view.query});
       if(view.scopeDocument!=null)query.set('document',String(view.scopeDocument));
-      page=await request<DocumentPage>(`api/questions/runs/${run.id}/documents?${query}`);next=step<0?page.rows.at(-1)!:page.rows[0];
+      page=await request<DocumentPage>(`api/questions/runs/${run.id}/documents?${query}`);
+      next=step<0?page.rows.findLast(row=>!row.preview_omitted):page.rows.find(row=>!row.preview_omitted);
     }
     if(!next||epoch!==navigationEpoch||inspecting!==origin)return;
     const target=hitLocation(run,next,'example');successor=next.sequence;

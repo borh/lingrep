@@ -12,7 +12,7 @@ use axum::{
 };
 use futures::StreamExt;
 use lingrep_core::execution::{
-    ExecutionBatch, ExecutionError, ExecutionLimits, SentenceAdmission, SentenceBatchSource,
+    ExecutionBatch, ExecutionLimits, SentenceAdmission, SentenceBatchSource, TokenizedAdmission,
 };
 use lingrep_core::fsm::{GraphBinding, LexicalProjectedKeyValue};
 use lingrep_core::token_match::BoundTokenSentence;
@@ -174,12 +174,6 @@ struct RunSnapshot {
     version: u64,
     error: Option<String>,
     error_code: Option<&'static str>,
-    /// Set on a completed search whose preview cannot be projected.
-    #[serde(skip_serializing_if = "Option::is_none")]
-    search_complete: Option<bool>,
-    /// Whether the run's export can hold every match; present with `search_complete`.
-    #[serde(skip_serializing_if = "Option::is_none")]
-    exportable: Option<bool>,
     diagnostics: Vec<Value>,
     notices: Vec<String>,
     counters: Option<Value>,
@@ -300,8 +294,6 @@ async fn project_run_with_cache(
     let mut counters = None;
     let current_ready = runtime.ready().await;
     let mut condition = attempt.search_scope.clause().unwrap_or_default().to_owned();
-    let completed = attempt.phase == AttemptPhase::Completed;
-    let mut undisplayable: Option<String> = None;
     if let Some(snapshot) = snapshot.filter(|snapshot| snapshot.revision == attempt.revision) {
         condition = snapshot
             .search_scope
@@ -318,7 +310,7 @@ async fn project_run_with_cache(
                     .page(pattern.key, None, -1, 30)
                     .await
                     .map_err(unavailable)?;
-                let group = match project_occurrences(
+                let group = project_occurrences(
                     ready,
                     &page.rows,
                     &snapshot.capture_catalog,
@@ -327,26 +319,11 @@ async fn project_run_with_cache(
                     INSPECTION_BYTES,
                     OccurrenceOutput::Matches,
                 )
-                .await
-                {
-                    Ok(group) => group,
-                    Err(error) if completed && error.0 == StatusCode::PAYLOAD_TOO_LARGE => {
-                        undisplayable =
-                            Some("An example in these results is too large to display.".into());
-                        break;
-                    }
-                    Err(error) => return Err(error),
-                };
+                .await?;
                 preview_bytes = preview_bytes
                     .saturating_add(serde_json::to_vec(&group).map_err(unavailable)?.len());
                 if preview_bytes > PREVIEW_BYTES {
-                    let message =
-                        "The result preview is too large to display. Search fewer patterns.";
-                    if completed {
-                        undisplayable = Some(message.into());
-                        break;
-                    }
-                    return Err(ApiError(StatusCode::PAYLOAD_TOO_LARGE, message.into()));
+                    break;
                 }
                 rows.insert(pattern.name.clone(), group);
             }
@@ -367,14 +344,17 @@ async fn project_run_with_cache(
             counts.insert(pattern.name.to_string(), pattern.total);
         }
         if let Some(ready) = &current_ready {
+            let preview = &summary.preview[..summary
+                .preview
+                .len()
+                .min(lingrep_corpus::MAX_PROVENANCE_PAGE_SIZE)];
             let uncached: Vec<ResultOccurrence> = match live_cache.as_deref() {
-                Some(cache) => summary
-                    .preview
+                Some(cache) => preview
                     .iter()
                     .filter(|occ| !cache.contains_key(&occ.sequence))
                     .cloned()
                     .collect(),
-                None => summary.preview.to_vec(),
+                None => preview.to_vec(),
             };
             let mut projected = if uncached.is_empty() {
                 Vec::new().into_iter()
@@ -391,7 +371,7 @@ async fn project_run_with_cache(
                 .await?
                 .into_iter()
             };
-            for occurrence in summary.preview.iter() {
+            for occurrence in preview {
                 let name = definitions
                     .get(occurrence.reference.pattern_key.index())
                     .cloned()
@@ -419,10 +399,7 @@ async fn project_run_with_cache(
                 };
                 preview_bytes = preview_bytes.saturating_add(entry_bytes);
                 if preview_bytes > PREVIEW_BYTES {
-                    return Err(ApiError(
-                        StatusCode::PAYLOAD_TOO_LARGE,
-                        "The result preview is too large to display. Search fewer patterns.".into(),
-                    ));
+                    break;
                 }
                 rows.entry(name).or_insert_with(Vec::new).push(row);
             }
@@ -464,18 +441,6 @@ async fn project_run_with_cache(
             .await
             .map_err(unavailable)?;
     }
-    let (phase, error, search_complete, exportable) = match undisplayable {
-        Some(message) => {
-            rows.clear();
-            ("failed", Some(message), Some(true), Some(true))
-        }
-        None => (
-            phase,
-            attempt.failure().map(|e| e.message.clone()),
-            None,
-            None,
-        ),
-    };
     Ok(RunSnapshot {
         id: id.into(),
         phase,
@@ -490,15 +455,13 @@ async fn project_run_with_cache(
         started: 0,
         elapsed: 0.0,
         version,
-        error,
+        error: attempt.failure().map(|e| e.message.clone()),
         error_code: attempt.failure().and_then(|e| match e.category {
             ErrorCategory::VectorsChanged => Some("vectors_changed"),
             ErrorCategory::AnalysisChanged => Some("analysis_changed"),
             ErrorCategory::ResultLimit => Some("result_limit"),
             _ => None,
         }),
-        search_complete,
-        exportable,
         diagnostics,
         notices: crate::revision_status::project_revision_status(Some(view))
             .notices
@@ -576,7 +539,6 @@ async fn events(State(store): State<RequestStore>, Path(id): Path<String>) -> Re
             if finished {
                 live_cache.clear();
             }
-            let undisplayable = projected.search_complete.is_some();
             let value = serde_json::to_value(projected).expect("question snapshots serialize");
             let mut patch = value.as_object().expect("snapshot object").clone();
             let all_rows = patch.remove("rows").unwrap_or_else(|| json!({}));
@@ -610,7 +572,7 @@ async fn events(State(store): State<RequestStore>, Path(id): Path<String>) -> Re
                     append.insert(pattern.clone(), Value::Array(added));
                 }
             }
-            if let Some(old) = prior.as_ref().filter(|_| !undisplayable) {
+            if let Some(old) = prior.as_ref() {
                 patch.retain(|key, value| key == "version" || old.get(key) != Some(value));
             }
             let event = Event::default()
@@ -747,11 +709,6 @@ enum OccurrenceOutput {
     WorkSamples,
 }
 
-enum DecodeBatchError {
-    Unavailable(String),
-    Oversized,
-}
-
 type DecodedSentences = HashMap<u64, Option<(BoundTokenSentence, Vec<TokenRow>)>>;
 
 fn decode_projected_sentences(
@@ -762,7 +719,7 @@ fn decode_projected_sentences(
     attributes: &[lingrep_core::token_match::AttributeKey],
     unique_sentences: Vec<u64>,
     max_sentence_bytes: usize,
-) -> std::result::Result<DecodedSentences, DecodeBatchError> {
+) -> std::result::Result<DecodedSentences, String> {
     let mut decoded_map = HashMap::with_capacity(unique_sentences.len());
     if unique_sentences.is_empty() {
         return Ok(decoded_map);
@@ -771,15 +728,13 @@ fn decode_projected_sentences(
         .last()
         .is_some_and(|&ordinal| ordinal >= artifact.sentence_count())
     {
-        return Err(DecodeBatchError::Unavailable(
-            "sentence ordinal is outside the corpus".into(),
-        ));
+        return Err("sentence ordinal is outside the corpus".into());
     }
     if unique_sentences.len() == 1 {
         let ordinal = unique_sentences[0];
         let sentence = reader
             .sentence_projection_bounded(ordinal, attributes, max_sentence_bytes)
-            .map_err(|error| DecodeBatchError::Unavailable(error.to_string()))?;
+            .map_err(|error| error.to_string())?;
         let projected = sentence.map(|sentence| {
             let rows = token_rows_for_keys(&sentence, attributes);
             (sentence, rows)
@@ -789,16 +744,17 @@ fn decode_projected_sentences(
     }
     let projection = schema
         .bind_projection(attributes.iter().cloned())
-        .map_err(|error| DecodeBatchError::Unavailable(error.to_string()))?;
+        .map_err(|error| error.to_string())?;
     let mut source = artifact
         .bound_sentence_source(&projection)
-        .map_err(|error| DecodeBatchError::Unavailable(error.to_string()))?
+        .map_err(|error| error.to_string())?
         .with_decode_pool(pool)
         .with_ordinals(unique_sentences.clone())
-        .map_err(|error| DecodeBatchError::Unavailable(error.to_string()))?;
+        .map_err(|error| error.to_string())?;
     let batch_limit = if max_sentence_bytes == usize::MAX {
         usize::MAX
     } else {
+        source = source.with_tokenized_admission(TokenizedAdmission::Omit);
         max_sentence_bytes.max(64 * 1024 * 1024)
     };
     let limits = ExecutionLimits {
@@ -806,10 +762,10 @@ fn decode_projected_sentences(
         max_tokenized_bytes: batch_limit,
         ..ExecutionLimits::default()
     };
-    while let Some(batch) = source.next_batch(&limits).map_err(|error| match error {
-        ExecutionError::TokenizedSentenceTooLarge { .. } => DecodeBatchError::Oversized,
-        other => DecodeBatchError::Unavailable(other.to_string()),
-    })? {
+    while let Some(batch) = source
+        .next_batch(&limits)
+        .map_err(|error| error.to_string())?
+    {
         if let ExecutionBatch::BoundTokenized { sentences, .. } = batch {
             for sentence in sentences {
                 let ordinal = sentence.location.corpus_sentence_ordinal;
@@ -817,10 +773,7 @@ fn decode_projected_sentences(
                 let within_limit = if max_sentence_bytes == usize::MAX {
                     true
                 } else {
-                    words
-                        .resident_bytes()
-                        .map_err(|error| DecodeBatchError::Unavailable(error.to_string()))?
-                        <= max_sentence_bytes
+                    words.resident_bytes().map_err(|error| error.to_string())? <= max_sentence_bytes
                 };
                 if within_limit {
                     let rows = token_rows_for_keys(&words, attributes);
@@ -832,6 +785,13 @@ fn decode_projected_sentences(
         }
     }
     Ok(decoded_map)
+}
+
+fn omitted_preview(mut address: Value) -> Value {
+    address["preview_omitted"] = json!(true);
+    address["surface"] = json!("");
+    address["tokens"] = json!([]);
+    address
 }
 
 async fn project_occurrences(
@@ -868,7 +828,7 @@ async fn project_occurrences_with_provenance(
     if occurrences.is_empty() {
         return Ok((Vec::new(), HashMap::new()));
     }
-    let max_response_bytes = match projection {
+    let mut page_bytes_remaining: Option<usize> = match projection {
         OccurrenceOutput::Matches => None,
         OccurrenceOutput::DocumentPage | OccurrenceOutput::WorkSamples => Some(32 * 1024 * 1024),
     };
@@ -911,32 +871,42 @@ async fn project_occurrences_with_provenance(
     let origins_vec = provenance_res?;
     let origins_by_sentence: HashMap<u64, Option<SentenceProvenance>> =
         unique_sentences.into_iter().zip(origins_vec).collect();
-    let decoded_by_sentence = match decoded_res.map_err(unavailable)? {
-        Ok(map) => map,
-        Err(DecodeBatchError::Oversized) => {
-            return Err(ApiError(
-                StatusCode::PAYLOAD_TOO_LARGE,
-                "This example is too large to display. Choose another example.".into(),
-            ));
-        }
-        Err(DecodeBatchError::Unavailable(message)) => return Err(unavailable(message)),
-    };
+    let decoded_by_sentence = decoded_res.map_err(unavailable)?.map_err(unavailable)?;
 
     let mut output = Vec::with_capacity(occurrences.len());
-    let mut output_bytes = 0usize;
     for occurrence in occurrences {
         let sentence = occurrence.reference.sentence_index;
         let origin = origins_by_sentence.get(&sentence).and_then(Option::as_ref);
-        let (decoded, tokens) = decoded_by_sentence
-            .get(&sentence)
-            .and_then(Option::as_ref)
-            .ok_or_else(|| {
-                ApiError(
-                    StatusCode::PAYLOAD_TOO_LARGE,
-                    "This example is too large to display. Choose another example.".into(),
-                )
-            })?;
         let range = occurrence.reference.span.clone();
+        let pattern = patterns
+            .get(occurrence.reference.pattern_key.index())
+            .ok_or_else(|| invalid("This pattern is not part of the search."))?;
+        let source_name = if occurrence.source_name.is_empty() {
+            origin.map_or("", |origin| &*origin.location.source_name)
+        } else {
+            occurrence.source_name.as_ref()
+        };
+        let address = || {
+            json!({
+                "sequence": occurrence.sequence,
+                "pattern": pattern,
+                "span": {"start": range.start, "end": range.end},
+                "corpus_sentence_ordinal": sentence,
+                "source_name": source_name,
+                "document_ordinal": occurrence.document_ordinal,
+                "document_sentence_ordinal": occurrence.document_sentence_ordinal
+            })
+        };
+        let Some((decoded, tokens)) = decoded_by_sentence.get(&sentence).and_then(Option::as_ref)
+        else {
+            if max_sentence_bytes == usize::MAX {
+                return Err(unavailable(
+                    "an indexed sentence could not be loaded for export",
+                ));
+            }
+            output.push(omitted_preview(address()));
+            continue;
+        };
         if range.end > tokens.len() || range.start >= range.end {
             return Err(invalid(
                 "The saved match span could not be read. Run this query again.",
@@ -949,7 +919,16 @@ async fn project_occurrences_with_provenance(
             if let Some(Some(span))=occurrence.capture_char_spans.get(index){value["char_span"]=json!({"start":span.start,"end":span.end});}
             Ok(value)
         }).collect::<Result<Vec<_>>>()?;
-        let mut row = json!({"sequence":occurrence.sequence,"pattern":patterns.get(occurrence.reference.pattern_key.index()).ok_or_else(||invalid("This pattern is not part of the search."))?,"span":{"start":range.start,"end":range.end},"captures":projected_captures,"corpus_sentence_ordinal":sentence,"source_name":if occurrence.source_name.is_empty(){origin.map(|p|p.location.source_name.as_ref()).unwrap_or_default()}else{occurrence.source_name.as_ref()},"document_ordinal":occurrence.document_ordinal,"document_sentence_ordinal":occurrence.document_sentence_ordinal,"surface":lingrep_core::token_match::display_text(decoded, range.clone()),"tokens":&tokens[range.clone()],"left_context":&tokens[range.start.saturating_sub(24)..range.start],"right_context":&tokens[range.end..range.end.saturating_add(24).min(tokens.len())]});
+        let mut row = address();
+        row["captures"] = json!(projected_captures);
+        row["surface"] = json!(lingrep_core::token_match::display_text(
+            decoded,
+            range.clone()
+        ));
+        row["tokens"] = json!(&tokens[range.clone()]);
+        row["left_context"] = json!(&tokens[range.start.saturating_sub(24)..range.start]);
+        row["right_context"] =
+            json!(&tokens[range.end..range.end.saturating_add(24).min(tokens.len())]);
         if matches!(projection, OccurrenceOutput::WorkSamples) {
             use lingrep_core::token_match::display_text;
             let mut before = display_text(decoded, 0..range.start);
@@ -1041,15 +1020,12 @@ async fn project_occurrences_with_provenance(
         if let Some(metadata) = &occurrence.source_metadata {
             row["source_metadata"] = json!(metadata);
         }
-        if let Some(limit) = max_response_bytes {
-            output_bytes =
-                output_bytes.saturating_add(serde_json::to_vec(&row).map_err(unavailable)?.len());
-            if output_bytes > limit {
-                return Err(ApiError(
-                    StatusCode::PAYLOAD_TOO_LARGE,
-                    "These examples are too large to display together. Request fewer examples."
-                        .into(),
-                ));
+        if let Some(remaining) = &mut page_bytes_remaining {
+            let bytes = serde_json::to_vec(&row).map_err(unavailable)?.len();
+            if bytes <= *remaining {
+                *remaining -= bytes;
+            } else {
+                row = omitted_preview(address());
             }
         }
         output.push(row);

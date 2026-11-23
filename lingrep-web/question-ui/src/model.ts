@@ -21,6 +21,7 @@ export interface MatchRecord {
   readonly document_ordinal: number;
   readonly source_name: string;
   readonly source_metadata?: { readonly document?: { readonly title?: string; readonly author?: string } };
+  readonly preview_omitted?: boolean;
   readonly surface: string;
   readonly sentence_text?: readonly [string,string,string];
   readonly captures?: readonly { readonly name: string; readonly span: { readonly start: number; readonly end: number } }[];
@@ -110,6 +111,7 @@ function diagnosticValue(value:unknown):boolean {
 }
 function matchValue(value: unknown): boolean {
   if (!objectValue(value) || !objectValue(value.span)) return false;
+  if (value.preview_omitted !== undefined && typeof value.preview_omitted !== 'boolean') return false;
   if (!['sequence','corpus_sentence_ordinal','document_ordinal'].every(key => finiteNumber(value[key]))) return false;
   if (!['pattern','source_name','surface'].every(key => typeof value[key] === 'string')) return false;
   if (!finiteNumber(value.span.start) || !finiteNumber(value.span.end) || value.span.end < value.span.start) return false;

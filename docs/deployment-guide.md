@@ -121,9 +121,10 @@ includes `vectors_blake3` in the run record of its JSON Lines export.
 
 Complete question results use a temporary index capped at 128 MiB per search.
 If a search exceeds that limit, narrow its pattern or document conditions and
-run it again. Result previews are capped at 4 MiB; search fewer patterns when a
-preview exceeds that limit. Completed searches remain downloadable when their
-previews exceed the display limits. Question exports stream all indexed matches
+run it again. The initial preview holds up to 4 MiB of examples. Each pattern's
+results remain available through concordance pages. A row whose text exceeds
+the display budget keeps its place in the results and points to the JSONL
+download. Question exports stream all indexed matches
 as JSON Lines using `lingrep.question-results/v1`, including examples above the
 1 MiB memory limit for loading a sentence preview. Export memory grows with the
 largest matched sentence; the preview limits do not apply to exports.

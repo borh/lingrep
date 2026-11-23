@@ -40,6 +40,8 @@ function diagnosticValue(value) {
 function matchValue(value) {
     if (!objectValue(value) || !objectValue(value.span))
         return false;
+    if (value.preview_omitted !== undefined && typeof value.preview_omitted !== 'boolean')
+        return false;
     if (!['sequence', 'corpus_sentence_ordinal', 'document_ordinal'].every(key => finiteNumber(value[key])))
         return false;
     if (!['pattern', 'source_name', 'surface'].every(key => typeof value[key] === 'string'))

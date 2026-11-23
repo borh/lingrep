@@ -3973,8 +3973,7 @@ async fn a_short_result_leaves_the_example_count_for_the_next_search() -> WebDri
 }
 
 #[tokio::test]
-async fn a_completed_search_whose_results_cannot_be_displayed_offers_its_download()
--> WebDriverResult<()> {
+async fn a_completed_search_over_the_preview_budget_pages_each_pattern() -> WebDriverResult<()> {
     let Some(driver) = driver().await? else {
         return Ok(());
     };
@@ -4007,66 +4006,26 @@ async fn a_completed_search_whose_results_cannot_be_displayed_offers_its_downloa
         driver.goto(format!("{root}#{query}")).await?;
         wait_for(
             &driver,
-            "return document.querySelector('#status').textContent === 'The search is complete, but its results cannot be displayed here.'",
-            "the undisplayable completed search",
+            "return document.querySelector('#status').textContent === 'Complete' && \
+             document.querySelectorAll('.kwic-row').length > 0",
+            "the initial concordance from the completed search",
         )
         .await?;
-        observed(
-            &driver,
-            "const link = document.querySelector('#export-run'); \
-             return {link: !link.hidden && link.getClientRects().length > 0, text: link.textContent, \
-               export: /\\/sub\\/api\\/questions\\/runs\\/[0-9a-f]+\\/export$/.test(link.href), \
-               retry: document.querySelector('#retry').hidden, \
-               error: document.querySelector('#error').textContent}",
-            json!({"link": true, "text": "Download all results as JSONL", "export": true, "retry": true,
-                "error": "The result preview is too large to display. Search fewer patterns."}),
-            "the status of a completed search without displayable results",
-        )
-        .await?;
-        let records = driver
-            .execute_async(
-                "const done = arguments[arguments.length - 1]; \
-                 fetch(document.querySelector('#export-run').href).then((r) => r.text()) \
-                   .then((body) => done(body.trim().split('\\n').map((line) => JSON.parse(line).type)));",
-                Vec::new(),
-            )
-            .await?
-            .json()
-            .clone();
-        let types = records.as_array().unwrap();
-        assert_eq!(types.iter().filter(|kind| *kind == "match").count(), 60);
-        assert_eq!(types.last().unwrap(), "complete");
-        let export = driver
-            .execute("return document.querySelector('#export-run').href", Vec::new())
-            .await?
-            .json()
-            .clone();
+        driver.find(By::Css(".pattern-picker summary")).await?.click().await?;
+        driver.find(By::Css(".pattern-picker [data-pattern='second']")).await?.click().await?;
+        let second_page = "return document.querySelector('#status').textContent === 'Complete' && \
+             document.querySelector('[data-pattern=second]')?.getAttribute('aria-pressed') === 'true' && \
+             document.querySelector('.kwic-list')?.getAttribute('aria-busy') === 'false' && \
+             document.querySelectorAll('.kwic-row').length > 0";
+        wait_for(&driver, second_page, "the second pattern's concordance").await?;
         driver.refresh().await?;
-        wait_for(
-            &driver,
-            "return document.querySelector('#status').textContent === 'The search is complete, but its results cannot be displayed here.'",
-            "the undisplayable completed search after a reload",
-        )
-        .await?;
+        wait_for(&driver, second_page, "the same concordance after reload").await?;
         observed(
             &driver,
-            "const link = document.querySelector('#export-run'); \
-             return {link: !link.hidden && link.getClientRects().length > 0, href: link.href, \
-               retry: document.querySelector('#retry').hidden, \
-               error: document.querySelector('#error').textContent}",
-            json!({"link": true, "href": export, "retry": true,
-                "error": "The result preview is too large to display. Search fewer patterns."}),
-            "the same run's status and download after a reload",
-        )
-        .await?;
-        driver
-            .execute("document.querySelector('#language').click()", Vec::new())
-            .await?;
-        observed(
-            &driver,
-            "return [document.querySelector('#status').textContent, document.querySelector('#export-run').textContent]",
-            json!(["検索は完了しましたが、結果をここに表示できません。", "全結果を JSONL で保存"]),
-            "the same status in Japanese",
+            "return [document.querySelector('#error').hidden, \
+                document.querySelector('.result-header a[href$=\"/export\"]')?.getClientRects().length > 0]",
+            json!([true, true]),
+            "the completed search with its download",
         )
         .await?;
         assert_no_page_errors(&driver).await
@@ -4200,7 +4159,7 @@ async fn the_result_list_is_one_tab_stop_crossed_with_arrow_keys() -> WebDriverR
 }
 
 #[tokio::test]
-async fn a_completed_search_with_an_oversized_example_offers_its_download() -> WebDriverResult<()> {
+async fn an_oversized_example_keeps_its_place_beside_readable_rows() -> WebDriverResult<()> {
     let Some(driver) = driver().await? else {
         return Ok(());
     };
@@ -4228,31 +4187,33 @@ async fn a_completed_search_with_an_oversized_example_offers_its_download() -> W
         let query = serde_urlencoded::to_string([
             ("fresh", "1"),
             ("run", "1"),
-            ("source", "large := [lemma~x].\n"),
+            ("source", "large := [lemma~x | lemma=cat].\n"),
         ])
         .unwrap();
         driver.goto(format!("{root}#{query}")).await?;
+        select_question_kwic(&driver).await?;
         wait_for(
             &driver,
-            "return document.querySelector('#status').textContent === 'The search is complete, but its results cannot be displayed here.'",
-            "the completed search with an oversized example",
+            "return document.querySelector('#status').textContent === 'Complete' && \
+             document.querySelector('.kwic-list')?.getAttribute('aria-busy') === 'false' && \
+             document.querySelectorAll('.kwic-row').length === 6",
+            "all six results in the completed concordance",
         )
         .await?;
         observed(
             &driver,
-            "const link = document.querySelector('#export-run'); \
-             return {link: !link.hidden && link.getClientRects().length > 0, \
-               retry: document.querySelector('#retry').hidden, \
-               error: document.querySelector('#error').textContent}",
-            json!({"link": true, "retry": true,
-                "error": "An example in these results is too large to display."}),
-            "the download for a search with an oversized example",
+            "const rows = [...document.querySelectorAll('.kwic-row')]; \
+             return [rows[0].querySelector('mark').textContent, rows[0].hasAttribute('href'), \
+                rows[1].querySelector('mark').textContent, rows[1].hasAttribute('href'), \
+                document.querySelector('#error').hidden]",
+            json!(["Full example in JSONL download", false, "cat", true, true]),
+            "an omitted preview beside an ordinary match",
         )
         .await?;
         let lemmas = driver
             .execute_async(
                 "const done = arguments[arguments.length - 1]; \
-                 fetch(document.querySelector('#export-run').href).then((r) => r.text()) \
+                 fetch(document.querySelector('.result-header a[href$=\"/export\"]').href).then((r) => r.text()) \
                    .then((body) => done(body.trim().split('\\n').map((line) => JSON.parse(line)) \
                      .filter((record) => record.type === 'match') \
                      .map((record) => record.data.tokens[0].attributes.lemma.length)));",
@@ -4261,7 +4222,7 @@ async fn a_completed_search_with_an_oversized_example_offers_its_download() -> W
             .await?
             .json()
             .clone();
-        assert_eq!(lemmas, json!([lemma.len()]));
+        assert_eq!(lemmas, json!([lemma.len(), 3, 3, 3, 3, 3]));
         assert_no_page_errors(&driver).await
     }
     .await;
