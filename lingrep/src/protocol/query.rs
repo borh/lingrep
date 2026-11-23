@@ -1,3 +1,4 @@
+use std::borrow::Cow;
 use std::collections::BTreeMap;
 
 use compact_str::CompactString;
@@ -5,7 +6,11 @@ use lingrep_core::token_match::{
     AttributeKey, AttributeKind, AttributeValueRef, TokenAttributeIndex, TokenInfo, TokenSchema,
     TokenSequence,
 };
-use serde::{Deserialize, Deserializer, Serialize, de::Error as _};
+use serde::{
+    Deserialize, Deserializer, Serialize, Serializer,
+    de::{Error as _, MapAccess, Visitor},
+    ser::SerializeMap,
+};
 
 pub const SCHEMA: &str = super::ContractId::Query.as_str();
 
@@ -522,31 +527,93 @@ impl PublishedProjection {
     }
 }
 
-/// A token's attributes, in exactly the JSON shape a `BTreeMap<String, String>`
-/// produced.
+/// A token's attribute value in the query wire protocol.
 ///
-/// Keys are the schema's own `&'static str`, and values are the
-/// [`CompactString`] the token already holds, so publishing a token allocates
-/// nothing for a key and nothing for a value that fits inline. The invariant is
-/// that entries are **sorted by key**, which construction gets from a schema
-/// order sorted once per process rather than by sorting every token.
+/// Uses [`CompactString`] so short scalar values and string-set elements fit
+/// inline without heap allocations.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(untagged)]
 pub enum ProtocolAttributeValue {
-    Scalar(String),
-    StringSet(Vec<String>),
+    Scalar(#[schemars(with = "String")] CompactString),
+    StringSet(#[schemars(with = "Vec<String>")] Vec<CompactString>),
 }
 
-#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, schemars::JsonSchema)]
-pub struct TokenAttributes(BTreeMap<String, ProtocolAttributeValue>);
+/// A token's attributes, in the exact JSON object shape a
+/// `BTreeMap<String, ProtocolAttributeValue>` produces.
+///
+/// Entries are stored as a single sorted `Vec<(CompactString, ProtocolAttributeValue)>`
+/// rather than a `BTreeMap` of heap `String`s, so publishing a token does one
+/// contiguous allocation and keeps short attribute keys and values inline.
+/// Construction from a [`PublishedProjection`] inherits its already-sorted key
+/// order without re-sorting per token.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct TokenAttributes(Vec<(CompactString, ProtocolAttributeValue)>);
+
+impl Serialize for TokenAttributes {
+    fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        let mut map = serializer.serialize_map(Some(self.0.len()))?;
+        for (key, value) in &self.0 {
+            map.serialize_entry(key.as_str(), value)?;
+        }
+        map.end()
+    }
+}
+
+impl schemars::JsonSchema for TokenAttributes {
+    fn schema_name() -> Cow<'static, str> {
+        Cow::Borrowed("TokenAttributes")
+    }
+
+    fn schema_id() -> Cow<'static, str> {
+        Cow::Borrowed(concat!(module_path!(), "::TokenAttributes"))
+    }
+
+    fn json_schema(generator: &mut schemars::SchemaGenerator) -> schemars::Schema {
+        <BTreeMap<String, ProtocolAttributeValue> as schemars::JsonSchema>::json_schema(generator)
+    }
+}
 
 impl<'de> Deserialize<'de> for TokenAttributes {
     fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
-        let values = BTreeMap::<String, ProtocolAttributeValue>::deserialize(deserializer)?;
-        for key in values.keys() {
-            AttributeKey::new(key).map_err(|_| D::Error::custom("invalid token attribute key"))?;
+        struct TokenAttributesVisitor;
+
+        impl<'de> Visitor<'de> for TokenAttributesVisitor {
+            type Value = TokenAttributes;
+
+            fn expecting(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+                formatter.write_str("a map of token attributes")
+            }
+
+            fn visit_map<M>(self, mut access: M) -> Result<Self::Value, M::Error>
+            where
+                M: MapAccess<'de>,
+            {
+                let mut entries: Vec<(CompactString, ProtocolAttributeValue)> =
+                    Vec::with_capacity(access.size_hint().unwrap_or(0).min(64));
+                let mut sorted_unique = true;
+                while let Some((key, value)) =
+                    access.next_entry::<CompactString, ProtocolAttributeValue>()?
+                {
+                    AttributeKey::new(key.as_str())
+                        .map_err(|_| M::Error::custom("invalid token attribute key"))?;
+                    if let Some((prev_key, _)) = entries.last()
+                        && prev_key.as_str() >= key.as_str()
+                    {
+                        sorted_unique = false;
+                    }
+                    entries.push((key, value));
+                }
+                if !sorted_unique {
+                    // Preserve last-value-wins semantics matching BTreeMap::deserialize.
+                    entries.reverse();
+                    entries.sort_by(|left, right| left.0.cmp(&right.0));
+                    entries.dedup_by(|later, earlier| later.0 == earlier.0);
+                }
+                Ok(TokenAttributes(entries))
+            }
         }
-        Ok(Self(values))
+
+        deserializer.deserialize_map(TokenAttributesVisitor)
     }
 }
 
@@ -576,27 +643,22 @@ impl TokenAttributes {
         index: usize,
         projection: &PublishedProjection,
     ) -> Self {
-        Self(
-            projection
-                .attributes()
-                .iter()
-                .filter_map(|key| {
-                    tokens.value_key(index, key).map(|value| {
-                        let value = match value {
-                            AttributeValueRef::Scalar(value) => {
-                                ProtocolAttributeValue::Scalar(value.to_owned())
-                            }
-                            AttributeValueRef::StringSet(values) => {
-                                ProtocolAttributeValue::StringSet(
-                                    values.iter().map(ToString::to_string).collect(),
-                                )
-                            }
-                        };
-                        (key.as_str().to_owned(), value)
-                    })
-                })
-                .collect(),
-        )
+        let attributes = projection.attributes();
+        let mut entries = Vec::with_capacity(attributes.len());
+        for key in attributes {
+            if let Some(value) = tokens.value_key(index, key) {
+                let value = match value {
+                    AttributeValueRef::Scalar(value) => {
+                        ProtocolAttributeValue::Scalar(CompactString::new(value))
+                    }
+                    AttributeValueRef::StringSet(values) => {
+                        ProtocolAttributeValue::StringSet(values.to_vec())
+                    }
+                };
+                entries.push((CompactString::new(key.as_str()), value));
+            }
+        }
+        Self(entries)
     }
 
     /// Builds from explicit pairs, for tests and non-token callers.
@@ -608,16 +670,18 @@ impl TokenAttributes {
         I: IntoIterator<Item = (&'static str, V)>,
         V: Into<CompactString>,
     {
-        let entries = pairs
+        let mut entries: Vec<(CompactString, ProtocolAttributeValue)> = pairs
             .into_iter()
             .map(|(key, value)| {
-                let value: CompactString = value.into();
                 (
-                    key.to_owned(),
-                    ProtocolAttributeValue::Scalar(value.to_string()),
+                    CompactString::new(key),
+                    ProtocolAttributeValue::Scalar(value.into()),
                 )
             })
             .collect();
+        entries.reverse();
+        entries.sort_by(|left, right| left.0.cmp(&right.0));
+        entries.dedup_by(|later, earlier| later.0 == earlier.0);
         Self(entries)
     }
 
@@ -629,7 +693,11 @@ impl TokenAttributes {
     /// The value for a schema key, if the token carries it.
     #[must_use]
     pub fn get(&self, key: &str) -> Option<&str> {
-        match self.0.get(key)? {
+        let idx = self
+            .0
+            .binary_search_by(|(entry_key, _)| entry_key.as_str().cmp(key))
+            .ok()?;
+        match &self.0[idx].1 {
             ProtocolAttributeValue::Scalar(value) => Some(value.as_str()),
             ProtocolAttributeValue::StringSet(_) => None,
         }
