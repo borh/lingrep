@@ -6,7 +6,9 @@ use lingrep_core::corpus::conllu::{EnhancedGraph, EnhancedNodeId};
 use lingrep_core::execution::{
     BoundSentenceInput, EnhancedGraphInput, ExecutionError, ExecutionSentence,
 };
-use lingrep_core::token_match::{AttributeKey, AttributeValueRef, TokenSequence};
+use lingrep_core::token_match::{
+    AttributeKey, AttributeOrdinal, AttributeValueRef, BoundTokenSentence, TokenSequence,
+};
 
 use super::query_support::execution_output_io;
 use crate::error::CliError;
@@ -49,6 +51,33 @@ impl ConlluExport {
     ) -> Result<(), ExecutionError> {
         let location = &sentence.location;
         let words = &sentence.value;
+        let tokens = words.words();
+        let column =
+            |name: &str| tokens.ordinal(&AttributeKey::new(name).expect("valid export key"));
+        let surface = column("surface");
+        let dep_head = column("dep.head");
+        let lemma = column("lemma");
+        let upos = column("upos");
+        let xpos = column("xpos");
+        let dep_rel = column("dep.rel");
+        let conllu_feats = column("conllu.feats");
+        let conllu_misc = column("conllu.misc");
+        let dep_enhanced = column("dep.enhanced");
+        let feat_columns = keys
+            .iter()
+            .filter_map(|key| Some((key.as_str().strip_prefix("feat.")?, tokens.ordinal(key))))
+            .collect::<Vec<_>>();
+        let misc_columns = keys
+            .iter()
+            .filter(|key| {
+                let name = key.as_str();
+                (name.contains('.') || name == "norm")
+                    && !name.starts_with("feat.")
+                    && !name.starts_with("dep.")
+                    && !name.starts_with("conllu.")
+            })
+            .map(|key| (key.as_str(), tokens.ordinal(key)))
+            .collect::<Vec<_>>();
         let metadata = location.source_metadata.as_deref();
         let metadata_value = |owner: &str, key: &str| metadata?.get(owner)?.get(key)?.as_str();
         let format_error = |message: &str| ExecutionError::Source {
@@ -77,7 +106,7 @@ impl ConlluExport {
 
         let forms = (0..words.len())
             .map(|word| {
-                scalar(words, word, "surface")
+                scalar(tokens, word, surface)
                     .filter(|form| !form.is_empty())
                     .ok_or_else(|| {
                         format_error("CoNLL-U export requires the exact surface of every word")
@@ -113,7 +142,7 @@ impl ConlluExport {
         let mut spans = if self.pretokenized {
             Vec::new()
         } else {
-            span_misc(words)
+            span_misc(tokens, dep_head)
         };
         let graph = match words.enhanced_graph() {
             EnhancedGraphInput::Observation(observation) => observation.graph(),
@@ -147,13 +176,23 @@ impl ConlluExport {
             };
             let word = boundary;
             let feats = if self.pretokenized {
-                pipe_field(set(words, word, "conllu.feats"))
+                pipe_field(strings(value(tokens, word, conllu_feats)))
             } else {
-                pipe_field(keys.iter().filter_map(|key| {
-                    let feature = key.as_str().strip_prefix("feat.")?;
-                    let values = strings(words.value_key(word, key)).join(",");
-                    (!values.is_empty()).then(|| format!("{feature}={values}"))
-                }))
+                let mut feats = String::new();
+                for (feature, ordinal) in &feat_columns {
+                    let entry = feats.len();
+                    if entry != 0 {
+                        feats.push('|');
+                    }
+                    feats.push_str(feature);
+                    feats.push('=');
+                    let values = feats.len();
+                    push_values(&mut feats, value(tokens, word, *ordinal), false);
+                    if feats.len() == values {
+                        feats.truncate(entry);
+                    }
+                }
+                if feats.is_empty() { "_".into() } else { feats }
             };
             let dependencies = if graph.is_some() {
                 pipe_field(
@@ -163,10 +202,10 @@ impl ConlluExport {
                         .map(String::as_str),
                 )
             } else {
-                pipe_field(set(words, word, "dep.enhanced"))
+                pipe_field(strings(value(tokens, word, dep_enhanced)))
             };
             let misc = if self.pretokenized {
-                pipe_field(set(words, word, "conllu.misc"))
+                pipe_field(strings(value(tokens, word, conllu_misc)))
             } else {
                 let mut fields = std::mem::take(&mut spans[word]);
                 if offsets.as_ref().is_some_and(|offsets| {
@@ -176,24 +215,10 @@ impl ConlluExport {
                 }) {
                     fields.push("SpaceAfter=No".into());
                 }
-                fields.extend(keys.iter().filter_map(|key| {
-                    let name = key.as_str();
-                    if !name.contains('.') && name != "norm"
-                        || name.starts_with("feat.")
-                        || name.starts_with("dep.")
-                        || name.starts_with("conllu.")
-                    {
-                        return None;
-                    }
-                    let values = strings(words.value_key(word, key));
-                    (!values.is_empty()).then(|| {
-                        let values = values
-                            .into_iter()
-                            .map(misc_escape)
-                            .collect::<Vec<_>>()
-                            .join(",");
-                        format!("{name}={values}")
-                    })
+                fields.extend(misc_columns.iter().filter_map(|(name, ordinal)| {
+                    let mut entry = format!("{name}=");
+                    (push_values(&mut entry, value(tokens, word, *ordinal), true) != 0)
+                        .then_some(entry)
                 }));
                 fields.sort_unstable();
                 pipe_field(fields)
@@ -203,12 +228,12 @@ impl ConlluExport {
                 [
                     &(word + 1).to_string(),
                     form,
-                    scalar(words, word, "lemma").unwrap_or("_"),
-                    scalar(words, word, "upos").unwrap_or("_"),
-                    scalar(words, word, "xpos").unwrap_or("_"),
+                    scalar(tokens, word, lemma).unwrap_or("_"),
+                    scalar(tokens, word, upos).unwrap_or("_"),
+                    scalar(tokens, word, xpos).unwrap_or("_"),
                     &feats,
-                    scalar(words, word, "dep.head").unwrap_or("_"),
-                    scalar(words, word, "dep.rel").unwrap_or("_"),
+                    scalar(tokens, word, dep_head).unwrap_or("_"),
+                    scalar(tokens, word, dep_rel).unwrap_or("_"),
                     &dependencies,
                     &misc,
                 ],
@@ -289,15 +314,46 @@ fn pipe_field(values: impl IntoIterator<Item = impl AsRef<str>>) -> String {
     }
 }
 
-fn scalar<'a>(words: &'a BoundSentenceInput, word: usize, key: &str) -> Option<&'a str> {
-    match words.value_key(word, &AttributeKey::new(key).expect("valid export key"))? {
+fn value(
+    words: &BoundTokenSentence,
+    word: usize,
+    ordinal: Option<AttributeOrdinal>,
+) -> Option<AttributeValueRef<'_>> {
+    words.token(word)?.value(ordinal?)
+}
+
+fn scalar(
+    words: &BoundTokenSentence,
+    word: usize,
+    ordinal: Option<AttributeOrdinal>,
+) -> Option<&str> {
+    match value(words, word, ordinal)? {
         AttributeValueRef::Scalar(value) => Some(value),
         AttributeValueRef::StringSet(_) => None,
     }
 }
 
-fn set<'a>(words: &'a BoundSentenceInput, word: usize, key: &str) -> Vec<&'a str> {
-    strings(words.value_key(word, &AttributeKey::new(key).expect("valid export key")))
+/// Appends the values of `value` separated by commas, MISC-escaped when
+/// `escape` is set, and returns how many there were.
+fn push_values(output: &mut String, value: Option<AttributeValueRef<'_>>, escape: bool) -> usize {
+    let mut count = 0;
+    let mut push = |value: &str| {
+        if count != 0 {
+            output.push(',');
+        }
+        if escape {
+            misc_escape(output, value);
+        } else {
+            output.push_str(value);
+        }
+        count += 1;
+    };
+    match value {
+        Some(AttributeValueRef::Scalar(value)) => push(value),
+        Some(AttributeValueRef::StringSet(values)) => values.iter().for_each(|value| push(value)),
+        None => {}
+    }
+    count
 }
 
 fn strings(value: Option<AttributeValueRef<'_>>) -> Vec<&str> {
@@ -320,7 +376,7 @@ fn graph_dependencies(graph: &EnhancedGraph) -> BTreeMap<EnhancedNodeId, Vec<Str
     deps
 }
 
-fn span_misc(words: &BoundSentenceInput) -> Vec<Vec<String>> {
+fn span_misc(words: &BoundTokenSentence, dep_head: Option<AttributeOrdinal>) -> Vec<Vec<String>> {
     let mut fields = vec![Vec::new(); words.len()];
     for span in words.spans() {
         let key = match span.kind.as_str() {
@@ -334,7 +390,7 @@ fn span_misc(words: &BoundSentenceInput) -> Vec<Vec<String>> {
         }
         if span.kind == "bunsetsu" {
             if let Some(head) = span.head {
-                let marker = if scalar(words, head, "dep.head") == Some("0") {
+                let marker = if scalar(words, head, dep_head) == Some("0") {
                     "ROOT"
                 } else {
                     "SEM_HEAD"
@@ -342,14 +398,15 @@ fn span_misc(words: &BoundSentenceInput) -> Vec<Vec<String>> {
                 fields[head].push(format!("BunsetuPositionType={marker}"));
             }
         } else if let Some(label) = &span.label {
-            fields[span.start].push(format!("LUWPOS={}", misc_escape(label)));
+            let mut entry = "LUWPOS=".to_owned();
+            misc_escape(&mut entry, label);
+            fields[span.start].push(entry);
         }
     }
     fields
 }
 
-fn misc_escape(value: &str) -> String {
-    let mut escaped = String::new();
+fn misc_escape(escaped: &mut String, value: &str) {
     for ch in value.chars() {
         match ch {
             '%' => escaped.push_str("%25"),
@@ -362,5 +419,134 @@ fn misc_escape(value: &str) -> String {
             _ => escaped.push(ch),
         }
     }
-    escaped
+}
+
+#[cfg(test)]
+mod tests {
+    use std::sync::Arc;
+
+    use lingrep_core::corpus::DocumentId;
+    use lingrep_core::execution::SentenceLocation;
+    use lingrep_core::token_match::{
+        AttributeKind, BoundTokenSentence, CharSpan, ProjectedAttributeValue, SchemaAttribute,
+        SentenceSpan, TokenSchema,
+    };
+
+    use super::*;
+
+    /// Two words of an analyzer schema whose values exercise every FEATS and
+    /// MISC branch of a non-pretokenized export.
+    fn analyzed_sentence(keys: &mut Vec<AttributeKey>) -> ExecutionSentence<BoundSentenceInput> {
+        let schema = TokenSchema::new([
+            SchemaAttribute::new("text", AttributeKind::Scalar).unwrap(),
+            SchemaAttribute::new("surface", AttributeKind::Scalar).unwrap(),
+            SchemaAttribute::new("lemma", AttributeKind::Scalar).unwrap(),
+            SchemaAttribute::new("norm", AttributeKind::Scalar).unwrap(),
+            SchemaAttribute::new("upos", AttributeKind::Scalar).unwrap(),
+            SchemaAttribute::new("feat.Case", AttributeKind::StringSet).unwrap(),
+            SchemaAttribute::new("feat.Number", AttributeKind::StringSet).unwrap(),
+            SchemaAttribute::new("unidic.goshu", AttributeKind::Scalar).unwrap(),
+            SchemaAttribute::new("unidic.pron", AttributeKind::StringSet).unwrap(),
+        ])
+        .unwrap();
+        let projection = schema
+            .bind_projection(schema.keys().iter().cloned())
+            .unwrap();
+        keys.extend(schema.keys().iter().cloned());
+        keys.sort();
+        let scalar = ProjectedAttributeValue::scalar;
+        let set = |values: &[&str]| ProjectedAttributeValue::string_set(values.iter().copied());
+        let first = BTreeMap::from([
+            ("text", scalar("猫")),
+            ("surface", scalar("猫")),
+            ("lemma", scalar("猫")),
+            ("norm", scalar("ネコ")),
+            ("upos", scalar("NOUN")),
+            ("feat.Case", set(&["Nom", "Acc"])),
+            ("feat.Number", set(&[])),
+            ("unidic.goshu", scalar("和,=|%")),
+            ("unidic.pron", set(&["ネ", "コ"])),
+        ]);
+        let second = BTreeMap::from([
+            ("text", scalar("だ")),
+            ("surface", scalar("だ")),
+            ("lemma", ProjectedAttributeValue::missing_scalar()),
+            ("norm", scalar("")),
+            ("upos", scalar("AUX")),
+            ("feat.Case", set(&[])),
+            ("feat.Number", set(&["Sing"])),
+            ("unidic.goshu", scalar("")),
+            ("unidic.pron", set(&[])),
+        ]);
+        let words = BoundTokenSentence::from_projected_attribute_values(
+            &projection,
+            2,
+            [&first, &second]
+                .into_iter()
+                .flat_map(|row| {
+                    projection
+                        .keys()
+                        .iter()
+                        .map(|key| row[key.as_str()].clone())
+                })
+                .collect(),
+        )
+        .unwrap()
+        .with_char_offsets(Some(Arc::new(vec![
+            CharSpan::new(0, 1),
+            CharSpan::new(1, 2),
+        ])))
+        .with_spans(vec![
+            SentenceSpan {
+                kind: "bunsetsu".into(),
+                start: 0,
+                end: 2,
+                head: Some(0),
+                label: None,
+                governor: None,
+            },
+            SentenceSpan {
+                kind: "luw".into(),
+                start: 1,
+                end: 2,
+                head: None,
+                label: Some("助動詞,=".into()),
+                governor: None,
+            },
+        ])
+        .unwrap();
+        ExecutionSentence {
+            location: SentenceLocation {
+                corpus_sentence_ordinal: 7,
+                document_id: DocumentId::new(0),
+                document_ordinal: 0,
+                document_sentence_ordinal: 0,
+                source_name: Arc::from("fixture"),
+                source_metadata: None,
+                lookaround_divisions: None,
+            },
+            value: BoundSentenceInput::new(words, EnhancedGraphInput::NotRequested),
+        }
+    }
+
+    #[test]
+    fn analyzed_rows_pin_feats_misc_escaping_spans_and_spacing() {
+        let mut keys = Vec::new();
+        let sentence = analyzed_sentence(&mut keys);
+        let mut export = ConlluExport::new(false);
+        let mut output = Vec::new();
+        export.sentence(&mut output, &sentence, &keys).unwrap();
+        export.finish(&mut output, Termination::Eof).unwrap();
+        assert_eq!(
+            String::from_utf8(output).unwrap(),
+            "# sent_id = lingrep-7\n\
+             # text = 猫だ\n\
+             # lingrep_export = complete 2\n\
+             1\t猫\t猫\tNOUN\t_\tCase=Acc,Nom\t_\t_\t_\t\
+             BunsetuBILabel=B|BunsetuPositionType=SEM_HEAD|SpaceAfter=No|norm=ネコ|\
+             unidic.goshu=和%2C%3D%7C%25|unidic.pron=コ,ネ\n\
+             2\tだ\t_\tAUX\t_\tNumber=Sing\t_\t_\t_\t\
+             BunsetuBILabel=I|LUWBILabel=B|LUWPOS=助動詞%2C%3D|norm=|unidic.goshu=\n\n"
+        );
+    }
 }
