@@ -9,11 +9,14 @@ use std::collections::{HashMap, HashSet};
 
 #[derive(Clone)]
 pub(crate) struct DenseMachine {
-    transitions: Vec<Vec<(TransitionLabel, usize)>>,
+    /// Contiguous CSR transition table indexed by
+    /// `transition_base[state]..transition_base[state + 1]`.
+    transitions: Vec<(TransitionLabel, usize)>,
     final_pattern: Vec<Option<CompactString>>,
     state_patterns: Vec<Vec<CompactString>>,
-    /// Global id of a state's first transition; `transition_base[state] + i`
-    /// identifies transition `i` of `state` for per-sentence memo tables.
+    /// Global id of a state's first transition, with a trailing sentinel equal
+    /// to `transitions.len()`; `transition_base[state] + i` identifies
+    /// transition `i` of `state` for per-sentence memo tables.
     pub(crate) transition_base: Vec<usize>,
     /// Distinct-predicate id per transition (indexed by global transition
     /// id). Pattern references duplicate identical attribute tests across
@@ -49,9 +52,9 @@ impl DenseMachine {
             .max()
             .map_or(0, |max_id| max_id + 1);
 
-        let mut transitions = vec![Vec::new(); state_count];
+        let mut state_transitions = vec![Vec::new(); state_count];
         for (state, outgoing) in state_machine {
-            transitions[*state] = outgoing.clone();
+            state_transitions[*state] = outgoing.clone();
         }
 
         // Deterministic assignment: lowest pattern name wins when a state id
@@ -69,16 +72,17 @@ impl DenseMachine {
             patterns[*state] = names.clone();
         }
 
-        let mut transition_base = Vec::with_capacity(state_count);
+        let mut transition_base = Vec::with_capacity(state_count + 1);
         let mut total_transitions = 0usize;
-        for outgoing in &transitions {
+        for outgoing in &state_transitions {
             transition_base.push(total_transitions);
             total_transitions += outgoing.len();
         }
+        transition_base.push(total_transitions);
 
         let mut predicate_id = Vec::with_capacity(total_transitions);
         let mut compiled_assertion = Vec::with_capacity(total_transitions);
-        for outgoing in &transitions {
+        for outgoing in &state_transitions {
             for (spec, _) in outgoing {
                 predicate_id.push(predicates.intern(&spec.attrs));
                 compiled_assertion.push(match spec.kind() {
@@ -89,11 +93,16 @@ impl DenseMachine {
                 });
             }
         }
-        let spawn_table = SpawnTable::build(&transitions, predicates);
+        let spawn_table = SpawnTable::build(&state_transitions, predicates);
         let has_lookaround_assertion = compiled_assertion
             .iter()
             .flatten()
             .any(|assertion| matches!(assertion, CompiledPositionAssertion::Lookaround(_)));
+
+        let mut transitions = Vec::with_capacity(total_transitions);
+        for outgoing in state_transitions {
+            transitions.extend(outgoing);
+        }
 
         Self {
             transitions,
@@ -116,16 +125,14 @@ impl DenseMachine {
     }
 
     pub(crate) fn required_attributes(&self) -> impl Iterator<Item = AttributeKey> + '_ {
-        self.transitions.iter().flat_map(|transitions| {
-            transitions
-                .iter()
-                .flat_map(|(spec, _)| spec.attrs.iter().map(|attribute| attribute.attr.clone()))
-        })
+        self.transitions
+            .iter()
+            .flat_map(|(spec, _)| spec.attrs.iter().map(|attribute| attribute.attr.clone()))
     }
 
     #[inline(always)]
     pub(crate) fn state_count(&self) -> usize {
-        self.transitions.len()
+        self.final_pattern.len()
     }
 
     pub(crate) fn spawn_decline(&self) -> Option<&SpawnDecline> {
@@ -134,7 +141,13 @@ impl DenseMachine {
 
     #[inline(always)]
     pub(crate) fn transitions(&self, state: usize) -> &[(TransitionLabel, usize)] {
-        self.transitions.get(state).map_or(&[], Vec::as_slice)
+        let Some(&start) = self.transition_base.get(state) else {
+            return &[];
+        };
+        let Some(&end) = self.transition_base.get(state + 1) else {
+            return &[];
+        };
+        &self.transitions[start..end]
     }
 
     #[inline(always)]
