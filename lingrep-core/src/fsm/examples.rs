@@ -73,6 +73,9 @@ pub struct ExampleReport {
     /// catalog documented behaviour its own output contradicted, and every
     /// check passed.
     pub post_policy_failures: Vec<ExampleFailure>,
+    /// Entries beyond the limit of [`try_verify_examples_within`]: declared,
+    /// well-formed, and neither tokenized nor matched.
+    pub unchecked: usize,
 }
 
 /// The metadata keys this verifies, and what a match means for each.
@@ -316,6 +319,40 @@ pub fn try_verify_examples<T: TokenInfoTrait>(
     matcher: &CompiledCatalog,
     tokenize: &dyn Fn(&str) -> Vec<T>,
 ) -> Result<ExampleReport, crate::fsm::MatchPublicationError> {
+    try_verify_examples_within(matcher, tokenize, usize::MAX)
+}
+
+/// Every string entry under `examples:` and `counterexamples:`, as
+/// `(definition, must_match, entry)` in the order [`try_verify_examples`]
+/// checks them.
+pub fn declared_claims(
+    matcher: &CompiledCatalog,
+) -> impl Iterator<Item = (&CompactString, bool, &str)> {
+    matcher.patterns().iter().flat_map(|(name, pattern)| {
+        VERIFIED_KEYS.iter().flat_map(move |(key, must_match)| {
+            pattern
+                .metadata
+                .get(*key)
+                .and_then(|value| value.as_array())
+                .into_iter()
+                .flatten()
+                .filter_map(|entry| entry.as_str())
+                .map(move |entry| (name, *must_match, entry))
+        })
+    })
+}
+
+/// As [`try_verify_examples`], checking the first `limit` entries in catalog
+/// order and counting the rest in [`ExampleReport::unchecked`].
+///
+/// For a caller that verifies a catalog it did not write and must bound the
+/// work one catalog can ask for. Malformed values are reported whatever the
+/// limit, because reporting one tokenizes nothing.
+pub fn try_verify_examples_within<T: TokenInfoTrait>(
+    matcher: &CompiledCatalog,
+    tokenize: &dyn Fn(&str) -> Vec<T>,
+    limit: usize,
+) -> Result<ExampleReport, crate::fsm::MatchPublicationError> {
     let mut report = ExampleReport::default();
     for (name, pattern) in matcher.patterns() {
         for (key, must_match) in VERIFIED_KEYS {
@@ -342,6 +379,10 @@ pub fn try_verify_examples<T: TokenInfoTrait>(
                     });
                     continue;
                 };
+                if report.checked == limit {
+                    report.unchecked += 1;
+                    continue;
+                }
                 let tokens = tokenize(entry);
                 let matched = matcher
                     .try_find_matches(&tokens)?
@@ -362,7 +403,7 @@ pub fn try_verify_examples<T: TokenInfoTrait>(
             }
         }
     }
-    verify_post_policy(matcher, tokenize, &mut report)?;
+    verify_post_policy(matcher, tokenize, limit, &mut report)?;
     // `patterns()` is an IndexMap in source order, which is stable, but the
     // sort makes the report independent of it so a reordering in the catalog
     // cannot reorder a CLI diff.
@@ -391,43 +432,33 @@ pub fn try_verify_examples<T: TokenInfoTrait>(
 fn verify_post_policy<T: TokenInfoTrait>(
     matcher: &CompiledCatalog,
     tokenize: &dyn Fn(&str) -> Vec<T>,
+    limit: usize,
     report: &mut ExampleReport,
 ) -> Result<(), crate::fsm::MatchPublicationError> {
     let policy = matcher.catalog_policy();
     if !policy.declared() {
         return Ok(());
     }
-    for (name, pattern) in matcher.patterns() {
+    // Malformed values are already reported by the raw pass; `declared_claims`
+    // omits them, so one broken claim is not counted twice.
+    for (name, must_match, entry) in declared_claims(matcher).take(limit) {
         let published_name = policy.published_name(name);
-        for (key, must_match) in VERIFIED_KEYS {
-            let Some(entries) = pattern
-                .metadata
-                .get(*key)
-                .and_then(|value| value.as_array())
-            else {
-                // Malformed values are already reported by the raw pass;
-                // reporting them twice would double-count one broken claim.
-                continue;
-            };
-            for entry in entries.iter().filter_map(|entry| entry.as_str()) {
-                let tokens = tokenize(entry);
-                let published = matcher.try_find_published_matches(&tokens)?;
-                let matched = published
-                    .iter()
-                    .any(|matched| matched.pattern == published_name);
-                report.post_policy_checked += 1;
-                if matched != *must_match {
-                    report.post_policy_failures.push(ExampleFailure {
-                        definition: name.to_string(),
-                        example: entry.to_owned(),
-                        kind: if *must_match {
-                            ExampleFailureKind::ExpectedMatch
-                        } else {
-                            ExampleFailureKind::UnexpectedMatch
-                        },
-                    });
-                }
-            }
+        let tokens = tokenize(entry);
+        let published = matcher.try_find_published_matches(&tokens)?;
+        let matched = published
+            .iter()
+            .any(|matched| matched.pattern == published_name);
+        report.post_policy_checked += 1;
+        if matched != must_match {
+            report.post_policy_failures.push(ExampleFailure {
+                definition: name.to_string(),
+                example: entry.to_owned(),
+                kind: if must_match {
+                    ExampleFailureKind::ExpectedMatch
+                } else {
+                    ExampleFailureKind::UnexpectedMatch
+                },
+            });
         }
     }
     Ok(())

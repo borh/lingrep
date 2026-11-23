@@ -52,7 +52,8 @@ pub use compiler::{
 };
 pub use examples::{
     ClaimFailure, ClaimFailureKind, ClaimReport, ExampleFailure, ExampleFailureKind, ExampleReport,
-    try_verify_examples, verify_anchor_claims, verify_examples,
+    declared_claims, try_verify_examples, try_verify_examples_within, verify_anchor_claims,
+    verify_examples,
 };
 pub use explanation::{ExplainedMatch, SentenceExplanation};
 pub use identity::{

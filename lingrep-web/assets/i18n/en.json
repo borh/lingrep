@@ -615,6 +615,8 @@
   "sample.claims_violated": "Examples and counterexamples checked ({checked}). Failed checks or invalid entries ({failed}).",
   "sample.claims_hold": "Example and counterexample checks passed ({checked}).",
   "sample.claims_note": "These checks compare the catalog's expectations with match results from the sample tokenizer.",
+  "sample.claims_unchecked": "Examples and counterexamples not checked ({unchecked}). The sample debugger checks the first {limit} entries of a catalog.",
+  "sample.claims_unrelaxed": "Counterexamples not examined for the constraint they test ({count}). The sample debugger ran out of time for this catalog.",
   "sample.claim_expected_match": "does not match its example",
   "sample.claim_unexpected_match": "matches its counterexample",
   "sample.claim_malformed": "has invalid example or counterexample metadata. Expected a list of strings.",

@@ -736,10 +736,38 @@ pub enum SampleClaims {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ClaimsReport {
     pub checked: usize,
+    /// Claims declared after the first [`ClaimBudget::claims`].
+    pub unchecked: usize,
     pub failures: Vec<ClaimFailure>,
     /// Counterexamples that hold and that the definition does not match with
     /// any one constraint removed.
     pub vacuous: Vec<VacuousClaim>,
+    /// Checked counterexamples left out of the `vacuous` test because
+    /// [`ClaimBudget::relaxation`] ran out.
+    pub unrelaxed: usize,
+}
+
+/// The claim work one sample run does for a catalog.
+///
+/// Each claim is tokenized and matched twice, and each counterexample is
+/// matched again once per constraint of its definition, so the work grows
+/// with the catalog and not with the sample text.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct ClaimBudget {
+    /// Claims checked, in catalog order.
+    pub claims: usize,
+    /// Time after which no further counterexample is relaxed. The relaxation
+    /// under way finishes.
+    pub relaxation: std::time::Duration,
+}
+
+impl ClaimBudget {
+    /// The budget of a sample request. The largest tracked catalog declares
+    /// 116 claims and its relaxations take milliseconds.
+    pub const REQUEST: Self = Self {
+        claims: 256,
+        relaxation: std::time::Duration::from_secs(2),
+    };
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -790,16 +818,17 @@ pub struct SampleRun {
 }
 
 /// Binds `output` to `schema` and, when every referenced attribute is
-/// available, checks the catalog's claims through `tokenize`.
+/// available, checks the catalog's claims through `tokenize` within `budget`.
 pub fn sample_run(
     output: &CompileOutput,
     pattern_source: &str,
     schema: &TokenSchema,
     analyzer: String,
     tokenize: &dyn Fn(&str) -> Vec<TokenInfo>,
+    budget: ClaimBudget,
 ) -> SampleRun {
     let binding = sample_binding(output, schema);
-    sample_run_bound(output, pattern_source, analyzer, binding, tokenize)
+    sample_run_bound(output, pattern_source, analyzer, binding, tokenize, budget)
 }
 
 fn sample_binding(output: &CompileOutput, schema: &TokenSchema) -> SampleBinding {
@@ -833,6 +862,7 @@ fn sample_run_bound(
     analyzer: String,
     binding: SampleBinding,
     tokenize: &dyn Fn(&str) -> Vec<TokenInfo>,
+    budget: ClaimBudget,
 ) -> SampleRun {
     let declared = output.matcher.patterns().iter().any(|(_, pattern)| {
         pattern.metadata.contains_key("examples")
@@ -845,7 +875,11 @@ fn sample_run_bound(
     } else if !complete {
         SampleClaims::Unverifiable
     } else {
-        match lingrep_core::fsm::try_verify_examples(&output.matcher, tokenize) {
+        match lingrep_core::fsm::try_verify_examples_within(
+            &output.matcher,
+            tokenize,
+            budget.claims,
+        ) {
             Ok(report) => {
                 let mut report = claims_report(report);
                 for failure in &mut report.failures {
@@ -869,24 +903,30 @@ fn sample_run_bound(
                             });
                     }
                 }
-                report.vacuous = output
-                    .relax_counterexamples(tokenize)
-                    .into_iter()
-                    .filter_map(|(definition, example, outcome)| match outcome {
-                        lingrep_core::fsm::RelaxationOutcome::Vacuous { tried }
-                            if !report.failures.iter().any(|failure| {
-                                failure.definition == definition && failure.example == example
-                            }) =>
-                        {
-                            Some(VacuousClaim {
-                                definition,
-                                example,
-                                tried: tried.len(),
-                            })
-                        }
-                        _ => None,
-                    })
-                    .collect();
+                let relaxing = std::time::Instant::now();
+                let counterexamples = lingrep_core::fsm::declared_claims(&output.matcher)
+                    .take(budget.claims)
+                    .filter(|(_, must_match, _)| !must_match);
+                for (definition, _, example) in counterexamples {
+                    if report.failures.iter().any(|failure| {
+                        failure.definition == definition.as_str() && failure.example == example
+                    }) {
+                        continue;
+                    }
+                    if relaxing.elapsed() >= budget.relaxation {
+                        report.unrelaxed += 1;
+                        continue;
+                    }
+                    if let lingrep_core::fsm::RelaxationOutcome::Vacuous { tried } =
+                        output.relax_definition(definition, tokenize(example).as_slice())
+                    {
+                        report.vacuous.push(VacuousClaim {
+                            definition: definition.to_string(),
+                            example: example.to_owned(),
+                            tried: tried.len(),
+                        });
+                    }
+                }
                 SampleClaims::Checked(report)
             }
             Err(error) => SampleClaims::Failed(error.to_string()),
@@ -938,8 +978,10 @@ fn claims_report(report: ExampleReport) -> ClaimsReport {
     failures.extend(published);
     ClaimsReport {
         checked: report.checked,
+        unchecked: report.unchecked,
         failures,
         vacuous: Vec::new(),
+        unrelaxed: 0,
     }
 }
 
@@ -974,9 +1016,14 @@ pub fn analyze_sample(
         .map(|line| plan.tokenize(line))
         .collect();
     let (analysis, unmatched) = analyze_compiled(&output, pattern_source, &lines);
-    let mut run = sample_run(&output, pattern_source, plan.schema(), analyzer, &|text| {
-        plan.tokenize(text)
-    });
+    let mut run = sample_run(
+        &output,
+        pattern_source,
+        plan.schema(),
+        analyzer,
+        &|text| plan.tokenize(text),
+        ClaimBudget::REQUEST,
+    );
     run.unmatched = unmatched;
     SampleReport {
         analysis,
