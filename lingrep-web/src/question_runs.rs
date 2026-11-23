@@ -1,4 +1,4 @@
-use std::collections::{BTreeMap, HashSet};
+use std::collections::{BTreeMap, HashMap, HashSet};
 use std::convert::Infallible;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -11,15 +11,18 @@ use axum::{
     routing::{get, post},
 };
 use futures::StreamExt;
-use lingrep_core::execution::SentenceAdmission;
+use lingrep_core::execution::{
+    ExecutionBatch, ExecutionError, ExecutionLimits, SentenceAdmission, SentenceBatchSource,
+};
 use lingrep_core::fsm::{GraphBinding, LexicalProjectedKeyValue};
+use lingrep_core::token_match::BoundTokenSentence;
 use lingrep_corpus::SentenceProvenance;
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 
 use crate::coordinator::{CoordinatorView, RevisionRequest};
 use crate::corpus_runtime::ReadyCorpus;
-use crate::question_corpus::token_rows;
+use crate::question_corpus::{TokenRow, token_rows_for_keys};
 use crate::result_index::{ResultIndex, ResultOccurrence};
 use crate::revision::{AttemptPhase, ErrorCategory, RevisionId, WorkbenchId};
 use crate::snapshot::{CaptureDescriptor, CompletedSnapshot, PatternKey};
@@ -249,10 +252,21 @@ async fn completed(
     Ok((snapshot, ready, index))
 }
 
+type LivePreviewCache = HashMap<u64, (Value, usize)>;
+
 async fn project_run(
     store: &RequestStore,
     id: &str,
     view: &CoordinatorView,
+) -> Result<RunSnapshot> {
+    project_run_with_cache(store, id, view, None).await
+}
+
+async fn project_run_with_cache(
+    store: &RequestStore,
+    id: &str,
+    view: &CoordinatorView,
+    mut live_cache: Option<&mut LivePreviewCache>,
 ) -> Result<RunSnapshot> {
     let _permit = store.coordinators.acquire_reading_permit().await;
     let version = VERSION.fetch_add(1, Ordering::Relaxed);
@@ -347,30 +361,64 @@ async fn project_run(
             counts.insert(pattern.name.to_string(), pattern.total);
         }
         if let Some(ready) = &current_ready {
-            for occurrence in summary.preview.iter() {
-                let name = definitions
-                    .get(occurrence.reference.pattern_key.index())
+            let uncached: Vec<ResultOccurrence> = match live_cache.as_deref() {
+                Some(cache) => summary
+                    .preview
+                    .iter()
+                    .filter(|occ| !cache.contains_key(&occ.sequence))
                     .cloned()
-                    .unwrap_or_default();
-                let group = project_occurrences(
+                    .collect(),
+                None => summary.preview.to_vec(),
+            };
+            let mut projected = if uncached.is_empty() {
+                Vec::new().into_iter()
+            } else {
+                project_occurrences(
                     ready,
-                    std::slice::from_ref(occurrence),
+                    &uncached,
                     &summary.capture_catalog,
                     &definitions,
                     &summary.publication_attributes,
                     INSPECTION_BYTES,
                     OccurrenceOutput::Matches,
                 )
-                .await?;
-                preview_bytes = preview_bytes
-                    .saturating_add(serde_json::to_vec(&group).map_err(unavailable)?.len());
+                .await?
+                .into_iter()
+            };
+            for occurrence in summary.preview.iter() {
+                let name = definitions
+                    .get(occurrence.reference.pattern_key.index())
+                    .cloned()
+                    .unwrap_or_default();
+                let (row, entry_bytes) = if let Some((cached, bytes)) = live_cache
+                    .as_deref()
+                    .and_then(|cache| cache.get(&occurrence.sequence))
+                {
+                    (cached.clone(), *bytes)
+                } else {
+                    let row = projected
+                        .next()
+                        .expect("every uncached preview occurrence was projected");
+                    // Matches `serde_json::to_vec(&[row]).len()` (`row` plus `[` and `]`).
+                    let entry_bytes = serde_json::to_vec(&row)
+                        .map_err(unavailable)?
+                        .len()
+                        .saturating_add(2);
+                    if let Some(cache) = live_cache.as_deref_mut()
+                        && preview_bytes.saturating_add(entry_bytes) <= PREVIEW_BYTES
+                    {
+                        cache.insert(occurrence.sequence, (row.clone(), entry_bytes));
+                    }
+                    (row, entry_bytes)
+                };
+                preview_bytes = preview_bytes.saturating_add(entry_bytes);
                 if preview_bytes > PREVIEW_BYTES {
                     return Err(ApiError(
                         StatusCode::PAYLOAD_TOO_LARGE,
                         "The result preview is too large to display. Search fewer patterns.".into(),
                     ));
                 }
-                rows.entry(name).or_insert_with(Vec::new).extend(group);
+                rows.entry(name).or_insert_with(Vec::new).push(row);
             }
         }
     }
@@ -483,34 +531,47 @@ async fn events(State(store): State<RequestStore>, Path(id): Path<String>) -> Re
         .await
         .ok_or_else(expired)?;
     let stream = futures::stream::unfold(
-        (store, id, receiver, None::<Value>, false, false),
-        |(store, id, mut receiver, prior, wait, finished)| async move {
+        (
+            store,
+            id,
+            receiver,
+            None::<Value>,
+            LivePreviewCache::new(),
+            false,
+            false,
+        ),
+        |(store, id, mut receiver, prior, mut live_cache, wait, finished)| async move {
             if finished || wait && receiver.changed().await.is_err() {
                 return None;
             }
             let view = receiver.borrow_and_update().clone();
-            let projected = match project_run(&store, &id, &view).await {
-                Ok(projected) => projected,
-                Err(error) => {
-                    let counts = run_counts(&view);
-                    let received = counts.values().sum::<u64>();
-                    let version = VERSION.fetch_add(1, Ordering::Relaxed);
-                    let continues = search_continues(&view);
-                    let patch = if continues {
-                        json!({"counts":counts,"received":received,"version":version})
-                    } else {
-                        json!({"phase":"failed","error":error.1,"version":version})
-                    };
-                    let event = Event::default()
-                        .event("update")
-                        .data(json!({"id":id,"reset":false,"patch":patch,"append":{}}).to_string());
-                    return Some((
-                        Ok::<_, Infallible>(event),
-                        (store, id, receiver, prior, true, !continues),
-                    ));
-                }
-            };
+            let projected =
+                match project_run_with_cache(&store, &id, &view, Some(&mut live_cache)).await {
+                    Ok(projected) => projected,
+                    Err(error) => {
+                        let counts = run_counts(&view);
+                        let received = counts.values().sum::<u64>();
+                        let version = VERSION.fetch_add(1, Ordering::Relaxed);
+                        let continues = search_continues(&view);
+                        let patch = if continues {
+                            json!({"counts":counts,"received":received,"version":version})
+                        } else {
+                            live_cache.clear();
+                            json!({"phase":"failed","error":error.1,"version":version})
+                        };
+                        let event = Event::default().event("update").data(
+                            json!({"id":id,"reset":false,"patch":patch,"append":{}}).to_string(),
+                        );
+                        return Some((
+                            Ok::<_, Infallible>(event),
+                            (store, id, receiver, prior, live_cache, true, !continues),
+                        ));
+                    }
+                };
             let finished = projected.phase != "running";
+            if finished {
+                live_cache.clear();
+            }
             let undisplayable = projected.search_complete.is_some();
             let value = serde_json::to_value(projected).expect("question snapshots serialize");
             let mut patch = value.as_object().expect("snapshot object").clone();
@@ -553,7 +614,7 @@ async fn events(State(store): State<RequestStore>, Path(id): Path<String>) -> Re
                 .data(json!({"id":id,"reset":reset,"patch":patch,"append":append}).to_string());
             Some((
                 Ok::<_, Infallible>(event),
-                (store, id, receiver, Some(value), true, finished),
+                (store, id, receiver, Some(value), live_cache, true, finished),
             ))
         },
     );
@@ -682,6 +743,93 @@ enum OccurrenceOutput {
     WorkSamples,
 }
 
+enum DecodeBatchError {
+    Unavailable(String),
+    Oversized,
+}
+
+type DecodedSentences = HashMap<u64, Option<(BoundTokenSentence, Vec<TokenRow>)>>;
+
+fn decode_projected_sentences(
+    artifact: &lingrep_corpus::CorpusArtifact,
+    reader: &crate::corpus_runtime::BoundCorpusReader,
+    pool: Arc<rayon::ThreadPool>,
+    schema: &lingrep_core::token_match::TokenSchema,
+    attributes: &[lingrep_core::token_match::AttributeKey],
+    unique_sentences: Vec<u64>,
+    max_sentence_bytes: usize,
+) -> std::result::Result<DecodedSentences, DecodeBatchError> {
+    let mut decoded_map = HashMap::with_capacity(unique_sentences.len());
+    if unique_sentences.is_empty() {
+        return Ok(decoded_map);
+    }
+    if unique_sentences
+        .last()
+        .is_some_and(|&ordinal| ordinal >= artifact.sentence_count())
+    {
+        return Err(DecodeBatchError::Unavailable(
+            "sentence ordinal is outside the corpus".into(),
+        ));
+    }
+    if unique_sentences.len() == 1 {
+        let ordinal = unique_sentences[0];
+        let sentence = reader
+            .sentence_projection_bounded(ordinal, attributes, max_sentence_bytes)
+            .map_err(|error| DecodeBatchError::Unavailable(error.to_string()))?;
+        let projected = sentence.map(|sentence| {
+            let rows = token_rows_for_keys(&sentence, attributes);
+            (sentence, rows)
+        });
+        decoded_map.insert(ordinal, projected);
+        return Ok(decoded_map);
+    }
+    let projection = schema
+        .bind_projection(attributes.iter().cloned())
+        .map_err(|error| DecodeBatchError::Unavailable(error.to_string()))?;
+    let mut source = artifact
+        .bound_sentence_source(&projection)
+        .map_err(|error| DecodeBatchError::Unavailable(error.to_string()))?
+        .with_decode_pool(pool)
+        .with_ordinals(unique_sentences.clone())
+        .map_err(|error| DecodeBatchError::Unavailable(error.to_string()))?;
+    let batch_limit = if max_sentence_bytes == usize::MAX {
+        usize::MAX
+    } else {
+        max_sentence_bytes.max(64 * 1024 * 1024)
+    };
+    let limits = ExecutionLimits {
+        max_stage_sentences: unique_sentences.len().max(1),
+        max_tokenized_bytes: batch_limit,
+        ..ExecutionLimits::default()
+    };
+    while let Some(batch) = source.next_batch(&limits).map_err(|error| match error {
+        ExecutionError::TokenizedSentenceTooLarge { .. } => DecodeBatchError::Oversized,
+        other => DecodeBatchError::Unavailable(other.to_string()),
+    })? {
+        if let ExecutionBatch::BoundTokenized { sentences, .. } = batch {
+            for sentence in sentences {
+                let ordinal = sentence.location.corpus_sentence_ordinal;
+                let words = sentence.value.into_words();
+                let within_limit = if max_sentence_bytes == usize::MAX {
+                    true
+                } else {
+                    words
+                        .resident_bytes()
+                        .map_err(|error| DecodeBatchError::Unavailable(error.to_string()))?
+                        <= max_sentence_bytes
+                };
+                if within_limit {
+                    let rows = token_rows_for_keys(&words, attributes);
+                    decoded_map.insert(ordinal, Some((words, rows)));
+                } else {
+                    decoded_map.insert(ordinal, None);
+                }
+            }
+        }
+    }
+    Ok(decoded_map)
+}
+
 async fn project_occurrences(
     ready: &ReadyCorpus,
     occurrences: &[ResultOccurrence],
@@ -691,6 +839,31 @@ async fn project_occurrences(
     max_sentence_bytes: usize,
     projection: OccurrenceOutput,
 ) -> Result<Vec<Value>> {
+    let (rows, _) = project_occurrences_with_provenance(
+        ready,
+        occurrences,
+        captures,
+        patterns,
+        publication_attributes,
+        max_sentence_bytes,
+        projection,
+    )
+    .await?;
+    Ok(rows)
+}
+
+async fn project_occurrences_with_provenance(
+    ready: &ReadyCorpus,
+    occurrences: &[ResultOccurrence],
+    captures: &[CaptureDescriptor],
+    patterns: &[String],
+    publication_attributes: &[lingrep_core::token_match::AttributeKey],
+    max_sentence_bytes: usize,
+    projection: OccurrenceOutput,
+) -> Result<(Vec<Value>, HashMap<u64, Option<SentenceProvenance>>)> {
+    if occurrences.is_empty() {
+        return Ok((Vec::new(), HashMap::new()));
+    }
     let max_response_bytes = match projection {
         OccurrenceOutput::Matches => None,
         OccurrenceOutput::DocumentPage | OccurrenceOutput::WorkSamples => Some(32 * 1024 * 1024),
@@ -700,39 +873,65 @@ async fn project_occurrences(
         .map_err(unavailable)?
         .bind(&ready.identity)
         .ok_or_else(expired)?;
-    let provenance = provenance(
-        ready,
-        &occurrences
-            .iter()
-            .map(|r| r.reference.sentence_index)
-            .collect::<Vec<_>>(),
-    )
-    .await?;
     let schema = ready.artifact.token_schema().map_err(unavailable)?;
     let attributes: Arc<[_]> = publication_attributes
         .iter()
         .filter(|key| schema.keys().contains(key))
         .cloned()
         .collect();
-    let mut output = Vec::with_capacity(occurrences.len());
-    let mut output_bytes = 0usize;
-    for (occurrence, origin) in occurrences.iter().zip(provenance) {
-        let reader = reader.clone();
-        let sentence = occurrence.reference.sentence_index;
-        let attributes = Arc::clone(&attributes);
-        let decoded = tokio::task::spawn_blocking(move || {
-            reader.sentence_projection_bounded(sentence, &attributes, max_sentence_bytes)
-        })
-        .await
-        .map_err(unavailable)?
-        .map_err(unavailable)?
-        .ok_or_else(|| {
-            ApiError(
+    let mut unique_sentences: Vec<u64> = occurrences
+        .iter()
+        .map(|r| r.reference.sentence_index)
+        .collect();
+    unique_sentences.sort_unstable();
+    unique_sentences.dedup();
+
+    let decode_sentences = unique_sentences.clone();
+    let artifact = Arc::clone(&ready.artifact);
+    let pool = Arc::clone(&ready.pool);
+    let decode_schema = schema.clone();
+    let decode_attributes = Arc::clone(&attributes);
+    let decode_task = tokio::task::spawn_blocking(move || {
+        decode_projected_sentences(
+            &artifact,
+            &reader,
+            pool,
+            &decode_schema,
+            &decode_attributes,
+            decode_sentences,
+            max_sentence_bytes,
+        )
+    });
+    let provenance_task = provenance(ready, &unique_sentences);
+    let (decoded_res, provenance_res) = tokio::join!(decode_task, provenance_task);
+    let origins_vec = provenance_res?;
+    let origins_by_sentence: HashMap<u64, Option<SentenceProvenance>> =
+        unique_sentences.into_iter().zip(origins_vec).collect();
+    let decoded_by_sentence = match decoded_res.map_err(unavailable)? {
+        Ok(map) => map,
+        Err(DecodeBatchError::Oversized) => {
+            return Err(ApiError(
                 StatusCode::PAYLOAD_TOO_LARGE,
                 "This example is too large to display. Choose another example.".into(),
-            )
-        })?;
-        let tokens = token_rows(&decoded, &schema);
+            ));
+        }
+        Err(DecodeBatchError::Unavailable(message)) => return Err(unavailable(message)),
+    };
+
+    let mut output = Vec::with_capacity(occurrences.len());
+    let mut output_bytes = 0usize;
+    for occurrence in occurrences {
+        let sentence = occurrence.reference.sentence_index;
+        let origin = origins_by_sentence.get(&sentence).and_then(Option::as_ref);
+        let (decoded, tokens) = decoded_by_sentence
+            .get(&sentence)
+            .and_then(Option::as_ref)
+            .ok_or_else(|| {
+                ApiError(
+                    StatusCode::PAYLOAD_TOO_LARGE,
+                    "This example is too large to display. Choose another example.".into(),
+                )
+            })?;
         let range = occurrence.reference.span.clone();
         if range.end > tokens.len() || range.start >= range.end {
             return Err(invalid(
@@ -746,10 +945,10 @@ async fn project_occurrences(
             if let Some(Some(span))=occurrence.capture_char_spans.get(index){value["char_span"]=json!({"start":span.start,"end":span.end});}
             Ok(value)
         }).collect::<Result<Vec<_>>>()?;
-        let mut row = json!({"sequence":occurrence.sequence,"pattern":patterns.get(occurrence.reference.pattern_key.index()).ok_or_else(||invalid("This pattern is not part of the search."))?,"span":{"start":range.start,"end":range.end},"captures":projected_captures,"corpus_sentence_ordinal":sentence,"source_name":if occurrence.source_name.is_empty(){origin.as_ref().map(|p|p.location.source_name.as_ref()).unwrap_or_default()}else{occurrence.source_name.as_ref()},"document_ordinal":occurrence.document_ordinal,"document_sentence_ordinal":occurrence.document_sentence_ordinal,"surface":lingrep_core::token_match::display_text(&decoded, range.clone()),"tokens":&tokens[range.clone()],"left_context":&tokens[range.start.saturating_sub(24)..range.start],"right_context":&tokens[range.end..range.end.saturating_add(24).min(tokens.len())]});
+        let mut row = json!({"sequence":occurrence.sequence,"pattern":patterns.get(occurrence.reference.pattern_key.index()).ok_or_else(||invalid("This pattern is not part of the search."))?,"span":{"start":range.start,"end":range.end},"captures":projected_captures,"corpus_sentence_ordinal":sentence,"source_name":if occurrence.source_name.is_empty(){origin.map(|p|p.location.source_name.as_ref()).unwrap_or_default()}else{occurrence.source_name.as_ref()},"document_ordinal":occurrence.document_ordinal,"document_sentence_ordinal":occurrence.document_sentence_ordinal,"surface":lingrep_core::token_match::display_text(decoded, range.clone()),"tokens":&tokens[range.clone()],"left_context":&tokens[range.start.saturating_sub(24)..range.start],"right_context":&tokens[range.end..range.end.saturating_add(24).min(tokens.len())]});
         if matches!(projection, OccurrenceOutput::WorkSamples) {
             use lingrep_core::token_match::display_text;
-            let mut before = display_text(&decoded, 0..range.start);
+            let mut before = display_text(decoded, 0..range.start);
             if range.start > 0 && tokens[range.start].space_before {
                 before.push(' ');
             }
@@ -760,7 +959,7 @@ async fn project_occurrences(
             {
                 after.push(' ');
             }
-            after.push_str(&display_text(&decoded, range.end..tokens.len()));
+            after.push_str(&display_text(decoded, range.end..tokens.len()));
             row["sentence_text"] = json!([before, row["surface"], after]);
         }
         if let Some(span) = &occurrence.char_span {
@@ -823,7 +1022,6 @@ async fn project_occurrences(
         }
         let mut document = serde_json::Map::new();
         if let Some(metadata) = origin
-            .as_ref()
             .and_then(|p| p.rich.metadata_json.as_deref())
             .and_then(|text| serde_json::from_str::<Value>(text).ok())
         {
@@ -852,7 +1050,7 @@ async fn project_occurrences(
         }
         output.push(row);
     }
-    Ok(output)
+    Ok((output, origins_by_sentence))
 }
 
 #[derive(Deserialize)]
@@ -951,9 +1149,115 @@ struct Inventory {
     position: Option<u64>,
     previous: Option<u64>,
     next: Option<u64>,
-    first_sequence: Option<u64>,
 }
+
 async fn document_inventory(
+    index: &ResultIndex,
+    ready: &ReadyCorpus,
+    pattern: PatternKey,
+    selected: Option<u64>,
+    offset: Option<u64>,
+    q: &str,
+) -> Result<Inventory> {
+    if q.is_empty() {
+        return document_inventory_unfiltered(index, ready, pattern, selected, offset).await;
+    }
+    document_inventory_filtered(index, ready, pattern, selected, offset, q).await
+}
+
+/// Indexed path when no title/author substring filter is active: resolves the
+/// selected document's rank and neighbors via SQLite indexes and fetches
+/// provenance only for the single displayed 100-document page (plus the
+/// selected document if off-page).
+async fn document_inventory_unfiltered(
+    index: &ResultIndex,
+    ready: &ReadyCorpus,
+    pattern: PatternKey,
+    selected: Option<u64>,
+    offset: Option<u64>,
+) -> Result<Inventory> {
+    let total = index.document_count(pattern).await.map_err(unavailable)?;
+    let selected_row = match selected {
+        Some(document) => index
+            .document_entry(pattern, document)
+            .await
+            .map_err(unavailable)?,
+        None => None,
+    };
+    let (position, previous, next) = match &selected_row {
+        Some(row) => {
+            let (position, previous, next) = index
+                .document_neighbors(pattern, row.first_sequence)
+                .await
+                .map_err(unavailable)?;
+            (Some(position), previous, next)
+        }
+        None => (None, None, None),
+    };
+    let resolved = offset
+        .unwrap_or_else(|| position.unwrap_or(0) / 100 * 100)
+        .min(total.saturating_sub(1) / 100 * 100);
+    let page = if total == 0 {
+        Vec::new()
+    } else {
+        index
+            .documents(pattern, resolved, 100)
+            .await
+            .map_err(unavailable)?
+            .documents
+    };
+    let mut sentences: Vec<u64> = page.iter().map(|d| d.first_sentence).collect();
+    let extra_selected = selected_row
+        .as_ref()
+        .filter(|sel| !page.iter().any(|document| document.ordinal == sel.ordinal));
+    if let Some(sel) = extra_selected {
+        sentences.push(sel.first_sentence);
+    }
+    let origins = if sentences.is_empty() {
+        Vec::new()
+    } else {
+        provenance(ready, &sentences).await?
+    };
+    let mut found = None;
+    let mut documents = Vec::with_capacity(page.len());
+    for (document, origin) in page.iter().zip(origins.iter()) {
+        let (title, author) = document_labels(origin.as_ref());
+        let item = Document {
+            ordinal: document.ordinal,
+            title,
+            author,
+            matches: document.matches,
+        };
+        if Some(document.ordinal) == selected {
+            found = Some(item.clone());
+        }
+        documents.push(item);
+    }
+    if found.is_none()
+        && let Some(sel) = extra_selected
+    {
+        let (title, author) = document_labels(origins.last().and_then(Option::as_ref));
+        found = Some(Document {
+            ordinal: sel.ordinal,
+            title,
+            author,
+            matches: sel.matches,
+        });
+    }
+    Ok(Inventory {
+        documents,
+        total,
+        offset: resolved,
+        selected: found,
+        position,
+        previous,
+        next,
+    })
+}
+
+/// Single-pass filtered document inventory with strictly bounded O(1) memory
+/// (at most 200 [`Document`] entries retained regardless of corpus size).
+async fn document_inventory_filtered(
     index: &ResultIndex,
     ready: &ReadyCorpus,
     pattern: PatternKey,
@@ -963,15 +1267,23 @@ async fn document_inventory(
 ) -> Result<Inventory> {
     let query = q.to_lowercase();
     let mut start = 0;
-    let mut total = 0;
-    let mut result = Vec::new();
+    let mut total = 0u64;
     let mut found = None;
     let mut position = None;
     let mut previous = None;
     let mut next = None;
     let mut prior = None;
-    let mut first_sequence = None;
-    let desired = offset.unwrap_or(0);
+
+    // Bounded page buffers (at most 200 items retained across the single pass):
+    // - When `offset` is `Some(desired)`: retain `window` (`desired..desired+100`)
+    //   and `last_page` (the final aligned 100-item page if `desired` clamps).
+    // - When `offset` is `None`: retain `first_page` (`0..100`) for the fallback
+    //   when `selected` is absent, and `current_page`/`selected_page` for the
+    //   aligned 100-item page containing `selected`.
+    let mut primary_page = Vec::with_capacity(100);
+    let mut secondary_page = Vec::with_capacity(100);
+    let mut selected_page_locked = false;
+
     loop {
         let page = index
             .documents(pattern, start, 100)
@@ -1000,16 +1312,37 @@ async fn document_inventory(
                 author,
                 matches: document.matches,
             };
-            if Some(document.ordinal) == selected {
+            let is_selected = Some(document.ordinal) == selected;
+            if is_selected {
                 found = Some(item.clone());
                 position = Some(total);
                 previous = prior;
-                first_sequence = Some(document.first_sequence);
             } else if found.is_some() && next.is_none() {
                 next = Some(document.ordinal);
             }
-            if total >= desired && result.len() < 100 {
-                result.push(item);
+            if let Some(desired) = offset {
+                if total >= desired && primary_page.len() < 100 {
+                    primary_page.push(item.clone());
+                }
+                if total.is_multiple_of(100) {
+                    secondary_page.clear();
+                }
+                secondary_page.push(item);
+            } else {
+                if total < 100 {
+                    primary_page.push(item.clone());
+                }
+                if !selected_page_locked {
+                    if total.is_multiple_of(100) {
+                        secondary_page.clear();
+                    }
+                    secondary_page.push(item);
+                    if is_selected {
+                        selected_page_locked = true;
+                    }
+                } else if secondary_page.len() < 100 {
+                    secondary_page.push(item);
+                }
             }
             total += 1;
             prior = Some(document.ordinal);
@@ -1022,28 +1355,23 @@ async fn document_inventory(
     let resolved = offset
         .unwrap_or_else(|| position.unwrap_or(0) / 100 * 100)
         .min(total.saturating_sub(1) / 100 * 100);
-    if resolved != desired {
-        return Box::pin(document_inventory(
-            index,
-            ready,
-            pattern,
-            selected,
-            Some(resolved),
-            q,
-        ))
-        .await;
-    }
+    let documents = match offset {
+        Some(desired) if resolved == desired => primary_page,
+        Some(_) => secondary_page,
+        None if found.is_some() => secondary_page,
+        None => primary_page,
+    };
     Ok(Inventory {
-        documents: result,
+        documents,
         total,
-        offset: desired,
+        offset: resolved,
         selected: found,
         position,
         previous,
         next,
-        first_sequence,
     })
 }
+
 async fn documents(
     State(store): State<RequestStore>,
     Path(id): Path<String>,
@@ -1069,21 +1397,27 @@ async fn documents(
     let scoped = if continuous { None } else { query.document };
     let mut after = query.after.unwrap_or(-1);
     let limit = query.limit.unwrap_or(20).max(1);
-    let mut inventory = document_inventory(
-        &index,
-        &ready,
-        key,
-        query.document,
-        query.documents_offset,
-        query.q.as_deref().unwrap_or_default(),
-    )
-    .await?;
+    let filter_q = query.q.as_deref().unwrap_or_default();
     if continuous
-        && query.document.is_some()
+        && let Some(selected_doc) = query.document
         && after < 0
-        && let Some(first) = inventory.first_sequence
+        && let Some(entry) = index
+            .document_entry(key, selected_doc)
+            .await
+            .map_err(unavailable)?
     {
-        after = first as i64 - 1;
+        let admitted = if filter_q.is_empty() {
+            true
+        } else {
+            let origins = provenance(&ready, &[entry.first_sentence]).await?;
+            let (title, author) = document_labels(origins[0].as_ref());
+            format!("{title}\n{author}")
+                .to_lowercase()
+                .contains(&filter_q.to_lowercase())
+        };
+        if admitted {
+            after = entry.first_sequence as i64 - 1;
+        }
     }
     let page = index
         .page(key, scoped, after, limit)
@@ -1094,23 +1428,21 @@ async fn documents(
         .first()
         .map(|row| row.document_ordinal)
         .or(query.document);
-    if document != query.document {
-        inventory = document_inventory(
-            &index,
-            &ready,
-            key,
-            document,
-            query.documents_offset,
-            query.q.as_deref().unwrap_or_default(),
-        )
-        .await?;
-    }
+    let inventory = document_inventory(
+        &index,
+        &ready,
+        key,
+        document,
+        query.documents_offset,
+        filter_q,
+    )
+    .await?;
     let patterns = snapshot
         .patterns
         .iter()
         .map(|p| p.name.clone())
         .collect::<Vec<_>>();
-    let rows = project_occurrences(
+    let (rows, origins_by_sentence) = project_occurrences_with_provenance(
         &ready,
         &page.rows,
         &snapshot.capture_catalog,
@@ -1120,23 +1452,29 @@ async fn documents(
         OccurrenceOutput::DocumentPage,
     )
     .await?;
-    let mut landmarks = Vec::new();
+    let mut landmark_rows = Vec::new();
     let mut seen = HashSet::new();
     for row in &page.rows {
         if seen.insert(row.document_ordinal) {
-            let count = index
-                .count(key, Some(row.document_ordinal))
-                .await
-                .map_err(unavailable)?;
-            let origin = provenance(&ready, &[row.reference.sentence_index]).await?;
-            let (title, author) = document_labels(origin[0].as_ref());
-            landmarks.push(Document {
-                ordinal: row.document_ordinal,
-                title,
-                author,
-                matches: count,
-            });
+            landmark_rows.push((row.document_ordinal, row.reference.sentence_index));
         }
+    }
+    let landmark_docs: Vec<u64> = landmark_rows.iter().map(|&(doc, _)| doc).collect();
+    let landmark_counts = index
+        .document_matches(key, &landmark_docs)
+        .await
+        .map_err(unavailable)?;
+    let mut landmarks = Vec::with_capacity(landmark_rows.len());
+    for (doc, sentence) in landmark_rows {
+        let count = landmark_counts.get(&doc).copied().unwrap_or(0);
+        let origin = origins_by_sentence.get(&sentence).and_then(Option::as_ref);
+        let (title, author) = document_labels(origin);
+        landmarks.push(Document {
+            ordinal: doc,
+            title,
+            author,
+            matches: count,
+        });
     }
     Ok(Json(
         json!({"rows":rows,"landmarks":landmarks,"after":after,"start":page.start,"matches_total":page.matches_total,"previous":page.previous,"next":page.next,"document":document,"documents":inventory.documents,"documents_total":inventory.total,"documents_offset":inventory.offset,"selected":inventory.selected,"position":inventory.position,"previous_document":inventory.previous,"next_document":inventory.next}),
@@ -1228,7 +1566,7 @@ async fn work_samples(
         .iter()
         .map(|p| p.name.clone())
         .collect::<Vec<_>>();
-    let projected = project_occurrences(
+    let (projected, origins_by_sentence) = project_occurrences_with_provenance(
         &ready,
         &occurrences,
         &snapshot.capture_catalog,
@@ -1238,18 +1576,15 @@ async fn work_samples(
         OccurrenceOutput::WorkSamples,
     )
     .await?;
-    let sentences: Vec<_> = pages.iter().map(|page| page.first_sentence).collect();
-    let origins = provenance(&ready, &sentences).await?;
     let mut rows = projected.into_iter();
     let groups: Vec<_> = pages
         .into_iter()
-        .zip(origins)
-        .map(|(page, origin)| {
-            let (title, author) = document_labels(origin.as_ref());
-            let edition = document_field(
-                document_metadata(origin.as_ref()).as_ref(),
-                "orthographic_style",
-            );
+        .map(|page| {
+            let origin = origins_by_sentence
+                .get(&page.first_sentence)
+                .and_then(Option::as_ref);
+            let (title, author) = document_labels(origin);
+            let edition = document_field(document_metadata(origin).as_ref(), "orthographic_style");
             let document = Document {
                 ordinal: page.ordinal,
                 title,
@@ -1416,5 +1751,274 @@ mod tests {
             ["pos", "nouns", "verbs"]
         );
         assert!(super::catalog_definitions("npv := [upos=VERB").is_empty());
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn batched_project_occurrences_and_document_inventory_match_reference_oracle() {
+        use std::path::PathBuf;
+        use std::sync::Arc;
+
+        use lingrep_core::corpus::{
+            AdmittedCorpusEvent, AdmittedSentence, DiscoveryReport, DocumentId, InventoryStats,
+            MetadataScalar, MetadataValue, SourceDocument, TraversalHighWater, TraversalLimits,
+        };
+        use lingrep_core::spill::TempBudget;
+        use lingrep_core::token_match::{AttributeKey, TokenInfo};
+        use lingrep_corpus::{
+            AdmissionIdentity, AnalysisInputs, BuildConfig, CorpusBuilder, DictionaryFingerprint,
+            ReaderIdentity, TrustClass,
+        };
+
+        use crate::corpus_runtime::{CorpusIdentity, CorpusRuntime};
+        use crate::result_index::ResultIndexWriter;
+        use crate::server_context::ServerContext;
+        use crate::snapshot::{MatchRef, PatternKey};
+
+        let docs = 250usize;
+        let directory = tempfile::tempdir().unwrap();
+        let destination = directory.path().join("parity.lingcorpus");
+        let mut builder = CorpusBuilder::begin(
+            BuildConfig {
+                analysis: AnalysisInputs::new(
+                    ReaderIdentity::from_bytes([1; 32]),
+                    AdmissionIdentity::from_bytes([2; 32]),
+                    &lingrep_corpus::vibrato_fixture_descriptor(),
+                ),
+                analyzer: lingrep_corpus::AnalyzerRecord::vibrato_fixture(),
+                dictionary: DictionaryFingerprint::from_bytes([3; 32]),
+                trust: TrustClass::LocallyExecuted,
+                temp_budget: Arc::new(TempBudget::new(32 * 1024 * 1024)),
+                sentence_metadata_keys: Vec::new(),
+            },
+            &destination,
+        )
+        .unwrap();
+        let sentence = vec![
+            TokenInfo::default()
+                .with_orth("走る")
+                .with_lemma("走る")
+                .with_pos("VERB"),
+            TokenInfo::default()
+                .with_orth("猫")
+                .with_lemma("猫")
+                .with_pos("NOUN"),
+            TokenInfo::default().with_orth("。"),
+        ];
+        let observation = builder.source_observation();
+        let mut inv_digest = blake3::Hasher::new();
+        for doc in 0..docs {
+            let logical = format!("doc_{doc:03}.md");
+            inv_digest.update(&(logical.len() as u64).to_le_bytes());
+            inv_digest.update(logical.as_bytes());
+            builder
+                .register_source_document(&SourceDocument {
+                    ordinal: doc as u64,
+                    logical_name: logical.clone(),
+                    path: PathBuf::from(format!("/unused/{logical}")),
+                    target_group_ordinal: doc as u64,
+                    external_target: false,
+                })
+                .unwrap();
+            observation.begin_source(&logical).unwrap();
+            observation.update_source_bytes(logical.as_bytes()).unwrap();
+            observation.end_source().unwrap();
+            builder
+                .push_corpus_event(&AdmittedCorpusEvent::DocumentStart {
+                    id: DocumentId::new(doc as u64),
+                    source_name: logical.clone(),
+                    metadata: vec![
+                        (
+                            "title".into(),
+                            MetadataValue::Scalar(MetadataScalar::String(format!("作品_{doc:03}"))),
+                        ),
+                        (
+                            "author".into(),
+                            MetadataValue::Scalar(MetadataScalar::String(format!(
+                                "著者_{}",
+                                doc % 2
+                            ))),
+                        ),
+                    ]
+                    .into_boxed_slice(),
+                })
+                .unwrap();
+            let loc = builder
+                .push_corpus_event(&AdmittedCorpusEvent::Sentence(AdmittedSentence {
+                    annotations: Box::new([]),
+                    structure: Default::default(),
+                    id: lingrep_core::corpus::SentenceId::new(doc as u64),
+                    document_id: DocumentId::new(doc as u64),
+                    document_sentence_ordinal: 0,
+                    text: String::new(),
+                    words: None,
+                    enhanced_graph: None,
+                    active_labels: Box::new([]),
+                    metadata: Box::new([]),
+                }))
+                .unwrap()
+                .unwrap();
+            builder.push_tokenized_sentence(&loc, &sentence).unwrap();
+            builder
+                .push_corpus_event(&AdmittedCorpusEvent::DocumentEnd {
+                    id: DocumentId::new(doc as u64),
+                })
+                .unwrap();
+        }
+        let artifact = builder
+            .finish(DiscoveryReport {
+                inventory: InventoryStats {
+                    documents: docs as u64,
+                    distinct_targets: docs as u64,
+                    alias_documents: 0,
+                    max_target_multiplicity: 1,
+                    external_targets: 0,
+                },
+                configured_limits: TraversalLimits::default(),
+                observed: TraversalHighWater::default(),
+                ordered_inventory_digest: *inv_digest.finalize().as_bytes(),
+            })
+            .unwrap();
+        let identity = lingrep_corpus::format_identity(artifact.analysis_identity().as_bytes());
+        let context = Arc::new(ServerContext::new("/unused/parity.dic").unwrap());
+        let runtime = CorpusRuntime::from_ready(CorpusIdentity::new(&identity), artifact, context);
+        let ready = runtime.ready().await.unwrap();
+        let pub_attrs: Arc<[AttributeKey]> = Arc::from([
+            AttributeKey::new("text").unwrap(),
+            AttributeKey::new("lemma").unwrap(),
+            AttributeKey::new("upos").unwrap(),
+        ]);
+        let pat0 = PatternKey::new(0).unwrap();
+        let pub_attrs_bg = Arc::clone(&pub_attrs);
+        let (index, occurrences) = tokio::task::spawn_blocking(move || {
+            let mut writer = ResultIndexWriter::new(pub_attrs_bg).unwrap();
+            let mut occs = Vec::new();
+            for doc in 0..docs as u64 {
+                let mut occ = super::ResultOccurrence::from_reference(
+                    doc,
+                    MatchRef {
+                        sentence_index: doc,
+                        span: 0..2,
+                        pattern_key: pat0,
+                        captures: Box::default(),
+                        graph_bindings: Box::default(),
+                        interpretations: Box::default(),
+                        lexical: None,
+                        in_chain: false,
+                    },
+                );
+                occ.source_name = Arc::from(format!("doc_{doc:03}.md"));
+                writer.append_occurrence(&mut occ).unwrap();
+                occs.push(occ);
+            }
+            (writer.finish().unwrap(), occs)
+        })
+        .await
+        .unwrap();
+
+        // 1. Batched project_occurrences matches single-row projection identically (including duplicate sentence ordinals).
+        let patterns = vec!["p0".to_owned()];
+        let batch_input = vec![
+            occurrences[0].clone(),
+            occurrences[0].clone(),
+            occurrences[120].clone(),
+            occurrences[249].clone(),
+        ];
+        let batched = super::project_occurrences(
+            &ready,
+            &batch_input,
+            &[],
+            &patterns,
+            &pub_attrs,
+            super::INSPECTION_BYTES,
+            super::OccurrenceOutput::Matches,
+        )
+        .await
+        .ok()
+        .unwrap();
+        let mut single = Vec::new();
+        for occ in &batch_input {
+            single.extend(
+                super::project_occurrences(
+                    &ready,
+                    std::slice::from_ref(occ),
+                    &[],
+                    &patterns,
+                    &pub_attrs,
+                    super::INSPECTION_BYTES,
+                    super::OccurrenceOutput::Matches,
+                )
+                .await
+                .ok()
+                .unwrap(),
+            );
+        }
+        assert_eq!(batched, single);
+
+        // 2. Unfiltered and filtered document_inventory cover auto-page jump, clamped offset, unaligned offset, and absent selection.
+        for q in ["", "著者_1"] {
+            let matching: Vec<u64> = (0..docs as u64)
+                .filter(|d| q.is_empty() || d % 2 == 1)
+                .collect();
+            let cases = [
+                (None, None),
+                (Some(matching[115]), None),
+                (Some(matching[0]), Some(500)),
+                (Some(matching[10]), Some(25)),
+                (Some(999), None),
+                (Some(999), Some(500)),
+            ];
+            for (sel, off) in cases {
+                let inv = super::document_inventory(&index, &ready, pat0, sel, off, q)
+                    .await
+                    .ok()
+                    .unwrap();
+                let expected_pos =
+                    sel.and_then(|s| matching.iter().position(|&d| d == s).map(|p| p as u64));
+                let expected_offset = off
+                    .unwrap_or_else(|| expected_pos.unwrap_or(0) / 100 * 100)
+                    .min((matching.len() as u64).saturating_sub(1) / 100 * 100);
+                let expected_docs: Vec<u64> = matching
+                    .iter()
+                    .skip(expected_offset as usize)
+                    .take(100)
+                    .copied()
+                    .collect();
+                assert_eq!(
+                    inv.total,
+                    matching.len() as u64,
+                    "q={q:?} sel={sel:?} off={off:?}"
+                );
+                assert_eq!(
+                    inv.offset, expected_offset,
+                    "q={q:?} sel={sel:?} off={off:?}"
+                );
+                assert_eq!(
+                    inv.position, expected_pos,
+                    "q={q:?} sel={sel:?} off={off:?}"
+                );
+                assert_eq!(
+                    inv.previous,
+                    expected_pos
+                        .and_then(|p| p.checked_sub(1))
+                        .map(|p| matching[p as usize]),
+                    "q={q:?} sel={sel:?} off={off:?}"
+                );
+                assert_eq!(
+                    inv.next,
+                    expected_pos.and_then(|p| matching.get(p as usize + 1).copied()),
+                    "q={q:?} sel={sel:?} off={off:?}"
+                );
+                assert_eq!(
+                    inv.documents.iter().map(|d| d.ordinal).collect::<Vec<_>>(),
+                    expected_docs,
+                    "q={q:?} sel={sel:?} off={off:?}"
+                );
+                assert_eq!(
+                    inv.selected.as_ref().map(|d| d.ordinal),
+                    expected_pos.map(|p| matching[p as usize]),
+                    "q={q:?} sel={sel:?} off={off:?}"
+                );
+            }
+        }
     }
 }

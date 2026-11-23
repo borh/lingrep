@@ -1,4 +1,5 @@
 use serde::{Deserialize, Serialize};
+use std::collections::HashMap;
 use std::io::Write;
 use std::ops::Range;
 use std::sync::Arc;
@@ -267,6 +268,94 @@ impl ResultIndex {
             documents,
             total: total as u64,
         })
+    }
+
+    pub async fn document_count(&self, pattern: PatternKey) -> Result<u64, ResultIndexError> {
+        let total: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM documents WHERE pattern = ?")
+            .bind(pattern.index() as i64)
+            .fetch_one(&self.pool)
+            .await
+            .map_err(database)?;
+        Ok(total as u64)
+    }
+
+    pub async fn document_entry(
+        &self,
+        pattern: PatternKey,
+        document: u64,
+    ) -> Result<Option<ResultDocument>, ResultIndexError> {
+        let row = sqlx::query(
+            "SELECT document, first_sequence, first_sentence, matches FROM documents WHERE pattern = ? AND document = ?",
+        )
+        .bind(pattern.index() as i64)
+        .bind(integer(document)?)
+        .fetch_optional(&self.pool)
+        .await
+        .map_err(database)?;
+        Ok(row.map(|row| ResultDocument {
+            ordinal: row.get::<i64, _>("document") as u64,
+            first_sequence: row.get::<i64, _>("first_sequence") as u64,
+            first_sentence: row.get::<i64, _>("first_sentence") as u64,
+            matches: row.get::<i64, _>("matches") as u64,
+        }))
+    }
+
+    /// Returns `(position, previous_document, next_document)` in `first_sequence` order
+    /// for a document of `pattern` with the given `first_sequence`.
+    pub async fn document_neighbors(
+        &self,
+        pattern: PatternKey,
+        first_sequence: u64,
+    ) -> Result<(u64, Option<u64>, Option<u64>), ResultIndexError> {
+        let row = sqlx::query(
+            "SELECT \
+                (SELECT COUNT(*) FROM documents WHERE pattern = ?1 AND first_sequence < ?2) AS position, \
+                (SELECT document FROM documents WHERE pattern = ?1 AND first_sequence < ?2 ORDER BY first_sequence DESC LIMIT 1) AS previous, \
+                (SELECT document FROM documents WHERE pattern = ?1 AND first_sequence > ?2 ORDER BY first_sequence ASC LIMIT 1) AS next",
+        )
+        .bind(pattern.index() as i64)
+        .bind(integer(first_sequence)?)
+        .fetch_one(&self.pool)
+        .await
+        .map_err(database)?;
+        let position = row.get::<i64, _>("position") as u64;
+        let previous = row.get::<Option<i64>, _>("previous").map(|v| v as u64);
+        let next = row.get::<Option<i64>, _>("next").map(|v| v as u64);
+        Ok((position, previous, next))
+    }
+
+    /// Looks up exact per-document match counts for a batch of documents from the
+    /// indexed `documents` summary table.
+    pub async fn document_matches(
+        &self,
+        pattern: PatternKey,
+        documents: &[u64],
+    ) -> Result<HashMap<u64, u64>, ResultIndexError> {
+        if documents.is_empty() {
+            return Ok(HashMap::new());
+        }
+        let mut query =
+            QueryBuilder::<Sqlite>::new("SELECT document, matches FROM documents WHERE pattern = ");
+        query.push_bind(pattern.index() as i64);
+        query.push(" AND document IN (");
+        let mut separated = query.separated(", ");
+        for &doc in documents {
+            separated.push_bind(integer(doc)?);
+        }
+        separated.push_unseparated(")");
+        let rows = query
+            .build()
+            .fetch_all(&self.pool)
+            .await
+            .map_err(database)?;
+        let mut counts = HashMap::with_capacity(rows.len());
+        for row in rows {
+            counts.insert(
+                row.get::<i64, _>("document") as u64,
+                row.get::<i64, _>("matches") as u64,
+            );
+        }
+        Ok(counts)
     }
 
     /// Returns at most 256 complete references after the exclusive global sequence.
@@ -849,5 +938,45 @@ mod tests {
         .await
         .unwrap();
         assert!(!path.exists());
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn document_entry_neighbors_and_batch_counts_match_document_order() {
+        let index = tokio::task::spawn_blocking(|| {
+            let mut writer = ResultIndexWriter::new(Arc::from([])).unwrap();
+            for (doc, sent) in [(10, 0), (10, 1), (20, 5), (30, 9), (30, 10), (30, 11)] {
+                writer.append(doc, &reference(sent, 0)).unwrap();
+            }
+            writer.finish().unwrap()
+        })
+        .await
+        .unwrap();
+        let p = PatternKey::new(0).unwrap();
+        assert_eq!(index.document_count(p).await.unwrap(), 3);
+        let d20 = index.document_entry(p, 20).await.unwrap().unwrap();
+        assert_eq!(d20.ordinal, 20);
+        assert_eq!(d20.first_sequence, 2);
+        assert_eq!(d20.first_sentence, 5);
+        assert_eq!(d20.matches, 1);
+        assert!(index.document_entry(p, 99).await.unwrap().is_none());
+
+        assert_eq!(
+            index.document_neighbors(p, 0).await.unwrap(),
+            (0, None, Some(20))
+        );
+        assert_eq!(
+            index.document_neighbors(p, 2).await.unwrap(),
+            (1, Some(10), Some(30))
+        );
+        assert_eq!(
+            index.document_neighbors(p, 3).await.unwrap(),
+            (2, Some(20), None)
+        );
+
+        let counts = index.document_matches(p, &[30, 10, 99]).await.unwrap();
+        assert_eq!(counts.get(&10), Some(&2));
+        assert_eq!(counts.get(&30), Some(&3));
+        assert_eq!(counts.get(&99), None);
+        assert!(index.document_matches(p, &[]).await.unwrap().is_empty());
     }
 }
