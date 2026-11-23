@@ -106,11 +106,45 @@ fn resolve_value(value: ValueId, values: &[Box<str>]) -> io::Result<String> {
         .ok_or_else(|| io::Error::other("summary key value is out of range"))
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
+/// Granularity at which a [`SummaryPartition`] groups occurrences.
+///
+/// Sentences always belong to a document, so a sentence ordinal cannot exist
+/// without its document ordinal.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub enum SummaryScope {
+    Corpus,
+    Document(u64),
+    Sentence {
+        document_ordinal: u64,
+        sentence_ordinal: u64,
+    },
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub struct SummaryPartition {
     pub pattern_ordinal: u64,
-    pub document_ordinal: Option<u64>,
-    pub sentence_ordinal: Option<u64>,
+    pub scope: SummaryScope,
+}
+
+impl PartialOrd for SummaryPartition {
+    fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
+        Some(self.cmp(other))
+    }
+}
+
+impl Ord for SummaryPartition {
+    fn cmp(&self, other: &Self) -> Ordering {
+        (
+            self.pattern_ordinal,
+            self.document_ordinal(),
+            self.sentence_ordinal(),
+        )
+            .cmp(&(
+                other.pattern_ordinal,
+                other.document_ordinal(),
+                other.sentence_ordinal(),
+            ))
+    }
 }
 
 impl SummaryPartition {
@@ -119,8 +153,53 @@ impl SummaryPartition {
     pub const fn pattern(pattern_ordinal: u64) -> Self {
         Self {
             pattern_ordinal,
-            document_ordinal: None,
-            sentence_ordinal: None,
+            scope: SummaryScope::Corpus,
+        }
+    }
+
+    /// The partition of a per-document summary.
+    #[must_use]
+    pub const fn document(pattern_ordinal: u64, document_ordinal: u64) -> Self {
+        Self {
+            pattern_ordinal,
+            scope: SummaryScope::Document(document_ordinal),
+        }
+    }
+
+    /// The partition of a per-sentence count-table summary.
+    #[must_use]
+    pub const fn sentence(
+        pattern_ordinal: u64,
+        document_ordinal: u64,
+        sentence_ordinal: u64,
+    ) -> Self {
+        Self {
+            pattern_ordinal,
+            scope: SummaryScope::Sentence {
+                document_ordinal,
+                sentence_ordinal,
+            },
+        }
+    }
+
+    #[must_use]
+    pub const fn document_ordinal(&self) -> Option<u64> {
+        match self.scope {
+            SummaryScope::Corpus => None,
+            SummaryScope::Document(document_ordinal)
+            | SummaryScope::Sentence {
+                document_ordinal, ..
+            } => Some(document_ordinal),
+        }
+    }
+
+    #[must_use]
+    pub const fn sentence_ordinal(&self) -> Option<u64> {
+        match self.scope {
+            SummaryScope::Corpus | SummaryScope::Document(_) => None,
+            SummaryScope::Sentence {
+                sentence_ordinal, ..
+            } => Some(sentence_ordinal),
         }
     }
 }
@@ -938,10 +1017,11 @@ fn shard_thread(
                                     "summary ordering cancelled",
                                 ));
                             }
-                            let (Some(document_ordinal), Some(sentence_ordinal)) = (
-                                key.partition.document_ordinal,
-                                key.partition.sentence_ordinal,
-                            ) else {
+                            let SummaryScope::Sentence {
+                                document_ordinal,
+                                sentence_ordinal,
+                            } = key.partition.scope
+                            else {
                                 return Err(io::Error::other(
                                     "a count table requires per-sentence partitions",
                                 ));
@@ -1787,7 +1867,7 @@ impl GroupingTally {
             .add((None, partition.pattern_ordinal, grouped), 1)?;
         if self.by_document {
             let document = partition
-                .document_ordinal
+                .document_ordinal()
                 .ok_or_else(|| io::Error::other("grouping coverage requires a document ordinal"))?;
             self.counts
                 .add((Some(document), partition.pattern_ordinal, grouped), 1)?;
@@ -2103,24 +2183,10 @@ mod grouping_coverage_tests {
             }
             for document in 0..100 {
                 for grouped in [false, true, true] {
-                    tally.observe(
-                        SummaryPartition {
-                            pattern_ordinal: 0,
-                            document_ordinal: Some(document),
-                            sentence_ordinal: None,
-                        },
-                        grouped,
-                    )?;
+                    tally.observe(SummaryPartition::document(0, document), grouped)?;
                 }
                 if document % 2 == 0 {
-                    tally.observe(
-                        SummaryPartition {
-                            pattern_ordinal: 1,
-                            document_ordinal: Some(document),
-                            sentence_ordinal: None,
-                        },
-                        true,
-                    )?;
+                    tally.observe(SummaryPartition::document(1, document), true)?;
                 }
             }
             assert!(tally.counts.snapshot().peak_buffered_keys() <= limit);
@@ -2156,15 +2222,29 @@ mod grouping_coverage_tests {
             )?,
             by_document: true,
         };
-        let result = tally.observe(
-            SummaryPartition {
-                pattern_ordinal: 0,
-                document_ordinal: Some(0),
-                sentence_ordinal: None,
-            },
-            true,
-        );
+        let result = tally.observe(SummaryPartition::document(0, 0), true);
         assert!(result.is_err());
         Ok(())
+    }
+
+    #[test]
+    fn summary_partition_ordering_matches_pattern_document_sentence_tuple() {
+        let ordered = [
+            SummaryPartition::pattern(0),
+            SummaryPartition::document(0, 0),
+            SummaryPartition::sentence(0, 0, 0),
+            SummaryPartition::sentence(0, 0, 1),
+            SummaryPartition::document(0, 1),
+            SummaryPartition::sentence(0, 1, 0),
+            SummaryPartition::pattern(1),
+        ];
+        for pair in ordered.windows(2) {
+            assert!(
+                pair[0] < pair[1],
+                "{:?} must precede {:?}",
+                pair[0],
+                pair[1]
+            );
+        }
     }
 }

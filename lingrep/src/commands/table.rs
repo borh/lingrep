@@ -94,6 +94,99 @@ pub(super) fn document_admission(
     Ok(admitted)
 }
 
+enum TableMode<'a> {
+    ByDocument {
+        metadata: lingrep_core::corpus::SourceMetadataProjection,
+    },
+    EntryByMetadata {
+        raw_entry: &'a str,
+        pattern: &'a str,
+        entry_key: &'a str,
+        by_metadata: &'a str,
+    },
+    Rows {
+        top: Option<u64>,
+        select: Option<&'a str>,
+        key_equals: KeyEquals,
+    },
+}
+
+impl<'a> TableMode<'a> {
+    fn parse(args: &'a TableArgs, output: OutputMode) -> Result<Self, CliError> {
+        if args.by_document && output != OutputMode::Jsonl {
+            return Err(CliError::InvalidArgs(
+                "table --by-document requires --json".into(),
+            ));
+        }
+        if let Some(key) = args
+            .source_metadata
+            .iter()
+            .find(|key| !key.starts_with("@document."))
+        {
+            return Err(CliError::InvalidArgs(format!(
+                "table --source-metadata accepts only @document.KEY, not {key}"
+            )));
+        }
+        let metadata =
+            lingrep_core::corpus::SourceMetadataProjection::new(args.source_metadata.clone())
+                .map_err(|error| CliError::InvalidArgs(error.to_string()))?;
+        if args.by_metadata.is_some() && output != OutputMode::Jsonl {
+            return Err(CliError::InvalidArgs(
+                "table --by-metadata requires --json".to_owned(),
+            ));
+        }
+        if let Some(key) = args
+            .by_metadata
+            .as_ref()
+            .filter(|key| key.strip_prefix("@document.").is_none_or(str::is_empty))
+        {
+            return Err(CliError::InvalidArgs(format!(
+                "table --by-metadata accepts only @document.NAME, not {key}"
+            )));
+        }
+        let entry = args
+            .entry
+            .as_deref()
+            .map(|entry| {
+                entry.split_once('=').ok_or_else(|| {
+                    CliError::InvalidArgs(format!("table --entry takes PATTERN=KEY, not {entry}"))
+                })
+            })
+            .transpose()?;
+        let key_equals = KeyEquals::new(
+            args.key
+                .iter()
+                .map(|item| match item.split_once('=') {
+                    Some((field, value)) if !field.is_empty() => {
+                        Ok((field.to_owned(), value.to_owned()))
+                    }
+                    _ => Err(CliError::InvalidArgs(format!(
+                        "table --key takes FIELD=VALUE, not {item}"
+                    ))),
+                })
+                .collect::<Result<_, _>>()?,
+        );
+        if args.by_document {
+            Ok(Self::ByDocument { metadata })
+        } else if let (Some((pattern, entry_key)), Some(by_metadata)) =
+            (entry, args.by_metadata.as_deref())
+        {
+            Ok(Self::EntryByMetadata {
+                raw_entry: args.entry.as_deref().expect("checked entry"),
+                pattern,
+                entry_key,
+                by_metadata,
+            })
+        } else {
+            Ok(Self::Rows {
+                top: resolve_summary_top(output, args.top),
+                select: args.select.as_deref(),
+                key_equals,
+            })
+        }
+    }
+}
+
 pub fn run(
     args: &TableArgs,
     terminal: &TerminalArbiter,
@@ -105,439 +198,414 @@ pub fn run(
         .or(args.table_option.as_deref())
         .ok_or_else(|| CliError::InvalidArgs("table requires TABLE or --table TABLE".into()))?;
     let started = Instant::now();
-    if args.by_document && output != OutputMode::Jsonl {
-        return Err(CliError::InvalidArgs(
-            "table --by-document requires --json".into(),
-        ));
-    }
-    if let Some(key) = args
-        .source_metadata
-        .iter()
-        .find(|key| !key.starts_with("@document."))
-    {
-        return Err(CliError::InvalidArgs(format!(
-            "table --source-metadata accepts only @document.KEY, not {key}"
-        )));
-    }
-    let metadata =
-        lingrep_core::corpus::SourceMetadataProjection::new(args.source_metadata.clone())
-            .map_err(|error| CliError::InvalidArgs(error.to_string()))?;
-
+    let mode = TableMode::parse(args, output)?;
     let catalog = load_and_compile(&args.catalog.catalog_input()?)?;
     let clause = document_clause("table --where", args.clause.as_deref())?;
-    if args.by_metadata.is_some() && output != OutputMode::Jsonl {
-        return Err(CliError::InvalidArgs(
-            "table --by-metadata requires --json".to_owned(),
-        ));
-    }
-    if let Some(key) = args
-        .by_metadata
-        .as_ref()
-        .filter(|key| key.strip_prefix("@document.").is_none_or(str::is_empty))
-    {
-        return Err(CliError::InvalidArgs(format!(
-            "table --by-metadata accepts only @document.NAME, not {key}"
-        )));
-    }
-    let entry = args
-        .entry
-        .as_deref()
-        .map(|entry| {
-            entry.split_once('=').ok_or_else(|| {
-                CliError::InvalidArgs(format!("table --entry takes PATTERN=KEY, not {entry}"))
-            })
-        })
-        .transpose()?;
-    let key_equals = KeyEquals::new(
-        args.key
-            .iter()
-            .map(|item| match item.split_once('=') {
-                Some((field, value)) if !field.is_empty() => {
-                    Ok((field.to_owned(), value.to_owned()))
-                }
-                _ => Err(CliError::InvalidArgs(format!(
-                    "table --key takes FIELD=VALUE, not {item}"
-                ))),
-            })
-            .collect::<Result<_, _>>()?,
-    );
-    let top = resolve_summary_top(output, args.top);
     let artifact = CorpusArtifact::open(&args.corpus)?;
     let (table, key) = open_table(table_path, &artifact, &catalog.fingerprint)?;
-    let selected = args
-        .select
-        .as_deref()
-        .map(|name| {
-            table
-                .pattern_names()
-                .position(|candidate| candidate == name)
-                .ok_or_else(|| {
-                    CliError::InvalidArgs(format!(
-                        "table --select: the table has no pattern {name}"
-                    ))
+
+    match mode {
+        TableMode::ByDocument { metadata } => {
+            let reader = artifact.provenance_reader()?;
+            let admitted = clause
+                .as_ref()
+                .map(|clause| document_admission(&reader, clause, "table --where"))
+                .transpose()?;
+            export_documents(
+                table_path,
+                args.clause.as_deref(),
+                &artifact,
+                &table,
+                &reader,
+                &key,
+                &metadata,
+                admitted.as_ref(),
+                terminal,
+                started,
+            )
+        }
+        TableMode::EntryByMetadata {
+            raw_entry,
+            pattern,
+            entry_key,
+            by_metadata,
+        } => {
+            let lookup = Instant::now();
+            let (pattern, entry) = find_entry(&table, pattern, entry_key)?;
+            let lookup = lookup.elapsed();
+            let reader = artifact.provenance_reader()?;
+            let admitted = clause
+                .as_ref()
+                .map(|clause| document_admission(&reader, clause, "table --where"))
+                .transpose()?;
+            let admits = |id: u64| {
+                admitted
+                    .as_ref()
+                    .is_none_or(|admitted| admitted.contains(id))
+            };
+            let documents = document_values(&reader, by_metadata)?;
+            let queried = Instant::now();
+            let records =
+                entry_by_metadata(&table, pattern, entry, by_metadata, documents, admits)?;
+            let admission = table.top(&table.mask(admits), 0).map_err(table_error)?;
+            let query_millis = (lookup + queried.elapsed())
+                .as_millis()
+                .try_into()
+                .unwrap_or(u64::MAX);
+            if terminal.cancellation().is_cancelled() {
+                return Ok(CommandOutcome::Cancelled);
+            }
+            let stdout = io::stdout();
+            let mut writer = io::BufWriter::with_capacity(256 * 1024, stdout.lock());
+            let mut scratch = Vec::new();
+            let emit_immediate = |writer: &mut io::BufWriter<io::StdoutLock<'_>>,
+                                  event: TableEvent| {
+                write_jsonl(writer, &TableEnvelope::new(event))
+                    .map_err(|error| CliError::Execution(execution_output_error(error)))
+            };
+            let emit_buffered = |writer: &mut io::BufWriter<io::StdoutLock<'_>>,
+                                 scratch: &mut Vec<u8>,
+                                 event: TableEvent| {
+                write_jsonl_buffered(writer, scratch, &TableEnvelope::new(event))
+                    .map_err(|error| CliError::Execution(execution_output_error(error)))
+            };
+            emit_immediate(
+                &mut writer,
+                TableEvent::Run(TableRun {
+                    table: table_path.display().to_string(),
+                    analysis_identity: key.analysis_identity.clone(),
+                    catalog_fingerprint: key.catalog_fingerprint.clone(),
+                    matcher_revision: key.matcher_revision.clone(),
+                    clause: args.clause.clone(),
+                    requested_top: None,
+                    by_document: false,
+                    source_identity: None,
+                    published_source_metadata: Vec::new(),
+                    entry: Some(raw_entry.to_owned()),
+                    by_metadata: Some(by_metadata.to_owned()),
+                    select: None,
+                    key: Vec::new(),
+                }),
+            )?;
+            for record in records {
+                emit_buffered(&mut writer, &mut scratch, TableEvent::MetadataValue(record))?;
+            }
+            if !terminal.try_claim_completion() {
+                return Ok(CommandOutcome::Cancelled);
+            }
+            emit_immediate(
+                &mut writer,
+                TableEvent::Complete(TableComplete {
+                    documents_admitted: admission.documents_admitted,
+                    sentences_admitted: admission.sentences_admitted,
+                    tokens_admitted: admission.tokens_admitted,
+                    rows: 0,
+                    entries: None,
+                    query_millis,
+                    elapsed_millis: started.elapsed().as_millis().try_into().unwrap_or(u64::MAX),
+                }),
+            )?;
+            Ok(CommandOutcome::Success)
+        }
+        TableMode::Rows {
+            top,
+            select,
+            key_equals,
+        } => {
+            let selected = select
+                .map(|name| {
+                    table
+                        .pattern_names()
+                        .position(|candidate| candidate == name)
+                        .ok_or_else(|| {
+                            CliError::InvalidArgs(format!(
+                                "table --select: the table has no pattern {name}"
+                            ))
+                        })
                 })
-        })
-        .transpose()?;
-    if let Some(pattern) = selected
-        && let Err(error) = table
-            .check_key_equals(pattern, &key_equals)
-            .map_err(table_error)?
-    {
-        return Err(CliError::InvalidArgs(format!("table --key: {error}")));
-    }
-    let lookup = Instant::now();
-    let entry = entry
-        .map(|(pattern, entry_key)| find_entry(&table, pattern, entry_key))
-        .transpose()?;
-    let lookup = lookup.elapsed();
-    let provenance = (clause.is_some() || entry.is_some() || args.by_document)
-        .then(|| artifact.provenance_reader())
-        .transpose()?;
-    let admitted = match (&clause, &provenance) {
-        (Some(clause), Some(reader)) => Some(document_admission(reader, clause, "table --where")?),
-        _ => None,
-    };
-    let admits = |id: u64| {
-        admitted
-            .as_ref()
-            .is_none_or(|admitted| admitted.contains(id))
-    };
-    if args.by_document {
-        return export_documents(
-            args,
-            &artifact,
-            &table,
-            provenance
-                .as_deref()
-                .expect("document export opens provenance"),
-            &key,
-            &metadata,
-            admitted.as_ref(),
-            terminal,
-            started,
-        );
-    }
-    if let (Some((pattern, entry)), Some(by), Some(reader)) =
-        (entry, args.by_metadata.as_deref(), &provenance)
-    {
-        let documents = document_values(reader, by)?;
-        let queried = Instant::now();
-        let records = entry_by_metadata(&table, pattern, entry, by, documents, admits)?;
-        let admission = table.top(&table.mask(admits), 0).map_err(table_error)?;
-        let query_millis = (lookup + queried.elapsed())
-            .as_millis()
-            .try_into()
-            .unwrap_or(u64::MAX);
-        if terminal.cancellation().is_cancelled() {
-            return Ok(CommandOutcome::Cancelled);
-        }
-        let stdout = io::stdout();
-        let mut writer = io::BufWriter::with_capacity(256 * 1024, stdout.lock());
-        let mut scratch = Vec::new();
-        let emit_immediate = |writer: &mut io::BufWriter<io::StdoutLock<'_>>, event: TableEvent| {
-            write_jsonl(writer, &TableEnvelope::new(event))
-                .map_err(|error| CliError::Execution(execution_output_error(error)))
-        };
-        let emit_buffered = |writer: &mut io::BufWriter<io::StdoutLock<'_>>,
-                             scratch: &mut Vec<u8>,
-                             event: TableEvent| {
-            write_jsonl_buffered(writer, scratch, &TableEnvelope::new(event))
-                .map_err(|error| CliError::Execution(execution_output_error(error)))
-        };
-        emit_immediate(
-            &mut writer,
-            TableEvent::Run(TableRun {
-                table: table_path.display().to_string(),
-                analysis_identity: key.analysis_identity.clone(),
-                catalog_fingerprint: key.catalog_fingerprint.clone(),
-                matcher_revision: key.matcher_revision.clone(),
-                clause: args.clause.clone(),
-                requested_top: None,
-                by_document: false,
-                source_identity: None,
-                published_source_metadata: Vec::new(),
-                entry: args.entry.clone(),
-                by_metadata: args.by_metadata.clone(),
-                select: None,
-                key: Vec::new(),
-            }),
-        )?;
-        for record in records {
-            emit_buffered(&mut writer, &mut scratch, TableEvent::MetadataValue(record))?;
-        }
-        if !terminal.try_claim_completion() {
-            return Ok(CommandOutcome::Cancelled);
-        }
-        emit_immediate(
-            &mut writer,
-            TableEvent::Complete(TableComplete {
+                .transpose()?;
+            if let Some(pattern) = selected
+                && let Err(error) = table
+                    .check_key_equals(pattern, &key_equals)
+                    .map_err(table_error)?
+            {
+                return Err(CliError::InvalidArgs(format!("table --key: {error}")));
+            }
+            let admitted = clause
+                .as_ref()
+                .map(|clause| {
+                    let reader = artifact.provenance_reader()?;
+                    document_admission(&reader, clause, "table --where")
+                })
+                .transpose()?;
+            let admits = |id: u64| {
+                admitted
+                    .as_ref()
+                    .is_none_or(|admitted| admitted.contains(id))
+            };
+            let mask = table.mask(admits);
+            let queried = Instant::now();
+            let totals = table.pattern_totals(&mask).map_err(table_error)?;
+            let (admission, mut rows): (Admission, Box<dyn Iterator<Item = _>>) =
+                if let Some(pattern) = selected {
+                    let admission = table.top(&mask, 0).map_err(table_error)?;
+                    let admission = Admission {
+                        documents_admitted: admission.documents_admitted,
+                        sentences_admitted: admission.sentences_admitted,
+                        tokens_admitted: admission.tokens_admitted,
+                    };
+                    let rows = table
+                        .ranked_pattern_rows(
+                            pattern,
+                            &mask,
+                            SpillPolicy {
+                                max_pending_bytes: usize::MAX,
+                                max_pending_keys: RESIDENT_ROWS,
+                                merge_fan_in: MERGE_FAN_IN,
+                            },
+                            Arc::new(TempBudget::new(args.max_temp_bytes)),
+                            terminal.cancellation(),
+                        )
+                        .map_err(table_error)?
+                        .map(move |row| row.map(|row| (pattern, row)));
+                    (admission, Box::new(rows))
+                } else if let Some(top) = top {
+                    let result = table
+                        .top(&mask, usize::try_from(top).unwrap_or(usize::MAX))
+                        .map_err(table_error)?;
+                    let admission = Admission {
+                        documents_admitted: result.documents_admitted,
+                        sentences_admitted: result.sentences_admitted,
+                        tokens_admitted: result.tokens_admitted,
+                    };
+                    let rows = result.patterns.into_iter().flat_map(|pattern| {
+                        pattern.rows.into_iter().map(move |row| {
+                            Ok::<(usize, TopRow), CountTableError>((pattern.pattern, row))
+                        })
+                    });
+                    (admission, Box::new(rows))
+                } else {
+                    let rows = table
+                        .rows(
+                            &mask,
+                            SpillPolicy {
+                                max_pending_bytes: usize::MAX,
+                                max_pending_keys: RESIDENT_ROWS,
+                                merge_fan_in: MERGE_FAN_IN,
+                            },
+                            Arc::new(TempBudget::new(args.max_temp_bytes)),
+                        )
+                        .map_err(table_error)?;
+                    (rows.admission(), Box::new(rows))
+                };
+
+            if terminal.cancellation().is_cancelled() {
+                return Ok(CommandOutcome::Cancelled);
+            }
+            let names = table.pattern_names().collect::<Vec<_>>();
+            let stdout = io::stdout();
+            let mut writer = io::BufWriter::with_capacity(256 * 1024, stdout.lock());
+            let mut scratch = Vec::new();
+            let emit_immediate = |writer: &mut io::BufWriter<io::StdoutLock<'_>>,
+                                  event: TableEvent| {
+                write_jsonl(writer, &TableEnvelope::new(event))
+                    .map_err(|error| CliError::Execution(execution_output_error(error)))
+            };
+            let emit_buffered = |writer: &mut io::BufWriter<io::StdoutLock<'_>>,
+                                 scratch: &mut Vec<u8>,
+                                 event: TableEvent| {
+                write_jsonl_buffered(writer, scratch, &TableEnvelope::new(event))
+                    .map_err(|error| CliError::Execution(execution_output_error(error)))
+            };
+            let jsonl = output == OutputMode::Jsonl;
+            if jsonl {
+                emit_immediate(
+                    &mut writer,
+                    TableEvent::Run(TableRun {
+                        table: table_path.display().to_string(),
+                        analysis_identity: key.analysis_identity.clone(),
+                        catalog_fingerprint: key.catalog_fingerprint.clone(),
+                        matcher_revision: key.matcher_revision.clone(),
+                        clause: args.clause.clone(),
+                        requested_top: top,
+                        by_document: false,
+                        source_identity: None,
+                        published_source_metadata: Vec::new(),
+                        entry: None,
+                        by_metadata: None,
+                        select: select.map(str::to_owned),
+                        key: key_fields(&key_equals),
+                    }),
+                )?;
+            }
+            for total in totals
+                .iter()
+                .filter(|total| selected.is_none_or(|pattern| pattern == total.pattern))
+            {
+                let name = names
+                    .get(total.pattern)
+                    .copied()
+                    .ok_or_else(|| CliError::Corpus("table pattern out of range".to_owned()))?;
+                if jsonl {
+                    emit_buffered(
+                        &mut writer,
+                        &mut scratch,
+                        TableEvent::Pattern(TablePattern {
+                            pattern: name.to_owned(),
+                            occurrences: total.occurrences,
+                            works: total.works,
+                        }),
+                    )?;
+                } else {
+                    writeln!(
+                        writer,
+                        "pattern {}: {} occurrences in {} documents",
+                        sanitize_terminal(name),
+                        total.occurrences,
+                        total.works
+                    )
+                    .map_err(|error| CliError::Execution(execution_output_io(error)))?;
+                }
+            }
+            let subset = match selected.filter(|_| !key_equals.is_empty()) {
+                Some(pattern) => Some(
+                    table
+                        .key_subset(pattern, &mask, &key_equals, terminal.cancellation())
+                        .map_err(table_error)?
+                        .map_err(|error| CliError::InvalidArgs(format!("table --key: {error}")))?,
+                ),
+                None => None,
+            };
+            if let (Some(subset), Some(pattern)) = (subset, select) {
+                if jsonl {
+                    emit_buffered(
+                        &mut writer,
+                        &mut scratch,
+                        TableEvent::Subset(TableSubset {
+                            pattern: pattern.to_owned(),
+                            key: key_fields(&key_equals),
+                            occurrences: subset.occurrences,
+                            works: subset.works,
+                            entries: subset.entries,
+                        }),
+                    )?;
+                } else {
+                    writeln!(
+                        writer,
+                        "subset {} {}: {} occurrences in {} documents, {} groups",
+                        sanitize_terminal(pattern),
+                        sanitize_terminal(
+                            &key_equals
+                                .fields()
+                                .iter()
+                                .map(|(field, value)| format!("{field}={value}"))
+                                .collect::<Vec<_>>()
+                                .join(" ")
+                        ),
+                        subset.occurrences,
+                        subset.works,
+                        subset.entries
+                    )
+                    .map_err(|error| CliError::Execution(execution_output_io(error)))?;
+                }
+            }
+            let mut emitted = 0u64;
+            let mut previous_pattern = None;
+            let mut rank = 0u64;
+            for row in &mut rows {
+                if terminal.cancellation().is_cancelled() {
+                    return Ok(CommandOutcome::Cancelled);
+                }
+                let (pattern, row) = row.map_err(table_error)?;
+                if selected.is_some() {
+                    if top.is_some_and(|top| emitted >= top) {
+                        break;
+                    }
+                    if !table
+                        .key_admits(pattern, row.entry, &key_equals)
+                        .map_err(table_error)?
+                        .map_err(|error| CliError::InvalidArgs(format!("table --key: {error}")))?
+                    {
+                        continue;
+                    }
+                }
+                let share = subset.map(|subset| row.count as f64 / subset.occurrences as f64);
+                let name = names
+                    .get(pattern)
+                    .copied()
+                    .ok_or_else(|| CliError::Corpus("table pattern out of range".to_owned()))?;
+                if previous_pattern != Some(pattern) {
+                    previous_pattern = Some(pattern);
+                    rank = 0;
+                }
+                rank += 1;
+                let group = table.group(row.entry).map_err(table_error)?;
+                emitted += 1;
+                if jsonl {
+                    emit_buffered(
+                        &mut writer,
+                        &mut scratch,
+                        TableEvent::Row(TableRow {
+                            pattern: name.to_owned(),
+                            rank,
+                            group: group_data(&group),
+                            count: row.count,
+                            works: row.works,
+                            share,
+                        }),
+                    )?;
+                } else {
+                    let share =
+                        share.map_or_else(String::new, |share| format!(" {:>6.1}%", share * 100.0));
+                    writeln!(
+                        writer,
+                        "{:>8} {:>6}{share}  {}  {}",
+                        row.count,
+                        row.works,
+                        sanitize_terminal(name),
+                        sanitize_terminal(&group_display(&group)?)
+                    )
+                    .map_err(|error| CliError::Execution(execution_output_io(error)))?;
+                }
+            }
+            let query_millis = queried.elapsed().as_millis().try_into().unwrap_or(u64::MAX);
+            let complete = TableComplete {
                 documents_admitted: admission.documents_admitted,
                 sentences_admitted: admission.sentences_admitted,
                 tokens_admitted: admission.tokens_admitted,
-                rows: 0,
+                rows: emitted,
                 entries: None,
                 query_millis,
                 elapsed_millis: started.elapsed().as_millis().try_into().unwrap_or(u64::MAX),
-            }),
-        )?;
-        return Ok(CommandOutcome::Success);
-    }
-    let mask = table.mask(admits);
-    let queried = Instant::now();
-    let totals = table.pattern_totals(&mask).map_err(table_error)?;
-    let (admission, mut rows): (Admission, Box<dyn Iterator<Item = _>>) =
-        if let Some(pattern) = selected {
-            let admission = table.top(&mask, 0).map_err(table_error)?;
-            let admission = Admission {
-                documents_admitted: admission.documents_admitted,
-                sentences_admitted: admission.sentences_admitted,
-                tokens_admitted: admission.tokens_admitted,
             };
-            let rows = table
-                .ranked_pattern_rows(
-                    pattern,
-                    &mask,
-                    SpillPolicy {
-                        max_pending_bytes: usize::MAX,
-                        max_pending_keys: RESIDENT_ROWS,
-                        merge_fan_in: MERGE_FAN_IN,
-                    },
-                    Arc::new(TempBudget::new(args.max_temp_bytes)),
-                    terminal.cancellation(),
-                )
-                .map_err(table_error)?
-                .map(move |row| row.map(|row| (pattern, row)));
-            (admission, Box::new(rows))
-        } else if let Some(top) = top {
-            let result = table
-                .top(&mask, usize::try_from(top).unwrap_or(usize::MAX))
-                .map_err(table_error)?;
-            let admission = Admission {
-                documents_admitted: result.documents_admitted,
-                sentences_admitted: result.sentences_admitted,
-                tokens_admitted: result.tokens_admitted,
-            };
-            let rows = result.patterns.into_iter().flat_map(|pattern| {
-                pattern
-                    .rows
-                    .into_iter()
-                    .map(move |row| Ok::<(usize, TopRow), CountTableError>((pattern.pattern, row)))
-            });
-            (admission, Box::new(rows))
-        } else {
-            let rows = table
-                .rows(
-                    &mask,
-                    SpillPolicy {
-                        max_pending_bytes: usize::MAX,
-                        max_pending_keys: RESIDENT_ROWS,
-                        merge_fan_in: MERGE_FAN_IN,
-                    },
-                    Arc::new(TempBudget::new(args.max_temp_bytes)),
-                )
-                .map_err(table_error)?;
-            (rows.admission(), Box::new(rows))
-        };
-
-    if terminal.cancellation().is_cancelled() {
-        return Ok(CommandOutcome::Cancelled);
-    }
-    let names = table.pattern_names().collect::<Vec<_>>();
-    let stdout = io::stdout();
-    let mut writer = io::BufWriter::with_capacity(256 * 1024, stdout.lock());
-    let mut scratch = Vec::new();
-    let emit_immediate = |writer: &mut io::BufWriter<io::StdoutLock<'_>>, event: TableEvent| {
-        write_jsonl(writer, &TableEnvelope::new(event))
-            .map_err(|error| CliError::Execution(execution_output_error(error)))
-    };
-    let emit_buffered = |writer: &mut io::BufWriter<io::StdoutLock<'_>>,
-                         scratch: &mut Vec<u8>,
-                         event: TableEvent| {
-        write_jsonl_buffered(writer, scratch, &TableEnvelope::new(event))
-            .map_err(|error| CliError::Execution(execution_output_error(error)))
-    };
-    let jsonl = output == OutputMode::Jsonl;
-    if jsonl {
-        emit_immediate(
-            &mut writer,
-            TableEvent::Run(TableRun {
-                table: table_path.display().to_string(),
-                analysis_identity: key.analysis_identity.clone(),
-                catalog_fingerprint: key.catalog_fingerprint.clone(),
-                matcher_revision: key.matcher_revision.clone(),
-                clause: args.clause.clone(),
-                requested_top: top,
-                by_document: false,
-                source_identity: None,
-                published_source_metadata: Vec::new(),
-                entry: None,
-                by_metadata: None,
-                select: args.select.clone(),
-                key: key_fields(&key_equals),
-            }),
-        )?;
-    }
-    for total in totals
-        .iter()
-        .filter(|total| selected.is_none_or(|pattern| pattern == total.pattern))
-    {
-        let name = names
-            .get(total.pattern)
-            .copied()
-            .ok_or_else(|| CliError::Corpus("table pattern out of range".to_owned()))?;
-        if jsonl {
-            emit_buffered(
-                &mut writer,
-                &mut scratch,
-                TableEvent::Pattern(TablePattern {
-                    pattern: name.to_owned(),
-                    occurrences: total.occurrences,
-                    works: total.works,
-                }),
-            )?;
-        } else {
-            writeln!(
-                writer,
-                "pattern {}: {} occurrences in {} documents",
-                sanitize_terminal(name),
-                total.occurrences,
-                total.works
-            )
-            .map_err(|error| CliError::Execution(execution_output_io(error)))?;
-        }
-    }
-    let subset = match selected.filter(|_| !key_equals.is_empty()) {
-        Some(pattern) => Some(
-            table
-                .key_subset(pattern, &mask, &key_equals, terminal.cancellation())
-                .map_err(table_error)?
-                .map_err(|error| CliError::InvalidArgs(format!("table --key: {error}")))?,
-        ),
-        None => None,
-    };
-    if let (Some(subset), Some(pattern)) = (subset, args.select.as_deref()) {
-        if jsonl {
-            emit_buffered(
-                &mut writer,
-                &mut scratch,
-                TableEvent::Subset(TableSubset {
-                    pattern: pattern.to_owned(),
-                    key: key_fields(&key_equals),
-                    occurrences: subset.occurrences,
-                    works: subset.works,
-                    entries: subset.entries,
-                }),
-            )?;
-        } else {
-            writeln!(
-                writer,
-                "subset {} {}: {} occurrences in {} documents, {} groups",
-                sanitize_terminal(pattern),
-                sanitize_terminal(
-                    &key_equals
-                        .fields()
-                        .iter()
-                        .map(|(field, value)| format!("{field}={value}"))
-                        .collect::<Vec<_>>()
-                        .join(" ")
-                ),
-                subset.occurrences,
-                subset.works,
-                subset.entries
-            )
-            .map_err(|error| CliError::Execution(execution_output_io(error)))?;
-        }
-    }
-    let mut emitted = 0u64;
-    let mut previous_pattern = None;
-    let mut rank = 0u64;
-    for row in &mut rows {
-        if terminal.cancellation().is_cancelled() {
-            return Ok(CommandOutcome::Cancelled);
-        }
-        let (pattern, row) = row.map_err(table_error)?;
-        if selected.is_some() {
-            if top.is_some_and(|top| emitted >= top) {
-                break;
+            if !terminal.try_claim_completion() {
+                return Ok(CommandOutcome::Cancelled);
             }
-            if !table
-                .key_admits(pattern, row.entry, &key_equals)
-                .map_err(table_error)?
-                .map_err(|error| CliError::InvalidArgs(format!("table --key: {error}")))?
-            {
-                continue;
+            if jsonl {
+                emit_immediate(&mut writer, TableEvent::Complete(complete))?;
+            } else {
+                writeln!(
+                    writer,
+                    "{} documents, {} tokens admitted; {} rows in {} ms",
+                    complete.documents_admitted,
+                    complete.tokens_admitted,
+                    complete.rows,
+                    query_millis
+                )
+                .map_err(|error| CliError::Execution(execution_output_io(error)))?;
+                writer
+                    .flush()
+                    .map_err(|error| CliError::Execution(execution_output_io(error)))?;
             }
-        }
-        let share = subset.map(|subset| row.count as f64 / subset.occurrences as f64);
-        let name = names
-            .get(pattern)
-            .copied()
-            .ok_or_else(|| CliError::Corpus("table pattern out of range".to_owned()))?;
-        if previous_pattern != Some(pattern) {
-            previous_pattern = Some(pattern);
-            rank = 0;
-        }
-        rank += 1;
-        let group = table.group(row.entry).map_err(table_error)?;
-        emitted += 1;
-        if jsonl {
-            emit_buffered(
-                &mut writer,
-                &mut scratch,
-                TableEvent::Row(TableRow {
-                    pattern: name.to_owned(),
-                    rank,
-                    group: group_data(&group),
-                    count: row.count,
-                    works: row.works,
-                    share,
-                }),
-            )?;
-        } else {
-            let share = share.map_or_else(String::new, |share| format!(" {:>6.1}%", share * 100.0));
-            writeln!(
-                writer,
-                "{:>8} {:>6}{share}  {}  {}",
-                row.count,
-                row.works,
-                sanitize_terminal(name),
-                sanitize_terminal(&group_display(&group)?)
-            )
-            .map_err(|error| CliError::Execution(execution_output_io(error)))?;
+            Ok(CommandOutcome::Success)
         }
     }
-    let query_millis = queried.elapsed().as_millis().try_into().unwrap_or(u64::MAX);
-    let complete = TableComplete {
-        documents_admitted: admission.documents_admitted,
-        sentences_admitted: admission.sentences_admitted,
-        tokens_admitted: admission.tokens_admitted,
-        rows: emitted,
-        entries: None,
-        query_millis,
-        elapsed_millis: started.elapsed().as_millis().try_into().unwrap_or(u64::MAX),
-    };
-    if !terminal.try_claim_completion() {
-        return Ok(CommandOutcome::Cancelled);
-    }
-    if jsonl {
-        emit_immediate(&mut writer, TableEvent::Complete(complete))?;
-    } else {
-        writeln!(
-            writer,
-            "{} documents, {} tokens admitted; {} rows in {} ms",
-            complete.documents_admitted, complete.tokens_admitted, complete.rows, query_millis
-        )
-        .map_err(|error| CliError::Execution(execution_output_io(error)))?;
-        writer
-            .flush()
-            .map_err(|error| CliError::Execution(execution_output_io(error)))?;
-    }
-    Ok(CommandOutcome::Success)
 }
 
 #[allow(clippy::too_many_arguments)]
 fn export_documents(
-    args: &TableArgs,
+    table_path: &std::path::Path,
+    clause: Option<&str>,
     artifact: &CorpusArtifact,
     table: &CountTable,
     reader: &BlockingProvenance,
@@ -589,18 +657,12 @@ fn export_documents(
     emit_immediate(
         &mut writer,
         TableEvent::Run(TableRun {
-            table: args
-                .table
-                .as_deref()
-                .or(args.table_option.as_deref())
-                .expect("table path checked")
-                .display()
-                .to_string(),
+            table: table_path.display().to_string(),
             analysis_identity: key.analysis_identity.clone(),
             catalog_fingerprint: key.catalog_fingerprint.clone(),
             matcher_revision: key.matcher_revision.clone(),
             source_identity: Some(encode_digest(artifact.source_identity().as_bytes())),
-            clause: args.clause.clone(),
+            clause: clause.map(str::to_owned),
             requested_top: None,
             by_document: true,
             published_source_metadata: metadata.keys().to_vec(),
