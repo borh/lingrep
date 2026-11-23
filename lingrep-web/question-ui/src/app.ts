@@ -160,7 +160,7 @@ $('#restore-searches').addEventListener('click',async()=>{
 const documentViews=new Map<string,DocumentView>();
 const resultLayouts=new Map<string,ResultLayout>();
 const DEFAULT_WORK_CONTEXT=4;
-let preferredLayout:ResultLayout='works',preferredWorkContext=DEFAULT_WORK_CONTEXT;
+let preferredLayout:ResultLayout='kwic',preferredWorkContext=DEFAULT_WORK_CONTEXT;
 const resultLayout=(run:RunSnapshot):ResultLayout=>resultLayouts.get(run.id)??preferredLayout;
 interface WorkView {
   groups: WorkGroup[];
@@ -568,7 +568,7 @@ function render(force=false) {
     if (!panel) {
       panel=document.createElement('article');
       panel.className='result-panel';panel.dataset.run=run.id;
-      panel.innerHTML='<p class="result-scope"></p><ul class="result-notices" hidden></ul><div class="panel-body"><details class="pattern-picker"><summary></summary><div class="pattern-list"></div></details><div class="lines-area"><div class="result-modes" hidden><div class="result-layout" role="group"><button type="button" data-layout="works"></button><button type="button" data-layout="kwic"></button></div><label class="kwic-sort"><span></span><select><option value="original"></option><option value="left"></option><option value="match"></option><option value="right"></option></select></label><div class="work-controls" hidden><label><span class="work-context-label"></span> <input type="number" data-work-context min="0" max="24" step="1" required></label><label><input type="checkbox" data-work-overview> <span class="work-overview-label"></span></label></div></div><div class="result-reading"><span class="evidence-sentence"></span> <span class="document-scope" hidden></span> <span class="line-controls"><span></span> <input type="search"></span> <details class="document-nav" aria-label="Documents" hidden><summary class="document-jump"></summary><div class="document-finder" hidden></div><div class="document-choice"></div></details> <span class="result-header"></span> <span class="line-note" role="status" hidden></span></div><div class="kwic-list"></div><nav class="document-pages" aria-label="Example pages" hidden></nav><nav class="work-pages" hidden><a data-view data-work-page="previous"></a><a data-view data-work-page="next"></a><button type="button" data-work-retry hidden></button></nav></div></div><details class="query-tools-detail"><summary></summary><pre></pre><div class="query-tools"><button type="button" data-copy></button><button type="button" data-source></button></div></details>';
+      panel.innerHTML='<p class="result-scope"></p><ul class="result-notices" hidden></ul><div class="panel-body"><div class="lines-area"><div class="result-modes" hidden><div class="result-layout" role="group"><button type="button" data-layout="works"></button><button type="button" data-layout="kwic"></button></div><label class="kwic-sort"><span></span><select><option value="original"></option><option value="left"></option><option value="match"></option><option value="right"></option></select></label><div class="work-controls" hidden><label><span class="work-context-label"></span> <input type="number" data-work-context min="0" max="24" step="1" required></label><label><input type="checkbox" data-work-overview> <span class="work-overview-label"></span></label></div></div><div class="result-reading"><details class="pattern-picker"><summary></summary><div class="pattern-list"></div></details> <span class="evidence-sentence"></span> <span class="document-scope" hidden></span> <span class="line-controls"><span></span> <input type="search"></span> <details class="document-nav" aria-label="Documents" hidden><summary class="document-jump"></summary><div class="document-finder" hidden></div><div class="document-choice"></div></details> <span class="result-header"></span> <span class="line-note" role="status" hidden></span></div><div class="kwic-list"></div><nav class="document-pages" aria-label="Example pages" hidden></nav><nav class="work-pages" hidden><a data-view data-work-page="previous"></a><a data-view data-work-page="next"></a><button type="button" data-work-retry hidden></button></nav></div></div><details class="query-tools-detail"><summary></summary><pre></pre><div class="query-tools"><button type="button" data-copy></button><button type="button" data-source></button></div></details>';
       $<HTMLDetailsElement>('.document-nav',panel).open=false;
       bindResultModes(panel,run.id);
       $('.kwic-list',panel).addEventListener('click',event=>{const row=(event.target as Element).closest<HTMLElement>('[data-entry-line]');if(row)void openEntryLine(runFor(run.id),Number(row.dataset.entryLine));});
@@ -754,12 +754,34 @@ function renderResultModes(panel:HTMLElement,run:RunSnapshot,grouped:boolean){
   }
   const sort=$('.kwic-sort',modes);
   sort.hidden=grouped;
-  setConcordanceText($('span',sort),locale==='ja'?'表示中の用例を並べ替え':'Sort shown lines');
+  setConcordanceText($('span',sort),locale==='ja'?'並べ替え':'Sort');
   const orders=locale==='ja'?['出現順','左の文脈','一致箇所','右の文脈']:['Corpus order','Left context','Match','Right context'];
   sort.querySelectorAll('option').forEach((option,index)=>setConcordanceText(option,orders[index]));
 
 }
 
+// A sort covers every match of the definition, up to this many rows.
+const SORT_ROW_CAP=2000;
+const sortedRows=new WeakMap<DocumentView,{key:string;rows:MatchRecord[];total:number}>();
+const sortLoads=new WeakMap<DocumentView,string>();
+async function loadSortedRows(panel:HTMLElement,run:RunSnapshot,pattern:string,view:DocumentView,key:string){
+  sortLoads.set(view,key);
+  const rows:MatchRecord[]=[];let after=-1,total=0;
+  try{
+    while(rows.length<SORT_ROW_CAP){
+      const query=new URLSearchParams({pattern,limit:'200',q:view.query,continuous:view.scopeDocument==null?'1':'0',after:String(after)});
+      if(view.scopeDocument!=null)query.set('document',String(view.scopeDocument));
+      const data=await request<DocumentPage>(`api/questions/runs/${run.id}/documents?${query}`);
+      if(sortLoads.get(view)!==key)return;
+      rows.push(...data.rows);total=data.matches_total;
+      if(data.next==null||!data.rows.length)break;
+      after=data.next;
+    }
+    sortedRows.set(view,{key,rows:rows.slice(0,SORT_ROW_CAP),total});
+  }catch(error){view.error=errorMessage(error);}
+  sortLoads.delete(view);
+  if(panel.isConnected)renderLines(panel,runFor(run.id));
+}
 async function loadDocumentPage(panel: HTMLElement|null,run: RunSnapshot,pattern: string,document: number | null=null,after=-1,documentsOffset: number | null=null,scopeDocument=documentView(run,pattern).scopeDocument) {
   const view=documentView(run,pattern),epoch=++view.epoch,limit=controls.state.lines;
   view.request={document,after,documentsOffset,scopeDocument,limit};view.loading=true;view.error=null;
@@ -1108,17 +1130,22 @@ function renderLines(panel: HTMLElement,run: RunSnapshot | undefined,_force=fals
     else renderWorkLines(panel,run,list,pattern,work);
     return;
   }
+  const sort=$<HTMLSelectElement>('.kwic-sort select',panel).value;
+  const sortKeyId=`${view.query}\n${view.scopeDocument??''}`;
+  const sortedMode=sort!=='original'&&run.phase==='complete'&&!isReplay;
+  if(sortedMode&&sortedRows.get(view)?.key!==sortKeyId&&sortLoads.get(view)!==sortKeyId&&!view.error)void loadSortedRows(panel,run,pattern,view,sortKeyId);
+  const sortedAll=sortedMode&&sortedRows.get(view)?.key===sortKeyId?sortedRows.get(view)!:null;
   if(!isReplay&&run.phase==='complete'&&!view.loading&&(!view.error&&(view.documents===null||view.limit!==controls.state.lines)||view.error&&view.request?.limit!==controls.state.lines)){void loadDocumentPage(panel,run,pattern,view.document,view.after);return;}
   $('.line-controls',panel).hidden=false;
   renderDocumentNavigation(panel,run,pattern,view);
+  if(sortedMode){$('.document-nav',panel).hidden=true;$('.document-pages',panel).hidden=true;}
   const pageReady=!isReplay&&run.phase==='complete'&&view.documents!==null;
   const prefixVisible=!view.request||view.request.after===-1&&view.request.document==null&&view.request.scopeDocument==null;
-  const allRows=pageReady?view.rows:prefixVisible?(run.rows[pattern]??[]):[];
+  const allRows=sortedAll?sortedAll.rows:pageReady?view.rows:prefixVisible?(run.rows[pattern]??[]):[];
   const filter=filters.get(run.id)??'',limit=controls.state.lines,context=controls.state.context;
   const landmarks=new Map(view.landmarks.map(document=>[document.ordinal,document]));
-  const rows=allRows.filter(row=>lineText(row).includes(filter)).slice(0,limit);
-  const sort=$<HTMLSelectElement>('.kwic-sort select',panel).value;
-  if(run.phase==='complete'&&sort!=='original'){
+  const rows=allRows.filter(row=>lineText(row).includes(filter)).slice(0,sortedAll?SORT_ROW_CAP:limit);
+  if(sortedAll){
     const collator=new Intl.Collator('ja');
     const sortKey=(row:MatchRecord)=>sort==='left'?words([...(row.left_context??[])].reverse()):sort==='right'?words(row.right_context):row.surface;
     const keys=new Map(rows.map(row=>[row,sortKey(row)]));
@@ -1126,7 +1153,7 @@ function renderLines(panel: HTMLElement,run: RunSnapshot | undefined,_force=fals
   }
   const shownCounts=new Map<number,number>();
   for(const row of rows)shownCounts.set(row.document_ordinal,(shownCounts.get(row.document_ordinal)??0)+1);
-  const total=pageReady?view.matchesTotal:run.counts[pattern]??0,shownLines=Math.min(allRows.length,limit);
+  const total=sortedAll?sortedAll.total:pageReady?view.matchesTotal:run.counts[pattern]??0,shownLines=sortedAll?allRows.length:Math.min(allRows.length,limit);
   {
     const input=$<HTMLInputElement>('.line-controls input',panel),hint=locale==='ja'?`表示中の${count(shownLines)}件から絞り込む`:`Filter the ${count(shownLines)} lines shown`;
     input.placeholder=hint;input.setAttribute('aria-label',hint);
@@ -1134,6 +1161,7 @@ function renderLines(panel: HTMLElement,run: RunSnapshot | undefined,_force=fals
       ? filter?(locale==='ja'?`表示中の ${count(shownLines)} 件のうち ${count(rows.length)} 件 · 全 ${count(total)} 件`:`${count(rows.length)} of the ${count(shownLines)} lines shown · ${count(total)} total matches`)
       :!rows.length?'':(locale==='ja'?`${count(view.start+1)}–${count(view.start+rows.length)} 件を表示。`:`Reading ${count(rows.length?view.start+1:0)}–${count(view.start+rows.length)}.`)
       : locale==='ja'?`${count(total)} 件が見つかりました · ${count(rows.length)} 件を表示`:`${count(rows.length)} shown · ${count(total)} found`;
+    if(sortedAll&&!filter)$('.line-controls span',panel).textContent=sortedAll.rows.length<total?(locale==='ja'?`全 ${count(total)} 件のうち最初の ${count(sortedAll.rows.length)} 件を並べ替え`:`Sorted the first ${count(sortedAll.rows.length)} of ${count(total)} matches`):(locale==='ja'?`全 ${count(total)} 件を並べ替え`:`All ${count(total)} matches, sorted`);
     if(view.loading&&!rows.length)$('.line-controls span',panel).textContent=locale==='ja'?`全 ${count(total)} 件`:`${count(total)} total matches`;
   }
   const matchingDocuments=pageReady?(view.scopeDocument!=null?(total?1:0):view.query?null:view.documentsTotal):null;
@@ -1146,15 +1174,16 @@ function renderLines(panel: HTMLElement,run: RunSnapshot | undefined,_force=fals
   }
   const note=$('.line-note',panel);note.setAttribute('role','status');
   note.textContent=view.loading&&(!rows.length||view.documents!==null)?(locale==='ja'?'用例を読み込んでいます…':'Loading examples…'):view.loading?'':view.error?(locale==='ja'?`用例を読み込めませんでした。${view.error}`:`Examples could not be loaded. ${view.error}`):run.phase==='running'?t('notTotal'):'';
+  if(sortedMode&&!sortedAll&&!view.error)note.textContent=locale==='ja'?'すべての用例を並べ替えています…':'Sorting all matches…';
   note.hidden=!note.textContent;
-  list.setAttribute('aria-busy',String(view.loading));
+  list.setAttribute('aria-busy',String(view.loading||sortedMode&&!sortedAll));
   let nodes=concordanceNodes.get(list);if(!nodes){nodes=new Map();concordanceNodes.set(list,nodes);}
   const desired:HTMLElement[]=[],used=new Set<string>();
   const node=(key:string,tag:'div'|'a'|'p'|'button',className:string)=>{used.add(key);let value=nodes!.get(key);if(!value){value=document.createElement(tag);value.className=className;nodes!.set(key,value);}return value;};
   const hrefScope=hrefFor(run,concordanceFor(run));
-  let previousDocument:number|undefined;
+  let previousDocument:number|undefined,sortedOrdinal=0;
   for(const row of rows){
-    if(previousDocument!==row.document_ordinal){
+    if(!sortedMode&&previousDocument!==row.document_ordinal){
       const ordinal=row.document_ordinal;
       const heading=node(`document:${ordinal}:${sort==='original'?'':row.sequence}`,'div','document-heading');
       const landmark=landmarks.get(ordinal);
@@ -1186,7 +1215,8 @@ function renderLines(panel: HTMLElement,run: RunSnapshot | undefined,_force=fals
     link.toggleAttribute('data-view',!omitted);
     if(omitted)link.setAttribute('aria-disabled','true');else link.removeAttribute('aria-disabled');
     const matchText=omitted?(locale==='ja'?'用例の全文は JSONL で確認できます':'Full example in JSONL download'):row.surface;
-    const ordinal=view.start+allRows.indexOf(row)+1;
+    const ordinal=sortedAll?++sortedOrdinal:view.start+allRows.indexOf(row)+1;
+    const rowTitle=sortedMode?documentTitle(row):'';if(link.title!==rowTitle)link.title=rowTitle;
     const expanded=String(inspecting?.run.id===run.id&&inspecting.row.sequence===row.sequence&&!tokenLab.hidden);if(link.getAttribute('aria-expanded')!==expanded)link.setAttribute('aria-expanded',expanded);
     let content=concordanceContent.get(link);
     if(!content){
@@ -1685,6 +1715,10 @@ function menuDefinitions():readonly CatalogDefinition[]{
   if(source===config.source)return config.definitions??[];
   return run?.source===source&&!runLimits.get(run.id)?.pattern?run.definitions.map(name=>({name,count_only:false})):[];
 }
+definitionMenu.addEventListener('input',event=>{
+  const input=(event.target as Element).closest<HTMLInputElement>('.definition-filter');if(!input)return;
+  for(const item of definitionMenu.querySelectorAll<HTMLElement>('li'))item.hidden=!item.textContent!.includes(input.value.trim());
+});
 function renderDefinitionMenu(){
   const definitions=menuDefinitions(),chosen=activeLimit()?.pattern??null,corpus=$<HTMLSelectElement>('#corpus').value,source=$<HTMLTextAreaElement>('#source').value;
   const counted=definitions.filter(definition=>definition.count_only),ja=locale==='ja';
@@ -1694,7 +1728,7 @@ function renderDefinitionMenu(){
     if(pair)return `<li><a href="frequencies#${escape(new URLSearchParams({corpus,catalog:pair.catalog,pattern:definition.name}).toString())}">${escape(definition.name)}</a> <span class="definition-note">${ja?'頻度表で開く':'opens in Frequencies'}</span></li>`;
     return `<li><button type="button" data-definition="${escape(definition.name)}" aria-pressed="${definition.name===chosen}">${escape(definition.name)}</button>${definition.count_only?` <span class="definition-note">${ja?'用例が多く、検索が途中で止まることがあります':'may stop: too many examples to keep'}</span>`:''}</li>`;
   };
-  const markup=`<h2 id="definition-menu-title">${ja?'検索する定義':'Definition to search'}</h2><ul>${definitions.filter(definition=>!definition.count_only).map(item).join('')}</ul>${counted.length?`<h3>${ja?'頻度表のみ':'Counts only (see Frequencies)'}</h3><p>${ja?'語ごとの件数を数える定義です。用例を一覧するには数が多すぎます。':'These definitions count words; they have too many examples to list.'}</p><ul>${counted.map(item).join('')}</ul>`:''}<p class="definition-actions">${counted.length?'':`<button type="button" data-definition="" aria-pressed="${chosen===null}">${ja?'すべての定義を検索':'Search every definition'}</button>`}<button type="button" data-edit-source>${ja?'パターンのソースを編集':'Edit the pattern source'}</button></p>`;
+  const markup=`<h2 id="definition-menu-title">${ja?'検索する定義':'Definition to search'}</h2>${definitions.length>12?`<input type="search" class="definition-filter" aria-label="${ja?'定義を絞り込む':'Filter definitions'}" placeholder="${ja?'定義を絞り込む':'Filter definitions'}">`:''}<ul>${definitions.filter(definition=>!definition.count_only).map(item).join('')}</ul>${counted.length?`<h3>${ja?'頻度表のみ':'Counts only (see Frequencies)'}</h3><p>${ja?'語ごとの件数を数える定義です。用例を一覧するには数が多すぎます。':'These definitions count words; they have too many examples to list.'}</p><ul>${counted.map(item).join('')}</ul>`:''}<p class="definition-actions">${counted.length?'':`<button type="button" data-definition="" aria-pressed="${chosen===null}">${ja?'すべての定義を検索':'Search every definition'}</button>`}<button type="button" data-edit-source>${ja?'パターンのソースを編集':'Edit the pattern source'}</button></p>`;
   definitionMenu.setAttribute('aria-labelledby','definition-menu-title');
   if(renderSignatures.get(definitionMenu)===markup)return;
   const focused=definitionMenu.contains(document.activeElement)?(document.activeElement as HTMLElement).textContent:null;

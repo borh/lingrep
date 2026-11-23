@@ -194,6 +194,22 @@ body:has(.work-results) .search-status:has(.status-dot.complete){min-height:0}
 body:has(.work-results) .search-status:has(.status-dot.complete)>.live-counts{display:none}
 input[type=range]{min-height:24px}
 .doc-blank{min-height:24px}
-.run-action,.question-sentence .run-action{background:var(--green);color:var(--ground);border-color:var(--green);font-weight:600;padding-inline:12px}
-.run-action:hover{background:color-mix(in srgb,var(--green) 85%,var(--ink))}
+.run-action,.question-sentence .run-action{font:inherit;font-weight:600;color:var(--green);background:transparent;border:1.5px solid var(--green);border-radius:3px;padding:0 10px;min-height:0;line-height:1.5;vertical-align:baseline}
+.run-action:hover:not(:disabled){background:var(--wash);color:var(--green)}
 .pattern-button.empty{color:var(--soft)}
+.definition-filter{display:block;margin:4px 0 6px;min-width:16rem}
+.scope-chips{display:inline-flex;vertical-align:middle;margin:0 0 0 6px}
+.limit-chips{margin-top:0}
+@media(min-width:481px){
+/* The status is laid over the right of the result controls, so a search that starts or ends moves nothing below it. */
+main{position:relative}
+.search-status{position:absolute;inset-inline-end:max(18px,calc((100% - 1226px)/2));min-height:0;margin:0;padding:0}
+.search-status:has(#error:not([hidden])){position:static}
+.search-status>.live-counts{display:none}
+.search-status:has(.status-dot.complete)>.status-dot{display:none}
+.search-status:has(.status-dot.complete)>#status{position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0,0,0,0);white-space:nowrap}
+}
+.result-reading>.pattern-picker{display:inline-block;vertical-align:top;margin-inline-end:6px}
+.result-reading>.pattern-picker[open]{display:block}
+.result-reading>.pattern-picker summary{padding-block:0}
+@media(max-width:480px){.site .routes{display:contents}}

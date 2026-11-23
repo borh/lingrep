@@ -12,6 +12,13 @@ pub struct TokenField {
     pub value: Option<CompactString>,
 }
 
+impl TokenField {
+    /// The attribute key a pattern test on this field is written with.
+    pub fn pattern_key(&self) -> AttributeKey {
+        AttributeKey::from(self.meta.attribute)
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct TokenFieldGroup {
     pub key: TokenFieldGroupKey,

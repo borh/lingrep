@@ -465,7 +465,7 @@ impl TokenInspectionFragment {
                 field
                     .value
                     .as_ref()
-                    .map(|value| format!("{}={value}", field.meta.key))
+                    .map(|value| format!("{}={value}", field.pattern_key()))
             })
             .collect::<Vec<_>>()
             .join("\n");

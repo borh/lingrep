@@ -257,6 +257,10 @@ async fn click_selector(driver: &WebDriver, selector: &str) -> WebDriverResult<(
     let script = format!(
         r#"const target=document.querySelector({selector});
            if(!target) return "missing";
+           // Queries is a dialog over the page: a reader opens it to use a
+           // control inside it and closes it to use one behind it.
+           const library=document.querySelector("details.query-library");
+           if(library&&target.tagName!=="SUMMARY") library.open=library.contains(target);
            target.scrollIntoView({{block:"nearest",inline:"nearest"}});
            const box=target.getBoundingClientRect();
            const x=box.x+box.width/2, y=box.y+box.height/2;

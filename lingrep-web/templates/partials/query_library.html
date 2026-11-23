@@ -1,7 +1,8 @@
 <details class="query-library" data-query-library>
   <summary><span data-i18n="library.queries">Queries</span> <span class="query-edited" data-query-edited hidden><span data-i18n="library.edited">Edited</span></span></summary>
-  <div class="query-library-body">
-    <h2 class="visually-hidden" data-i18n="library.queries">Queries</h2>
+  <div class="query-library-body" role="dialog" aria-labelledby="query-library-title" tabindex="-1">
+    <button type="button" class="btn btn-secondary query-library-close" data-query-close><span data-i18n="library.close">Close</span></button>
+    <h2 id="query-library-title" data-i18n="library.queries">Queries</h2>
     <div class="query-tabs" role="tablist" aria-label="Query library" data-i18n-aria-label="library.aria">
       <button type="button" role="tab" id="query-tab-recent"
               aria-controls="query-panel" aria-selected="true"

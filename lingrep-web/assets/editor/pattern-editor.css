@@ -57,7 +57,7 @@
 }
 
 /* The status line carries a stats tail on success ("… 97 definitions, 84
-   references, depth 5, 547 NFA states."); keep it from crowding the editor on
+   references."); keep it from crowding the editor on
    a narrow viewport. */
 .pattern-editor-status { color: var(--pattern-status-text); font-size: var(--text-sm, 0.8667rem); margin: 0.35rem 0 0; overflow-wrap: anywhere; }
 .pattern-editor-status[data-invalid] { color: var(--error, light-dark(#991b1b, #fca5a5)); font-weight: 600; }

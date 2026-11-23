@@ -462,6 +462,7 @@ code { background: var(--code-bg); padding: 0.1rem 0.3rem; border-radius: 3px; f
   font-size: var(--text-sm);
   font-weight: 600;
 }
+.token-field-key { display: block; font-weight: 400; color: var(--text-muted); }
 .token-field dd {
   min-width: 0;
   margin: 0;
@@ -1519,6 +1520,7 @@ button.sample-bar { padding: 0; font: inherit; text-align: start; cursor: pointe
 }
 /* Below 90rem the detail docks at the bottom of the viewport, over the
    sentences. It shows its tabs alone until a selection or a tab opens it. */
+.sample-sentence { scroll-margin-block: var(--space-3) calc(45vh + var(--space-3)); }
 .sample-workspace > .sample-detail {
   position: sticky;
   inset-block-end: 0;
@@ -1900,25 +1902,15 @@ html { scroll-padding-block-start: calc(var(--sticky-top) + var(--space-2)); }
   .query-band .corpus-pattern-editor {
     --corpus-editor-height: 6.5rem;
     min-block-size: 4.5rem;
-    /* Five lines, and a viewport fraction cannot express that. At 35vh a tall
-       monitor showed twenty-five, and a height stored by an earlier resize —
-       which is what the inline `--corpus-editor-height` carries — was clamped
-       to nothing useful. CodeMirror's line box is 20.3px at the default 16px
-       root, so five lines is ~102px; 6.5rem is that plus the box's own edge. */
-    max-block-size: 6.5rem;
+    /* The default is five lines; a drag on the resize handle can grow it up
+       to the cap, which stays below the expanded height. */
+    max-block-size: 55vh;
   }
   .query-band .corpus-pattern-editor[data-editor-expanded="true"] {
     block-size: 60vh;
     max-block-size: 60vh;
   }
   .query-band .pattern-editor .cm-editor { min-height: 4lh; }
-  /* Bounded to its own area: opening Queries used to grow the band past its
-     guard, and the band's scrollbar then carried the editor out of view. */
-  .query-band .query-library-body {
-    max-block-size: 45vh;
-    overflow-y: auto;
-    overscroll-behavior: contain;
-  }
 }
 
 /* Folded query workspace: a one-line bar keeps the edit→run loop in view. */
@@ -2126,7 +2118,31 @@ html { scroll-padding-block-start: calc(var(--sticky-top) + var(--space-2)); }
   font-size: var(--text-md);
 }
 .query-library > summary:hover { background: var(--selected-bg); }
-.query-library-body { padding: var(--space-2) 0 var(--space-3); border-block-start: 1px solid var(--border-light); }
+/* Queries opens as a dialog over the page, so it takes no room beside the editor. */
+.query-library[open]::before {
+  content: "";
+  position: fixed;
+  inset: 0;
+  z-index: 40;
+  background: rgb(0 0 0 / 0.4);
+}
+.query-library-body {
+  position: fixed;
+  inset-block-start: 10vh;
+  inset-inline-start: 50%;
+  translate: -50% 0;
+  z-index: 41;
+  inline-size: min(44rem, calc(100vw - 2rem));
+  max-block-size: 80vh;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  padding: var(--space-3) var(--space-4) var(--space-4);
+  border: 1px solid var(--border-light);
+  border-radius: 4px;
+  background: var(--surface);
+  box-shadow: 0 12px 40px rgb(0 0 0 / 0.25);
+}
+.query-library-close { float: inline-end; }
 .query-library-actions,
 .query-row-actions,
 .query-confirm {
@@ -2219,9 +2235,6 @@ html { scroll-padding-block-start: calc(var(--sticky-top) + var(--space-2)); }
   .query-workspace {
     grid-template-columns: minmax(0, 1fr) auto;
     gap: var(--space-3);
-  }
-  .query-workspace:has(.query-library[open]) {
-    grid-template-columns: minmax(0, 1fr) minmax(16rem, 22rem);
   }
 }
 
@@ -2346,3 +2359,5 @@ html { scroll-padding-block-start: calc(var(--sticky-top) + var(--space-2)); }
 .site-help-content { min-inline-size: 0; overflow: auto; overscroll-behavior: contain; padding: var(--space-4); }
 .site-help-document { max-inline-size: 70rem; margin-inline: auto; }
 .site-help-document pre { white-space: pre-wrap; overflow-wrap: anywhere; }
+.help-toc ul { display: flex; flex-wrap: wrap; gap: 2px var(--space-3); margin: 0 0 var(--space-3); padding: 0; list-style: none; font-size: var(--text-md); }
+.pattern-help h2[id] { scroll-margin-block-start: var(--space-3); }

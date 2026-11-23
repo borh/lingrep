@@ -512,6 +512,11 @@ function fillSamplePanel(detail, name, template) {
   return body;
 }
 
+/** Scrolls the selected sentence clear of a detail panel docked over the sentences. */
+function keepSelectionVisible(selected) {
+  selected?.closest("[data-sample-sentence]")?.scrollIntoView({ block: "nearest" });
+}
+
 /** Selects the bar `id` (`match` or `match-capture`) in `results`, or none for `null`. */
 function selectSampleBar(results, id, { reveal = true } = {}) {
   results.querySelectorAll("[data-sample-bar]").forEach((cell) => {
@@ -531,7 +536,10 @@ function selectSampleBar(results, id, { reveal = true } = {}) {
   if (capture !== undefined) {
     body?.querySelector(`[data-sample-capture-row="${capture}"]`)?.setAttribute("data-selected", "");
   }
-  if (id !== null && reveal) showSampleTab(detail, "explain");
+  if (id !== null && reveal) {
+    showSampleTab(detail, "explain");
+    keepSelectionVisible(results.querySelector("[data-sample-bar][data-selected]"));
+  }
 }
 
 /** Selects the token `index` in `results`, or none for `null`. */
@@ -551,7 +559,10 @@ function selectSampleToken(results, index, { reveal = true } = {}) {
     "token",
     index === null ? null : results.querySelector(`template[id="sample-token-${index}"]`),
   );
-  if (index !== null && reveal) showSampleTab(detail, "token");
+  if (index !== null && reveal) {
+    showSampleTab(detail, "token");
+    keepSelectionVisible(results.querySelector('[data-sample-token][aria-pressed="true"]'));
+  }
 }
 
 /** Reapplies the rail's selection to results that replaced the ones it was made in. */
