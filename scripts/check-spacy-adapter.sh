@@ -11,7 +11,6 @@ trap 'rm -rf -- "$python_cache"' EXIT
 export PYTHONPYCACHEPREFIX=$python_cache
 
 uv lock --project "$project" --check
-cargo test -p lingrep-core --example measure_spacy_process
 
 case "$mode" in
   static)

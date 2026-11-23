@@ -55,7 +55,7 @@ The matcher correctness gate is `scripts/test_matcher_correctness.sh`. It runs
 the dictionary-free `lingrep-core` tests that pin observable `CompiledCatalog` behavior
 against the independent oracle (`lingrep-core/src/fsm/compiler/oracle.rs`) plus the
 lingrep patterns contract suites. It requires no dictionary. The full `ci.sh`
-lane and the GitHub CI workflow both run it.
+lane runs these tests in the workspace inventory.
 
 ### Kani prepared-corpus proofs
 
@@ -97,8 +97,8 @@ and each child CLI process inherits them. To reproduce this locally, run
 `cargo test --config .cargo/test.toml -p lingrep-web`.
 
 Run `./ci.sh --full` before finishing a branch. It adds the complete
-integration inventory, the matcher correctness gate, the adapter suites, and
-the browser layout checks. The browser checks need Chromium and ChromeDriver on
+integration inventory, the prepared-storage smoke test, the adapter suites,
+and the browser layout checks. The browser checks need Chromium and ChromeDriver on
 Linux and only ChromeDriver on macOS, whose dev shell provides the matching
 Chrome; see [development-environment.md](development-environment.md).
 Fuzz and performance are independent `--fuzz` and `--performance` modes.

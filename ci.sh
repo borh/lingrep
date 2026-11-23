@@ -70,8 +70,10 @@ run_common_checks() {
     echo "Checking the locked spaCy adapter contract"
     scripts/check-spacy-adapter.sh static
 
-    echo "Checking the locked Stanza adapter contract"
-    scripts/check-stanza-adapter.sh static
+    if [[ $mode == fast ]]; then
+        echo "Checking the locked Stanza adapter contract"
+        scripts/check-stanza-adapter.sh static
+    fi
 
     echo "Checking the Hugging Face dataset adapter"
     uv lock --check --script scripts/huggingface_dataset.py
@@ -121,27 +123,28 @@ run_shared_tests() {
 
 run_fast_tests() {
     echo "Running workspace library and binary unit tests"
-    cargo test --config .cargo/test.toml --workspace --lib --bins --quiet 2>&1 | tee "${TMPDIR:-/tmp}/cargo-test-fast.log"
+    cargo test --config .cargo/test.toml --workspace --lib --bins --example measure_spacy_process --quiet 2>&1 |
+        tee "${TMPDIR:-/tmp}/cargo-test-fast.log"
 }
 
 run_full_tests_and_extras() {
     echo "Running complete workspace Rust test inventory"
-    cargo test --config .cargo/test.toml --workspace --tests --quiet 2>&1 | tee "${TMPDIR:-/tmp}/cargo-test-full.log"
+    cargo test --config .cargo/test.toml --workspace --tests --example measure_spacy_process \
+        --bench prepared_tokens --quiet 2>&1 | tee "${TMPDIR:-/tmp}/cargo-test-full.log"
 
     echo "Checking the DuckDB examples against the native measures"
-    cargo build -p lingrep --bin ling --quiet
     local ling_target=${CARGO_TARGET_DIR:-target}
     [[ $ling_target = /* ]] || ling_target="$repo_root/$ling_target"
     LING="$ling_target/debug/ling" python3 -m unittest scripts/test/test_duckdb_examples.py
 
     echo "Running real native portable-catalog realizations"
-    scripts/cargo-test-selected.py -p lingrep-core --test suite -- \
+    scripts/cargo-test-selected.py --config .cargo/test.toml --workspace --test suite -- \
         portable_catalog_realization::real_vibrato_and_sudachi_realize_the_same_portable_catalog \
         --exact --ignored
-    scripts/cargo-test-selected.py -p lingrep --test suite -- \
+    scripts/cargo-test-selected.py --config .cargo/test.toml --workspace --test suite -- \
         direct_protocol::sudachi_portable_catalog_publishes_nonzero_context_without_unidic_fields \
         --exact --ignored
-    scripts/cargo-test-selected.py -p lingrep-core --test suite -- sudachi_contract:: --ignored
+    scripts/cargo-test-selected.py --config .cargo/test.toml --workspace --test suite -- sudachi_contract:: --ignored
 
     echo "Checking the installed Python bindings with Vibrato and ling"
     local bindings=(uv run --project python/lingrep --isolated --locked --all-extras --no-editable python -m)
@@ -183,12 +186,8 @@ run_full_tests_and_extras() {
     echo "Running the performance campaign orchestrator self-test"
     scripts/test/test_perf_campaign.sh
 
-    echo "Running matcher, documentation, and prepared-storage structural checks"
-    {
-        scripts/test_matcher_correctness.sh
-        scripts/check-live-launchers.py
-        cargo test --release -p lingrep-corpus --bench prepared_tokens
-    } 2>&1 | tee "${TMPDIR:-/tmp}/cargo-test-matcher-gate.log"
+    echo "Checking documented launcher targets"
+    scripts/check-live-launchers.py
 }
 
 # Both lanes, because a public item's doc linking a private one fails `cargo

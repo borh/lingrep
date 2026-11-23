@@ -29,6 +29,9 @@ make_script_stub() {
 set -euo pipefail
 name=${0##*/}
 printf 'script:%s\n' "$name" >>"$LINGREP_CI_TEST_LOG"
+if [[ $# -gt 0 ]]; then
+    printf 'script-args:%s %s\n' "$name" "$*" >>"$LINGREP_CI_TEST_LOG"
+fi
 if [[ ${LINGREP_CI_FAIL_STEP:-} == "$name" ]]; then
     exit 42
 fi
@@ -122,13 +125,18 @@ assert_full_contract() {
     assert_has "cargo:build -p lingrep-perf --bin lingrep-perf --quiet"
     assert_has "warmup-estimator:$temporary/target/debug/lingrep-perf"
     [[ $(grep -Fxc "python3:-m unittest scripts/test/test_perf_measure.py" "$LINGREP_CI_TEST_LOG") -eq 1 ]]
-    assert_has "cargo:test --config .cargo/test.toml --workspace --tests --quiet"
-    assert_has "script:cargo-test-selected.py"
-    [[ $(grep -Fxc "cargo:test --config .cargo/test.toml --workspace --tests --quiet" "$LINGREP_CI_TEST_LOG") -eq 1 ]]
+    assert_has "cargo:test --config .cargo/test.toml --workspace --tests --example measure_spacy_process --bench prepared_tokens --quiet"
+    assert_has "script-args:cargo-test-selected.py --config .cargo/test.toml --workspace --test suite -- portable_catalog_realization::real_vibrato_and_sudachi_realize_the_same_portable_catalog --exact --ignored"
+    assert_has "script-args:cargo-test-selected.py --config .cargo/test.toml --workspace --test suite -- direct_protocol::sudachi_portable_catalog_publishes_nonzero_context_without_unidic_fields --exact --ignored"
+    assert_has "script-args:cargo-test-selected.py --config .cargo/test.toml --workspace --test suite -- sudachi_contract:: --ignored"
+    assert_has "script-args:check-stanza-adapter.sh full"
+    assert_lacks_prefix "script-args:check-stanza-adapter.sh static"
+    assert_lacks_prefix "cargo:build -p lingrep --bin ling"
+    [[ $(grep -Fxc "cargo:test --config .cargo/test.toml --workspace --tests --example measure_spacy_process --bench prepared_tokens --quiet" "$LINGREP_CI_TEST_LOG") -eq 1 ]]
     assert_has "script:run_lingrep_web_layout_e2e.sh"
-    assert_has "script:test_matcher_correctness.sh"
+    assert_lacks_prefix "script:test_matcher_correctness.sh"
     assert_has "script:check-live-launchers.py"
-    assert_has "cargo:test --release -p lingrep-corpus --bench prepared_tokens"
+    assert_lacks_prefix "cargo:test --release -p lingrep-corpus --bench prepared_tokens"
     assert_has "cargo:doc --no-deps"
     assert_lacks_prefix "script:run_fuzz_smoke.sh"
     assert_lacks_prefix "cargo:bench "
@@ -162,7 +170,9 @@ assert_has "script:test_ci_modes.sh"
 assert_has "script:test_fuzz_smoke.sh"
 assert_has "cargo:fmt --check --all"
 assert_has "cargo:clippy --workspace --all-targets --all-features -- -D warnings"
-assert_has "cargo:test --config .cargo/test.toml --workspace --lib --bins --quiet"
+assert_has "cargo:test --config .cargo/test.toml --workspace --lib --bins --example measure_spacy_process --quiet"
+assert_has "script-args:check-stanza-adapter.sh static"
+assert_lacks_prefix "script-args:check-stanza-adapter.sh full"
 assert_has "python3:lingrep-web/question-ui/build.py --check"
 assert_has "python3:lingrep-web/question-ui/build_test.py"
 assert_has "node:--test lingrep-web/js-tests/*.test.mjs lingrep-web/question-ui/*.test.mjs"
@@ -200,8 +210,8 @@ for failure in \
     check-test-consolidation.sh \
     cargo-test-selected.py \
     'cargo:fmt --check --all' \
-    'cargo:test --config .cargo/test.toml --workspace --tests --quiet' \
-    test_matcher_correctness.sh
+    'cargo:test --config .cargo/test.toml --workspace --tests --example measure_spacy_process --bench prepared_tokens --quiet' \
+    check-live-launchers.py
 do
     export LINGREP_CI_FAIL_STEP=$failure
     if run_mode --full; then
