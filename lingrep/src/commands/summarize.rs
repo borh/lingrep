@@ -23,7 +23,7 @@ use super::query_resolution::{
 };
 use super::query_scope::{document_values, parse_scope};
 use super::query_support::{
-    execution_output_error, execution_output_io, protocol_execution_limits, publish_query_jsonl,
+    execution_output_error, execution_output_io, protocol_execution_limits,
     publish_run_and_definitions, write_vectors_notice, write_warning,
 };
 use crate::catalog_input::load_and_compile_with_vectors;
@@ -37,7 +37,7 @@ use crate::protocol::query::{
     QueryEnvelope, QueryEvent, QueryMode, QueryRun, SpanConvention, SummaryData, SummaryGroupData,
     TemporaryStorageLimits, Termination,
 };
-use crate::protocol::write_jsonl;
+use crate::protocol::{write_jsonl, write_jsonl_buffered};
 use crate::summary::{
     AggregationGroup, AggregationInput, GroupingTally, MetadataValueTally, OwnedAggregationInput,
     SectionTally, SpillLayout, SummaryAggregator, SummaryPartition, SummaryRow, SummaryRows,
@@ -78,6 +78,7 @@ trait SummaryEventWriter {
 
 struct MachineSummaryEventWriter<'a, W> {
     writer: &'a mut W,
+    scratch: &'a mut Vec<u8>,
     output: OutputMode,
     pool: &'a rayon::ThreadPool,
 }
@@ -88,8 +89,9 @@ const SUMMARY_SERIALIZE_ROWS: usize = 256;
 impl<W: Write> SummaryEventWriter for MachineSummaryEventWriter<'_, W> {
     fn write_summary(&mut self, pattern: &str, row: &SummaryRow) -> Result<(), ExecutionError> {
         match self.output {
-            OutputMode::Jsonl => write_jsonl(
+            OutputMode::Jsonl => write_jsonl_buffered(
                 self.writer,
+                self.scratch,
                 &QueryEnvelope::new(QueryEvent::Summary(summary_data(pattern, row))),
             )
             .map_err(execution_output_error),
@@ -514,7 +516,8 @@ pub fn run(
 
     let post_run = (|| -> Result<CommandOutcome, CliError> {
         let stdout = io::stdout();
-        let mut writer = stdout.lock();
+        let mut writer = io::BufWriter::with_capacity(256 * 1024, stdout.lock());
+        let mut scratch = Vec::new();
         if output == OutputMode::Jsonl {
             publish_run_and_definitions(&mut writer, &run, &descriptors)?;
         }
@@ -790,8 +793,9 @@ pub fn run(
             scope: scope_report.clone(),
         };
         for (ordinal, tally) in documents.into_iter().flatten() {
-            publish_query_jsonl(
+            write_jsonl_buffered(
                 &mut writer,
+                &mut scratch,
                 &QueryEnvelope::new(QueryEvent::Document(DocumentData {
                     grouping_coverage: grouping_coverage
                         .as_mut()
@@ -804,7 +808,8 @@ pub fn run(
                     tokens_admitted: tally.tokens,
                     source_metadata: tally.source_metadata,
                 })),
-            )?;
+            )
+            .map_err(execution_output_error)?;
         }
         if let Some(sections) = sections.as_mut() {
             while let Some(mut section) = sections.next_record().map_err(CliError::Aggregation)? {
@@ -852,22 +857,27 @@ pub fn run(
                             groups,
                         });
                 }
-                publish_query_jsonl(
+                write_jsonl_buffered(
                     &mut writer,
+                    &mut scratch,
                     &QueryEnvelope::new(QueryEvent::Section(section)),
-                )?;
+                )
+                .map_err(execution_output_error)?;
             }
         }
         if let Some(values) = metadata_values.as_mut() {
             while let Some(value) = values.next_record().map_err(CliError::Aggregation)? {
-                publish_query_jsonl(
+                write_jsonl_buffered(
                     &mut writer,
+                    &mut scratch,
                     &QueryEnvelope::new(QueryEvent::MetadataValue(value)),
-                )?;
+                )
+                .map_err(execution_output_error)?;
             }
         }
         let mut event_writer = MachineSummaryEventWriter {
             writer: &mut writer,
+            scratch: &mut scratch,
             output,
             pool: &pool,
         };

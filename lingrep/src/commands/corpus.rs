@@ -39,7 +39,7 @@ use crate::protocol::sources::{
     AggregateState, ArtifactVerification, ComponentVerification, SourceData, SourcesComplete,
     SourcesEnvelope, SourcesEvent, SourcesKind, SourcesRun, TraversalHighWater,
 };
-use crate::protocol::write_jsonl;
+use crate::protocol::{write_jsonl, write_jsonl_buffered};
 use crate::terminal::{PresentationProgress, TerminalArbiter};
 
 /// Stream the bounded ordered inventory admitted from a live filesystem root.
@@ -50,7 +50,10 @@ pub fn run_sources(
     output: OutputMode,
 ) -> Result<CommandOutcome, CliError> {
     let stdout = io::stdout();
-    run_sources_to(args, config, terminal, output, &mut stdout.lock())
+    let mut writer = io::BufWriter::with_capacity(256 * 1024, stdout.lock());
+    let outcome = run_sources_to(args, config, terminal, output, &mut writer)?;
+    writer.flush().map_err(CliError::stdout)?;
+    Ok(outcome)
 }
 
 /// Stream one admitted source into all immutable prepared artifact projections.
@@ -889,7 +892,8 @@ async fn inspect_artifact(
     let run_id = random_id();
     let post_run = (|| -> Result<CommandOutcome, CliError> {
         let stdout = io::stdout();
-        let mut writer = stdout.lock();
+        let mut writer = io::BufWriter::with_capacity(256 * 1024, stdout.lock());
+        let mut scratch = Vec::new();
         if output == OutputMode::Human {
             writeln!(
                 writer,
@@ -927,8 +931,9 @@ async fn inspect_artifact(
                     return Ok(CommandOutcome::Cancelled);
                 }
                 let document = document?;
-                publish_projected(
+                publish_projected_buffered(
                     &mut writer,
+                    &mut scratch,
                     &SourcesEnvelope::new(SourcesEvent::Source(SourceData {
                         ordinal: document.ordinal,
                         logical_name: document.logical_name,
@@ -965,6 +970,7 @@ async fn inspect_artifact(
             })),
             output,
         )?;
+        writer.flush().map_err(CliError::stdout)?;
         Ok(CommandOutcome::Success)
     })();
     post_run.map_err(|error| error.with_run_id(run_id, None))
@@ -1189,6 +1195,7 @@ fn stream_discovery<W: Write, D: SourceDiscovery>(
     progress: &PresentationProgress<io::Stderr>,
 ) -> Result<CommandOutcome, CliError> {
     let mut listed = 0_u64;
+    let mut scratch = Vec::new();
     loop {
         if terminal.cancellation().is_cancelled() {
             return Ok(CommandOutcome::Cancelled);
@@ -1204,8 +1211,9 @@ fn stream_discovery<W: Write, D: SourceDiscovery>(
         if terminal.cancellation().is_cancelled() {
             return Ok(CommandOutcome::Cancelled);
         }
-        publish_projected(
+        publish_projected_buffered(
             writer,
+            &mut scratch,
             &SourcesEnvelope::new(SourcesEvent::Source(protocol_source(document))),
             output,
         )?;
@@ -1227,6 +1235,7 @@ fn stream_discovery<W: Write, D: SourceDiscovery>(
         ))),
         output,
     )?;
+    writer.flush().map_err(CliError::stdout)?;
     Ok(CommandOutcome::Success)
 }
 
@@ -1262,6 +1271,20 @@ fn publish<W: Write>(writer: &mut W, event: &SourcesEnvelope) -> Result<(), CliE
     write_jsonl(writer, event)
         .map_err(execution_output_error)
         .map_err(CliError::from)
+}
+
+fn publish_projected_buffered<W: Write>(
+    writer: &mut W,
+    scratch: &mut Vec<u8>,
+    event: &SourcesEnvelope,
+    output: OutputMode,
+) -> Result<(), CliError> {
+    match output {
+        OutputMode::Jsonl => write_jsonl_buffered(writer, scratch, event)
+            .map_err(execution_output_error)
+            .map_err(CliError::from),
+        OutputMode::Tsv | OutputMode::Human => publish_projected(writer, event, output),
+    }
 }
 
 fn publish_projected<W: Write>(

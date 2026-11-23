@@ -25,7 +25,7 @@ use crate::protocol::query::{
 use crate::protocol::tokenize::{
     SentenceData, TokenizeComplete, TokenizeEnvelope, TokenizeEvent, TokenizeRun,
 };
-use crate::protocol::write_jsonl;
+use crate::protocol::{write_jsonl, write_jsonl_buffered};
 use crate::terminal::{PresentationProgress, TerminalArbiter};
 
 #[derive(Debug)]
@@ -38,6 +38,7 @@ struct TokenizeCounts {
 
 struct SentencePublisher<'a, W> {
     writer: &'a mut W,
+    scratch: Vec<u8>,
     output: OutputMode,
     projection: &'a PublishedProjection,
     stream_id: Option<String>,
@@ -97,8 +98,9 @@ impl<W: Write> SentencePublisher<'_, W> {
                 if let Some(export) = self.conllu.as_mut() {
                     export.sentence(self.writer, &sentence, self.projection.attributes())?;
                 } else {
-                    publish_projection(
+                    publish_projection_buffered(
                         self.writer,
+                        &mut self.scratch,
                         &TokenizeEnvelope::new(TokenizeEvent::Sentence(SentenceData {
                             corpus_sentence_ordinal: sentence.location.corpus_sentence_ordinal,
                             source_name: sentence.location.source_name.to_string(),
@@ -231,7 +233,7 @@ pub fn run(
     let prepared = stream.is_prepared;
     let post_run = (|| -> Result<CommandOutcome, CliError> {
         let stdout = io::stdout();
-        let mut writer = stdout.lock();
+        let mut writer = io::BufWriter::with_capacity(256 * 1024, stdout.lock());
         if !conllu {
             publish_projection(&mut writer, &run, output)?;
             writer.flush().map_err(execution_output_io)?;
@@ -244,6 +246,7 @@ pub fn run(
             termination,
         }) = (SentencePublisher {
             writer: &mut writer,
+            scratch: Vec::new(),
             output,
             projection: &full_projection,
             stream_id: sentence_stream_id,
@@ -285,6 +288,7 @@ pub fn run(
         }
         if let Some(export) = &export {
             export.finish(&mut writer, termination)?;
+            writer.flush().map_err(execution_output_io)?;
             return Ok(CommandOutcome::Success);
         }
         publish_projection(
@@ -313,6 +317,7 @@ pub fn run(
             })),
             output,
         )?;
+        writer.flush().map_err(execution_output_io)?;
         Ok(CommandOutcome::Success)
     })();
     post_run.map_err(|error| error.with_run_id(run_id, None))
@@ -320,6 +325,20 @@ pub fn run(
 
 fn publish_jsonl<W: Write>(writer: &mut W, event: &TokenizeEnvelope) -> Result<(), ExecutionError> {
     write_jsonl(writer, event).map_err(execution_output_error)
+}
+
+fn publish_projection_buffered<W: Write>(
+    writer: &mut W,
+    scratch: &mut Vec<u8>,
+    envelope: &TokenizeEnvelope,
+    output: OutputMode,
+) -> Result<(), ExecutionError> {
+    match output {
+        OutputMode::Jsonl => {
+            write_jsonl_buffered(writer, scratch, envelope).map_err(execution_output_error)
+        }
+        OutputMode::Human | OutputMode::Tsv => publish_projection(writer, envelope, output),
+    }
 }
 
 fn publish_projection<W: Write>(
@@ -469,6 +488,7 @@ mod tests {
         let schema = TokenSchema::from_keys(["text"]).unwrap();
         SentencePublisher {
             writer,
+            scratch: Vec::new(),
             output: OutputMode::Jsonl,
             projection: &PublishedProjection::new(schema.keys()),
             stream_id: Some("test-stream".into()),

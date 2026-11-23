@@ -25,7 +25,7 @@ use crate::protocol::contrast::{
     self as protocol, ContrastComplete, ContrastEnvelope, ContrastEvent, ContrastPattern,
     ContrastRun, ContrastScopes, ContrastSide, ScopeAdmission,
 };
-use crate::protocol::write_jsonl;
+use crate::protocol::{write_jsonl, write_jsonl_buffered};
 use crate::terminal::TerminalArbiter;
 
 const RESIDENT_ROWS: usize = 1 << 20;
@@ -152,13 +152,20 @@ pub fn run(
 
     let names = table.pattern_names().collect::<Vec<_>>();
     let stdout = io::stdout();
-    let mut writer = stdout.lock();
+    let mut writer = io::BufWriter::with_capacity(256 * 1024, stdout.lock());
+    let mut scratch = Vec::new();
     let jsonl = output == OutputMode::Jsonl;
-    let emit = |writer: &mut io::StdoutLock<'_>, event: ContrastEvent| {
+    let emit_immediate = |writer: &mut io::BufWriter<io::StdoutLock<'_>>, event: ContrastEvent| {
         write_jsonl(writer, &ContrastEnvelope::new(event))
             .map_err(|error| CliError::Execution(execution_output_error(error)))
     };
-    let line = |writer: &mut io::StdoutLock<'_>, text: String| {
+    let emit_buffered = |writer: &mut io::BufWriter<io::StdoutLock<'_>>,
+                         scratch: &mut Vec<u8>,
+                         event: ContrastEvent| {
+        write_jsonl_buffered(writer, scratch, &ContrastEnvelope::new(event))
+            .map_err(|error| CliError::Execution(execution_output_error(error)))
+    };
+    let line = |writer: &mut io::BufWriter<io::StdoutLock<'_>>, text: String| {
         writeln!(writer, "{text}").map_err(|error| CliError::Execution(execution_output_io(error)))
     };
     let scope_record = ContrastScopes {
@@ -172,7 +179,7 @@ pub fn run(
         },
     };
     if jsonl {
-        emit(
+        emit_immediate(
             &mut writer,
             ContrastEvent::Run(ContrastRun {
                 table: args.table.display().to_string(),
@@ -184,7 +191,7 @@ pub fn run(
                 requested_top: top,
             }),
         )?;
-        emit(&mut writer, ContrastEvent::Scopes(scope_record))?;
+        emit_immediate(&mut writer, ContrastEvent::Scopes(scope_record))?;
     } else {
         line(
             &mut writer,
@@ -209,8 +216,9 @@ pub fn run(
         let name = names[pattern];
         let [first, second] = [&totals[0][pattern], &totals[1][pattern]];
         if jsonl {
-            emit(
+            emit_buffered(
                 &mut writer,
+                &mut scratch,
                 ContrastEvent::Pattern(ContrastPattern {
                     pattern: name.to_owned(),
                     where_scope: protocol::ScopeCount {
@@ -257,8 +265,9 @@ pub fn run(
             let group = table.group(row.entry).map_err(table_error)?;
             emitted += 1;
             if jsonl {
-                emit(
+                emit_buffered(
                     &mut writer,
+                    &mut scratch,
                     ContrastEvent::Row(protocol::ContrastRow {
                         pattern: name.to_owned(),
                         rank,
@@ -306,7 +315,7 @@ pub fn run(
         return Ok(CommandOutcome::Cancelled);
     }
     if jsonl {
-        emit(&mut writer, ContrastEvent::Complete(complete))?;
+        emit_immediate(&mut writer, ContrastEvent::Complete(complete))?;
     } else {
         writeln!(
             writer,
@@ -314,6 +323,9 @@ pub fn run(
             complete.rows, complete.query_millis
         )
         .map_err(|error| CliError::Execution(execution_output_io(error)))?;
+        writer
+            .flush()
+            .map_err(|error| CliError::Execution(execution_output_io(error)))?;
     }
     Ok(CommandOutcome::Success)
 }

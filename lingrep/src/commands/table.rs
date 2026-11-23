@@ -29,7 +29,7 @@ use crate::protocol::table::{
     TableCell, TableComplete, TableDocument, TableEntry, TableEntryCount, TableEnvelope,
     TableEvent, TableKeyEquals, TableMetadataValue, TablePattern, TableRow, TableRun, TableSubset,
 };
-use crate::protocol::write_jsonl;
+use crate::protocol::{write_jsonl, write_jsonl_buffered};
 use crate::terminal::TerminalArbiter;
 
 const RESIDENT_ROWS: usize = 1 << 20;
@@ -232,41 +232,54 @@ pub fn run(
             return Ok(CommandOutcome::Cancelled);
         }
         let stdout = io::stdout();
-        let mut writer = stdout.lock();
-        let mut emit = |event: TableEvent| {
-            write_jsonl(&mut writer, &TableEnvelope::new(event))
+        let mut writer = io::BufWriter::with_capacity(256 * 1024, stdout.lock());
+        let mut scratch = Vec::new();
+        let emit_immediate = |writer: &mut io::BufWriter<io::StdoutLock<'_>>, event: TableEvent| {
+            write_jsonl(writer, &TableEnvelope::new(event))
                 .map_err(|error| CliError::Execution(execution_output_error(error)))
         };
-        emit(TableEvent::Run(TableRun {
-            table: table_path.display().to_string(),
-            analysis_identity: key.analysis_identity.clone(),
-            catalog_fingerprint: key.catalog_fingerprint.clone(),
-            matcher_revision: key.matcher_revision.clone(),
-            clause: args.clause.clone(),
-            requested_top: None,
-            by_document: false,
-            source_identity: None,
-            published_source_metadata: Vec::new(),
-            entry: args.entry.clone(),
-            by_metadata: args.by_metadata.clone(),
-            select: None,
-            key: Vec::new(),
-        }))?;
+        let emit_buffered = |writer: &mut io::BufWriter<io::StdoutLock<'_>>,
+                             scratch: &mut Vec<u8>,
+                             event: TableEvent| {
+            write_jsonl_buffered(writer, scratch, &TableEnvelope::new(event))
+                .map_err(|error| CliError::Execution(execution_output_error(error)))
+        };
+        emit_immediate(
+            &mut writer,
+            TableEvent::Run(TableRun {
+                table: table_path.display().to_string(),
+                analysis_identity: key.analysis_identity.clone(),
+                catalog_fingerprint: key.catalog_fingerprint.clone(),
+                matcher_revision: key.matcher_revision.clone(),
+                clause: args.clause.clone(),
+                requested_top: None,
+                by_document: false,
+                source_identity: None,
+                published_source_metadata: Vec::new(),
+                entry: args.entry.clone(),
+                by_metadata: args.by_metadata.clone(),
+                select: None,
+                key: Vec::new(),
+            }),
+        )?;
         for record in records {
-            emit(TableEvent::MetadataValue(record))?;
+            emit_buffered(&mut writer, &mut scratch, TableEvent::MetadataValue(record))?;
         }
         if !terminal.try_claim_completion() {
             return Ok(CommandOutcome::Cancelled);
         }
-        emit(TableEvent::Complete(TableComplete {
-            documents_admitted: admission.documents_admitted,
-            sentences_admitted: admission.sentences_admitted,
-            tokens_admitted: admission.tokens_admitted,
-            rows: 0,
-            entries: None,
-            query_millis,
-            elapsed_millis: started.elapsed().as_millis().try_into().unwrap_or(u64::MAX),
-        }))?;
+        emit_immediate(
+            &mut writer,
+            TableEvent::Complete(TableComplete {
+                documents_admitted: admission.documents_admitted,
+                sentences_admitted: admission.sentences_admitted,
+                tokens_admitted: admission.tokens_admitted,
+                rows: 0,
+                entries: None,
+                query_millis,
+                elapsed_millis: started.elapsed().as_millis().try_into().unwrap_or(u64::MAX),
+            }),
+        )?;
         return Ok(CommandOutcome::Success);
     }
     let mask = table.mask(admits);
@@ -331,14 +344,21 @@ pub fn run(
     }
     let names = table.pattern_names().collect::<Vec<_>>();
     let stdout = io::stdout();
-    let mut writer = stdout.lock();
-    let emit = |writer: &mut io::StdoutLock<'_>, event: TableEvent| {
+    let mut writer = io::BufWriter::with_capacity(256 * 1024, stdout.lock());
+    let mut scratch = Vec::new();
+    let emit_immediate = |writer: &mut io::BufWriter<io::StdoutLock<'_>>, event: TableEvent| {
         write_jsonl(writer, &TableEnvelope::new(event))
+            .map_err(|error| CliError::Execution(execution_output_error(error)))
+    };
+    let emit_buffered = |writer: &mut io::BufWriter<io::StdoutLock<'_>>,
+                         scratch: &mut Vec<u8>,
+                         event: TableEvent| {
+        write_jsonl_buffered(writer, scratch, &TableEnvelope::new(event))
             .map_err(|error| CliError::Execution(execution_output_error(error)))
     };
     let jsonl = output == OutputMode::Jsonl;
     if jsonl {
-        emit(
+        emit_immediate(
             &mut writer,
             TableEvent::Run(TableRun {
                 table: table_path.display().to_string(),
@@ -366,8 +386,9 @@ pub fn run(
             .copied()
             .ok_or_else(|| CliError::Corpus("table pattern out of range".to_owned()))?;
         if jsonl {
-            emit(
+            emit_buffered(
                 &mut writer,
+                &mut scratch,
                 TableEvent::Pattern(TablePattern {
                     pattern: name.to_owned(),
                     occurrences: total.occurrences,
@@ -396,8 +417,9 @@ pub fn run(
     };
     if let (Some(subset), Some(pattern)) = (subset, args.select.as_deref()) {
         if jsonl {
-            emit(
+            emit_buffered(
                 &mut writer,
+                &mut scratch,
                 TableEvent::Subset(TableSubset {
                     pattern: pattern.to_owned(),
                     key: key_fields(&key_equals),
@@ -459,8 +481,9 @@ pub fn run(
         let group = table.group(row.entry).map_err(table_error)?;
         emitted += 1;
         if jsonl {
-            emit(
+            emit_buffered(
                 &mut writer,
+                &mut scratch,
                 TableEvent::Row(TableRow {
                     pattern: name.to_owned(),
                     rank,
@@ -497,7 +520,7 @@ pub fn run(
         return Ok(CommandOutcome::Cancelled);
     }
     if jsonl {
-        emit(&mut writer, TableEvent::Complete(complete))?;
+        emit_immediate(&mut writer, TableEvent::Complete(complete))?;
     } else {
         writeln!(
             writer,
@@ -505,6 +528,9 @@ pub fn run(
             complete.documents_admitted, complete.tokens_admitted, complete.rows, query_millis
         )
         .map_err(|error| CliError::Execution(execution_output_io(error)))?;
+        writer
+            .flush()
+            .map_err(|error| CliError::Execution(execution_output_io(error)))?;
     }
     Ok(CommandOutcome::Success)
 }
@@ -549,32 +575,41 @@ fn export_documents(
         return Ok(CommandOutcome::Cancelled);
     }
     let stdout = io::stdout();
-    let mut writer = stdout.lock();
-    let mut emit = |event| {
-        write_jsonl(&mut writer, &TableEnvelope::new(event))
+    let mut writer = io::BufWriter::with_capacity(256 * 1024, stdout.lock());
+    let mut scratch = Vec::new();
+    let emit_immediate = |writer: &mut io::BufWriter<io::StdoutLock<'_>>, event| {
+        write_jsonl(writer, &TableEnvelope::new(event))
             .map_err(|error| CliError::Execution(execution_output_error(error)))
     };
-    emit(TableEvent::Run(TableRun {
-        table: args
-            .table
-            .as_deref()
-            .or(args.table_option.as_deref())
-            .expect("table path checked")
-            .display()
-            .to_string(),
-        analysis_identity: key.analysis_identity.clone(),
-        catalog_fingerprint: key.catalog_fingerprint.clone(),
-        matcher_revision: key.matcher_revision.clone(),
-        source_identity: Some(encode_digest(artifact.source_identity().as_bytes())),
-        clause: args.clause.clone(),
-        requested_top: None,
-        by_document: true,
-        published_source_metadata: metadata.keys().to_vec(),
-        entry: None,
-        by_metadata: None,
-        select: None,
-        key: Vec::new(),
-    }))?;
+    let emit_buffered =
+        |writer: &mut io::BufWriter<io::StdoutLock<'_>>, scratch: &mut Vec<u8>, event| {
+            write_jsonl_buffered(writer, scratch, &TableEnvelope::new(event))
+                .map_err(|error| CliError::Execution(execution_output_error(error)))
+        };
+    emit_immediate(
+        &mut writer,
+        TableEvent::Run(TableRun {
+            table: args
+                .table
+                .as_deref()
+                .or(args.table_option.as_deref())
+                .expect("table path checked")
+                .display()
+                .to_string(),
+            analysis_identity: key.analysis_identity.clone(),
+            catalog_fingerprint: key.catalog_fingerprint.clone(),
+            matcher_revision: key.matcher_revision.clone(),
+            source_identity: Some(encode_digest(artifact.source_identity().as_bytes())),
+            clause: args.clause.clone(),
+            requested_top: None,
+            by_document: true,
+            published_source_metadata: metadata.keys().to_vec(),
+            entry: None,
+            by_metadata: None,
+            select: None,
+            key: Vec::new(),
+        }),
+    )?;
     let mut documents = 0;
     let mut next = 0;
     loop {
@@ -626,17 +661,21 @@ fn export_documents(
                         .map_err(CliError::corpus)?,
                 ))
             };
-            emit(TableEvent::Document(TableDocument {
-                document_id: id,
-                data: DocumentData {
-                    grouping_coverage: None,
-                    document: source.ordinal,
-                    source_name: source.logical_name,
-                    sentences_admitted: totals.sentences,
-                    tokens_admitted: totals.tokens,
-                    source_metadata,
-                },
-            }))?;
+            emit_buffered(
+                &mut writer,
+                &mut scratch,
+                TableEvent::Document(TableDocument {
+                    document_id: id,
+                    data: DocumentData {
+                        grouping_coverage: None,
+                        document: source.ordinal,
+                        source_name: source.logical_name,
+                        sentences_admitted: totals.sentences,
+                        tokens_admitted: totals.tokens,
+                        source_metadata,
+                    },
+                }),
+            )?;
             documents += 1;
         }
     }
@@ -652,11 +691,15 @@ fn export_documents(
             }
             let entry = u32::try_from(entry)
                 .map_err(|_| CliError::Corpus("count table entry ID exceeds u32".into()))?;
-            emit(TableEvent::Entry(TableEntry {
-                entry,
-                pattern: name.to_owned(),
-                group: group_data(&table.group(entry).map_err(table_error)?),
-            }))?;
+            emit_buffered(
+                &mut writer,
+                &mut scratch,
+                TableEvent::Entry(TableEntry {
+                    entry,
+                    pattern: name.to_owned(),
+                    group: group_data(&table.group(entry).map_err(table_error)?),
+                }),
+            )?;
         }
     }
     let mut cells = 0u64;
@@ -673,11 +716,15 @@ fn export_documents(
             }
             let id = table.document_ids()[*document as usize];
             if admits(id) {
-                emit(TableEvent::Cell(TableCell {
-                    document_id: id,
-                    entry,
-                    count: u64::from(*count),
-                }))?;
+                emit_buffered(
+                    &mut writer,
+                    &mut scratch,
+                    TableEvent::Cell(TableCell {
+                        document_id: id,
+                        entry,
+                        count: u64::from(*count),
+                    }),
+                )?;
                 cells += 1;
             }
         }
@@ -685,15 +732,18 @@ fn export_documents(
     if !terminal.try_claim_completion() {
         return Ok(CommandOutcome::Cancelled);
     }
-    emit(TableEvent::Complete(TableComplete {
-        documents_admitted: admission.documents_admitted,
-        sentences_admitted: admission.sentences_admitted,
-        tokens_admitted: admission.tokens_admitted,
-        rows: cells,
-        entries: Some(table.entry_count()),
-        query_millis: queried.elapsed().as_millis().try_into().unwrap_or(u64::MAX),
-        elapsed_millis: started.elapsed().as_millis().try_into().unwrap_or(u64::MAX),
-    }))?;
+    emit_immediate(
+        &mut writer,
+        TableEvent::Complete(TableComplete {
+            documents_admitted: admission.documents_admitted,
+            sentences_admitted: admission.sentences_admitted,
+            tokens_admitted: admission.tokens_admitted,
+            rows: cells,
+            entries: Some(table.entry_count()),
+            query_millis: queried.elapsed().as_millis().try_into().unwrap_or(u64::MAX),
+            elapsed_millis: started.elapsed().as_millis().try_into().unwrap_or(u64::MAX),
+        }),
+    )?;
     Ok(CommandOutcome::Success)
 }
 

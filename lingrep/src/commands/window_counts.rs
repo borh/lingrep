@@ -21,7 +21,7 @@ use crate::protocol::window_counts::{
     WindowCountsComplete, WindowCountsData, WindowCountsEnvelope, WindowCountsEvent,
     WindowCountsRun,
 };
-use crate::protocol::write_jsonl;
+use crate::protocol::{write_jsonl, write_jsonl_buffered};
 use crate::terminal::{PresentationProgress, TerminalArbiter};
 
 pub(super) fn run(
@@ -83,7 +83,8 @@ pub(super) fn run(
     };
     let run_id = session.run_id.clone();
     let mut sink = WindowSink {
-        writer: BufWriter::new(io::stdout().lock()),
+        writer: BufWriter::with_capacity(256 * 1024, io::stdout().lock()),
+        scratch: Vec::new(),
         size,
         current: None,
         document_tokens: 0,
@@ -146,6 +147,7 @@ pub(super) fn run(
 
 struct WindowSink<W> {
     writer: W,
+    scratch: Vec<u8>,
     size: NonZeroU64,
     current: Option<WindowCountsData>,
     document_tokens: u64,
@@ -160,7 +162,12 @@ impl<W: Write> WindowSink<W> {
 
     fn publish_window(&mut self) -> Result<(), ExecutionError> {
         if let Some(window) = self.current.take() {
-            self.write(WindowCountsEvent::Window(window))?;
+            write_jsonl_buffered(
+                &mut self.writer,
+                &mut self.scratch,
+                &WindowCountsEnvelope::new(WindowCountsEvent::Window(window)),
+            )
+            .map_err(execution_output_error)?;
             self.windows_emitted = add(self.windows_emitted, 1)?;
         }
         Ok(())
@@ -234,6 +241,10 @@ impl<W: Write> MatchSink for WindowSink<W> {
             sentence.len(),
             records.iter().map(|record| record.name.as_str()),
         )
+    }
+
+    fn finish_batch(&mut self) -> Result<(), ExecutionError> {
+        self.writer.flush().map_err(execution_output_io)
     }
 }
 
