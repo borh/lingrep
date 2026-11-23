@@ -159,7 +159,7 @@ pub fn run(
                 token_schema_identity: encode_digest(stream.schema.digest().as_bytes()),
                 admitted_tokens: coverage.admitted_tokens(),
                 admitted_sentences,
-                admitted_documents: stream.source_stats.documents_admitted(),
+                admitted_documents: stream.source.into_stats().documents_admitted(),
                 scope: scope_report
                     .as_ref()
                     .map(serde_json::to_value)

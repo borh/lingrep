@@ -11,8 +11,7 @@ mod hashing;
 pub use lingrep_core::execution::{BoundedRecordError, BoundedRecordReader, BoundedRecordStats};
 
 pub(crate) use batching::{
-    BoxSentenceSource, OversizedSentenceOmissionSummary, boxed_direct_source,
-    source_from_events_skipping_oversized,
+    BoxSentenceSource, OversizedSentenceOmissionSummary, source_from_events_skipping_oversized,
 };
 pub use batching::{DirectSentenceSource, DirectSourceStats, source_from_events};
 

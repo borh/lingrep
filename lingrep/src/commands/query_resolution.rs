@@ -12,21 +12,21 @@ use lingrep_core::corpus::{
 use lingrep_core::execution::{
     AnalysisBinding, CorpusSample, ExecutionError, ExecutionProgress, ExecutionReport, MatchSink,
     NativeAnalysisSource, Publication, RunOutcome, SampledSentences, SentenceAdmission,
-    SentenceBatchSource, execute_analyzed,
+    TokenizedAdmission, execute_analyzed,
 };
 use lingrep_core::fsm::{BoundCatalog, CompileOutput, CompiledCatalog, SentenceFilter};
 use lingrep_core::scope::ScopeClause;
 use lingrep_core::token_match::{AttributeKey, BoundProjection, TokenSchema};
 use lingrep_corpus::{
-    AnalysisInputs, AnalyzerRecord, BlockingProvenance, CorpusArtifact, PreparedFilterStats,
-    ReaderIdentity, ScopeResolution, TokenSchemaIdentity,
+    AnalysisInputs, AnalyzerRecord, BlockingProvenance, CorpusArtifact, ReaderIdentity,
+    ScopeResolution, TokenSchemaIdentity,
 };
 use rayon::ThreadPool;
 
 use super::admission_identity;
 use super::query_completion::CompletionObservation;
 use super::query_scope::resolve_prepared_scope;
-use super::query_source::{self, QueryInputStats};
+use super::query_source::{BoxQuerySource, QueryInputStats, QuerySentenceSource};
 use super::query_support::{
     build_worker_pool, oversized_omissions_error, protocol_execution_limits, protocol_inventory,
     protocol_traversal_limits, protocol_traversal_limits_from_report, random_id,
@@ -35,8 +35,8 @@ use super::query_support::{
 use crate::analyzer_selection::{CliAnalyzerPlan, ResolvedInputAnalyzer, resolve_input};
 use crate::cli::{AnalyzerCliConfig, ExecutionCliConfig, QueryInputArgs};
 use crate::direct_source::{
-    BoxSentenceSource, FilesystemCorpusEvents, admitted_filesystem_events, encode_digest, scoped,
-    source_from_events, source_from_events_skipping_oversized,
+    FilesystemCorpusEvents, admitted_filesystem_events, encode_digest, scoped, source_from_events,
+    source_from_events_skipping_oversized,
 };
 use crate::error::CliError;
 use crate::protocol::query::{
@@ -70,7 +70,6 @@ pub(crate) struct QueryRunFacts {
     pub(crate) reader_identity: String,
     pub(crate) token_schema_identity: String,
     pub(crate) traversal_limits: TraversalLimits,
-    pub(crate) filter_stats: Option<PreparedFilterStats>,
     pub(crate) block_sample_report: Option<SampleReport>,
 }
 
@@ -278,8 +277,7 @@ impl CorpusSourceSpec<'_> {
 
 /// A fully opened direct or prepared sentence source and its run metadata.
 pub(crate) struct ResolvedCorpusSource {
-    pub(crate) source: BoxSentenceSource,
-    pub(crate) source_stats: QueryInputStats,
+    pub(crate) source: BoxQuerySource,
     pub(crate) lifecycle: CompletionObservation,
     pub(crate) analysis: ResolvedAnalysis,
     pub(crate) schema: TokenSchema,
@@ -293,8 +291,7 @@ pub(crate) struct ResolvedCorpusSource {
 /// A schema-bound token stream for non-matching corpus commands (`tokenize`,
 /// `attributes`).
 pub(crate) struct BoundTokenStream {
-    pub(crate) source: Box<dyn SentenceBatchSource>,
-    pub(crate) source_stats: QueryInputStats,
+    pub(crate) source: Box<dyn QuerySentenceSource>,
     pub(crate) lifecycle: CompletionObservation,
     pub(crate) schema: TokenSchema,
     pub(crate) run: QueryRunFacts,
@@ -308,7 +305,7 @@ impl ResolvedCorpusSource {
     /// that read tokens directly (`tokenize`, `attributes`) always consume
     /// `ExecutionBatch::BoundTokenized`.
     pub(crate) fn into_bound_stream(self, projection: BoundProjection) -> BoundTokenStream {
-        let source: Box<dyn SentenceBatchSource> = match self.analysis {
+        let source: Box<dyn QuerySentenceSource> = match self.analysis {
             ResolvedAnalysis::Direct(plan) => {
                 let segmentation = plan.descriptor().segmentation();
                 Box::new(NativeAnalysisSource::new(
@@ -322,7 +319,6 @@ impl ResolvedCorpusSource {
         };
         BoundTokenStream {
             source,
-            source_stats: self.source_stats,
             lifecycle: self.lifecycle,
             schema: self.schema,
             run: self.run,
@@ -545,18 +541,16 @@ impl<'a> OpenedCorpus<'a> {
                     Some(source) => source,
                     None => open_source()?,
                 };
-                let filter_stats = source.filter_stats();
-                let (source, source_stats) = if spec.omit_oversized_prepared {
-                    query_source::prepared(source)
+                let source = if spec.omit_oversized_prepared {
+                    source.with_tokenized_admission(TokenizedAdmission::Omit)
                 } else {
-                    query_source::prepared_strict(source)
+                    source
                 };
                 let pretokenized_conllu = schema == lingrep_core::corpus::conllu::token_schema();
                 Ok(ResolvedCorpusSource {
                     scope,
                     provenance,
-                    source,
-                    source_stats,
+                    source: Box::new(source),
                     lifecycle: CompletionObservation::Prepared {
                         source_identity,
                         analysis_identity,
@@ -565,7 +559,6 @@ impl<'a> OpenedCorpus<'a> {
                     analysis: ResolvedAnalysis::Tokenized(schema.clone()),
                     schema,
                     run: QueryRunFacts {
-                        filter_stats: Some(filter_stats),
                         analyzer: analyzer_run,
                         dictionary_identity: encode_digest(
                             artifact.dictionary_fingerprint()?.as_bytes(),
@@ -628,14 +621,14 @@ impl<'a> OpenedCorpus<'a> {
                 let reader_identity_text = encode_digest(reader_identity.as_bytes());
                 let token_schema_identity =
                     encode_digest(analysis_inputs.token_schema().as_bytes());
-                let ((source, source_stats), lifecycle) = if stdin {
+                let (source, lifecycle): (BoxQuerySource, _) = if stdin {
                     let (observation, events) = crate::direct_source::stdin_events(
                         &reader_config,
                         config.limits.max_input_record_bytes,
                     );
                     let stream_id = random_id();
                     (
-                        query_source::direct(Box::new(
+                        Box::new(
                             source_from_events(scoped(
                                 AdmittedCorpus::new(events),
                                 spec.scope_clause,
@@ -646,7 +639,7 @@ impl<'a> OpenedCorpus<'a> {
                             .with_projection(spec.projection)
                             .with_source_metadata(spec.metadata_projection)
                             .with_lookaround_divisions(spec.lookaround_divisions),
-                        )),
+                        ),
                         CompletionObservation::Stdin {
                             stream_id,
                             observation,
@@ -679,7 +672,7 @@ impl<'a> OpenedCorpus<'a> {
                     .with_source_metadata(spec.metadata_projection)
                     .with_lookaround_divisions(spec.lookaround_divisions);
                     (
-                        query_source::direct(Box::new(source)),
+                        Box::new(source),
                         CompletionObservation::Filesystem {
                             observation,
                             analysis: analysis_inputs,
@@ -690,7 +683,6 @@ impl<'a> OpenedCorpus<'a> {
                     scope,
                     provenance: None,
                     source,
-                    source_stats,
                     lifecycle,
                     analysis: analyzer_plan.map_or_else(
                         || ResolvedAnalysis::Tokenized(schema.clone()),
@@ -698,7 +690,6 @@ impl<'a> OpenedCorpus<'a> {
                     ),
                     schema,
                     run: QueryRunFacts {
-                        filter_stats: None,
                         block_sample_report: None,
                         analyzer: analyzer_run,
                         dictionary_identity,
@@ -736,8 +727,7 @@ pub(crate) struct MatchingQuerySpec<'a> {
 pub(crate) struct MatchingQuerySession {
     pub(crate) pool: Arc<ThreadPool>,
     pub(crate) run_id: String,
-    pub(crate) source: BoxSentenceSource,
-    pub(crate) source_stats: QueryInputStats,
+    pub(crate) source: BoxQuerySource,
     pub(crate) lifecycle: CompletionObservation,
     pub(crate) analysis: ResolvedAnalysis,
     pub(crate) bound: BoundCatalog,
@@ -760,7 +750,6 @@ pub(crate) struct QueryCompletionMetrics {
     pub(crate) report: ExecutionReport,
     pub(crate) max_tokenized_bytes: usize,
     pub(crate) source_stats: QueryInputStats,
-    pub(crate) run: QueryRunFacts,
     pub(crate) scope: QueryScope,
     pub(crate) run_id: String,
 }
@@ -811,7 +800,6 @@ impl MatchingQuerySession {
             pool,
             run_id: random_id(),
             source: resolved.source,
-            source_stats: resolved.source_stats,
             lifecycle: resolved.lifecycle,
             analysis: resolved.analysis,
             bound,
@@ -850,8 +838,9 @@ impl MatchingQuerySession {
             .prepared_scope
             .as_ref()
             .map_or(&SentenceAdmission::All, |resolved| &resolved.admission);
+        let mut source = self.source;
         let outcome = execute_analyzed(
-            SampledSentences::new(self.source, sentence_sample),
+            SampledSentences::new(&mut source, sentence_sample),
             binding,
             &self.bound,
             &self.pool,
@@ -872,8 +861,7 @@ impl MatchingQuerySession {
                     metrics: QueryCompletionMetrics {
                         report,
                         max_tokenized_bytes,
-                        source_stats: self.source_stats,
-                        run: self.run,
+                        source_stats: source.into_stats(),
                         scope: self.scope,
                         run_id: self.run_id,
                     },
@@ -928,7 +916,7 @@ impl QueryCompletionMetrics {
     }
 
     pub(crate) fn check_oversized_omissions(&self) -> Result<(), CliError> {
-        if let Some(summary) = self.source_stats.oversized_sentence_omissions()? {
+        if let Some(summary) = self.source_stats.oversized_sentence_omissions() {
             return Err(oversized_omissions_error(summary));
         }
         Ok(())
@@ -940,11 +928,7 @@ impl QueryCompletionMetrics {
         records_unkeyed: u64,
         offsets_omitted: u64,
     ) -> Result<RunCounters, CliError> {
-        let sentences_proven_absent = self
-            .run
-            .filter_stats
-            .as_ref()
-            .map_or(0, PreparedFilterStats::sentences_proven_absent);
+        let sentences_proven_absent = self.source_stats.sentences_proven_absent();
         let sentences_admitted = self
             .report
             .sentences_admitted

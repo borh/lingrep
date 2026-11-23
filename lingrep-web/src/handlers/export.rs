@@ -137,10 +137,6 @@ fn run_export_scan_with_compounds(
     let mut progress = |_, _: &ExportSink| {};
     let (outcome, omissions) = bound_scan.execute(pool, cancel, &mut sink, &mut progress);
     let data = classify_outcome(outcome, sink)?;
-    let omissions = omissions
-        .lock()
-        .map_err(|_| ExportScanError::Sink("the omission count is unavailable".into()))?
-        .summary();
     Ok((data, omissions))
 }
 

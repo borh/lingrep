@@ -52,7 +52,6 @@ mod locations;
 mod manifest;
 pub use manifest::{SentenceTruncation, is_prepared_artifact};
 mod postings;
-pub use postings::PreparedFilterStats;
 mod provenance;
 mod publication;
 mod reading;
@@ -100,7 +99,7 @@ pub use siblings::{
     finish_prune_leftover, foreign_entries, is_newer_format, is_older_format, prune_leftovers,
     recorded_source_identity, remove_older_format, remove_realization,
 };
-pub use tokens::{PreparedDocumentStats, PreparedSentenceSource, PreparedTokenReader};
+pub use tokens::{PreparedSentenceSource, PreparedTokenReader};
 pub use verify::{ComponentVerification, VerificationReport};
 
 /// Executes `work` inside `pool` when a caller-owned pool is supplied, or

@@ -10,7 +10,7 @@ use std::{
     path::{Path, PathBuf},
     sync::{
         Arc,
-        atomic::{AtomicU64, AtomicUsize, Ordering},
+        atomic::{AtomicUsize, Ordering},
         mpsc::{Receiver, SyncSender, sync_channel},
     },
     thread::JoinHandle,
@@ -21,8 +21,8 @@ use lingrep_core::{
     corpus::conllu::EnhancedGraphObservation,
     execution::{
         BoundSentenceInput, CancellationFlag, EnhancedGraphInput, ExecutionBatch, ExecutionError,
-        ExecutionLimits, ExecutionSentence, SentenceAdmission, SentenceBatchSource,
-        TokenizedAdmission, estimate_token_info_bytes,
+        ExecutionLimits, ExecutionSentence, OversizedSentenceOmissions, SentenceAdmission,
+        SentenceBatchSource, TokenizedAdmission, estimate_token_info_bytes,
     },
     spill::TempBudget,
     token_match::{
@@ -1008,18 +1008,6 @@ enum SourceProjection {
     },
 }
 
-/// Counts the documents with at least one admitted sentence: a sentence this
-/// source returned, or one it skipped as proven absent.
-#[derive(Clone, Default)]
-pub struct PreparedDocumentStats(Arc<AtomicU64>);
-
-impl PreparedDocumentStats {
-    #[must_use]
-    pub fn admitted_documents(&self) -> u64 {
-        self.0.load(Ordering::Relaxed)
-    }
-}
-
 pub struct PreparedSentenceSource {
     reader: TokenReader,
     decode_pool: Option<Arc<rayon::ThreadPool>>,
@@ -1035,14 +1023,15 @@ pub struct PreparedSentenceSource {
     admission: SentenceAdmission,
     cancel: Option<CancellationFlag>,
     tokenized_admission: TokenizedAdmission,
+    oversized_omissions: OversizedSentenceOmissions,
     source_metadata: Option<lingrep_core::corpus::SourceMetadataProjection>,
     provenance: Option<Arc<crate::BlockingProvenance>>,
     lookaround_divisions: Option<(Box<[compact_str::CompactString]>, DivisionLookup)>,
     char_offsets: bool,
     block_sample: Option<lingrep_core::execution::CorpusSample>,
     pub(crate) candidates: Option<crate::postings::Candidates>,
-    filter_stats: crate::PreparedFilterStats,
-    document_stats: PreparedDocumentStats,
+    sentences_proven_absent: u64,
+    admitted_documents: u64,
     last_admitted_document: Option<u64>,
     proven_absent_documents: Vec<u64>,
 }
@@ -1138,27 +1127,31 @@ impl PreparedSentenceSource {
             admission: SentenceAdmission::All,
             cancel: None,
             tokenized_admission: TokenizedAdmission::Fail,
+            oversized_omissions: OversizedSentenceOmissions::default(),
             source_metadata: None,
             provenance: None,
             lookaround_divisions: None,
             char_offsets: true,
             block_sample: None,
             candidates: None,
-            filter_stats: crate::PreparedFilterStats::default(),
-            document_stats: PreparedDocumentStats::default(),
+            sentences_proven_absent: 0,
+            admitted_documents: 0,
             last_admitted_document: None,
             proven_absent_documents: Vec::new(),
         })
     }
 
-    /// Returns a live counter shared with this source, including after it reaches EOF.
-    pub fn filter_stats(&self) -> crate::PreparedFilterStats {
-        self.filter_stats.clone()
+    pub fn sentences_proven_absent(&self) -> u64 {
+        self.sentences_proven_absent
     }
 
-    /// Returns a live counter shared with this source, including after it reaches EOF.
-    pub fn document_stats(&self) -> PreparedDocumentStats {
-        self.document_stats.clone()
+    /// Documents containing a returned sentence or one proven absent by the index.
+    pub fn admitted_documents(&self) -> u64 {
+        self.admitted_documents
+    }
+
+    pub fn oversized_omissions(&self) -> Option<OversizedSentenceOmissions> {
+        self.oversized_omissions.summary()
     }
 
     fn count_batch_documents(&mut self, batch: &ExecutionBatch) {
@@ -1191,7 +1184,7 @@ impl PreparedSentenceSource {
                 .is_none_or(|last| document > last)
             {
                 self.last_admitted_document = Some(document);
-                self.document_stats.0.fetch_add(1, Ordering::Relaxed);
+                self.admitted_documents += 1;
             }
         }
     }
@@ -1402,22 +1395,16 @@ impl PreparedSentenceSource {
                                     .map(|row| row.source_name.to_string()),
                             });
                         }
-                        TokenizedAdmission::Omit(omissions) => {
-                            omissions
-                                .lock()
-                                .map_err(|_| ExecutionError::Source {
-                                    ordinal,
-                                    message: "oversized omission lock poisoned".into(),
-                                })?
-                                .record(
-                                    ordinal,
-                                    self.locations
-                                        .sentence(ordinal)
-                                        .ok()
-                                        .map(|row| row.source_name),
-                                    resident,
-                                    limits.max_tokenized_bytes,
-                                );
+                        TokenizedAdmission::Omit => {
+                            self.oversized_omissions.record(
+                                ordinal,
+                                self.locations
+                                    .sentence(ordinal)
+                                    .ok()
+                                    .map(|row| row.source_name),
+                                resident,
+                                limits.max_tokenized_bytes,
+                            );
                             continue;
                         }
                     }
@@ -1462,7 +1449,7 @@ impl PreparedSentenceSource {
                     if result.map_err(|error| self.fail(ordinal, error))? {
                         retained.push(ordinal);
                     } else {
-                        self.filter_stats.record(1);
+                        self.sentences_proven_absent += 1;
                         absent.push(ordinal);
                     }
                 }
@@ -1599,7 +1586,7 @@ impl PreparedSentenceSource {
                     })
                     .collect::<Vec<_>>();
                 if let Some(&(index, actual)) = oversized.first() {
-                    let omissions = match &self.tokenized_admission {
+                    match self.tokenized_admission {
                         TokenizedAdmission::Fail => {
                             return Err(ExecutionError::TokenizedSentenceTooLarge {
                                 ordinal: ordinals[index],
@@ -1612,15 +1599,11 @@ impl PreparedSentenceSource {
                                     .map(|row| row.source_name.to_string()),
                             });
                         }
-                        TokenizedAdmission::Omit(omissions) => omissions,
-                    };
-                    let mut omissions = omissions.lock().map_err(|_| ExecutionError::Source {
-                        ordinal: ordinals[index],
-                        message: "oversized omission lock poisoned".into(),
-                    })?;
+                        TokenizedAdmission::Omit => {}
+                    }
                     for &(index, actual) in &oversized {
                         let ordinal = ordinals[index];
-                        omissions.record(
+                        self.oversized_omissions.record(
                             ordinal,
                             self.locations
                                 .sentence(ordinal)
@@ -1630,7 +1613,6 @@ impl PreparedSentenceSource {
                             limits.max_tokenized_bytes,
                         );
                     }
-                    drop(omissions);
 
                     let keep = charges
                         .iter()

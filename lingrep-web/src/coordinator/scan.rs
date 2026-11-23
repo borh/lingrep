@@ -1,5 +1,5 @@
 use std::collections::HashSet;
-use std::sync::{Arc, Mutex as StdMutex};
+use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use lingrep_core::analysis::VibratoSession;
@@ -81,14 +81,12 @@ pub(crate) fn scan_projection_attributes(
     attributes.into()
 }
 
-/// Bound catalog, prepared sentence source, and omission counter shared by
-/// live workbench scans and XLSX export rescans.
+/// Bound catalog and prepared sentence source for workbench scans and XLSX exports.
 pub(crate) struct BoundScan {
     pub(crate) schema: TokenSchema,
     pub(crate) attributes: Arc<[AttributeKey]>,
     pub(crate) bound: BoundCatalog,
     pub(crate) source: lingrep_corpus::PreparedSentenceSource,
-    pub(crate) omissions: Arc<StdMutex<OversizedSentenceOmissions>>,
 }
 
 impl BoundScan {
@@ -107,7 +105,6 @@ impl BoundScan {
         // Prepared artifacts may contain oversized sentences. Omit and count
         // them so the result banner or export About sheet can disclose a
         // degraded run.
-        let omissions = Arc::new(StdMutex::new(OversizedSentenceOmissions::default()));
         let source = scope
             .open_source(
                 artifact,
@@ -116,26 +113,25 @@ impl BoundScan {
                 Arc::clone(pool),
             )
             .map_err(ScanSetupError::Source)?
-            .with_tokenized_admission(TokenizedAdmission::Omit(Arc::clone(&omissions)))
+            .with_tokenized_admission(TokenizedAdmission::Omit)
             .with_cancellation(cancel.clone());
         Ok(Self {
             schema,
             attributes,
             bound,
             source,
-            omissions,
         })
     }
 
     pub(crate) fn execute<S, P>(
-        self,
+        mut self,
         pool: &rayon::ThreadPool,
         cancel: &CancellationFlag,
         sink: &mut S,
         progress: &mut P,
     ) -> (
         Result<RunOutcome, ExecutionError>,
-        Arc<StdMutex<OversizedSentenceOmissions>>,
+        Option<OversizedSentenceOmissions>,
     )
     where
         S: MatchSink,
@@ -143,7 +139,7 @@ impl BoundScan {
     {
         let mut observer = |_: lingrep_core::execution::TokenizedBatchObservation| Ok(());
         let outcome = execute_analyzed::<_, VibratoSession, _, _, _>(
-            self.source,
+            &mut self.source,
             AnalysisBinding::Prepared(self.schema),
             &self.bound,
             pool,
@@ -156,7 +152,7 @@ impl BoundScan {
             PolicySelection::Apply,
             &SentenceAdmission::All,
         );
-        (outcome, self.omissions)
+        (outcome, self.source.oversized_omissions())
     }
 }
 
@@ -640,8 +636,7 @@ pub(super) fn run_scan_blocking_with_options(
     } else {
         sink.discard_sections();
     }
-    let oversized_omissions = omissions.lock().map_err(|_| execution_failure())?.summary();
-    Ok((outcome, sink, oversized_omissions))
+    Ok((outcome, sink, omissions))
 }
 
 #[derive(Debug, Clone)]

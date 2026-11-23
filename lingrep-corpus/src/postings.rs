@@ -15,10 +15,7 @@ use std::{
     fs::{File, OpenOptions},
     io::{BufWriter, Seek, Write},
     path::Path,
-    sync::{
-        Arc,
-        atomic::{AtomicU64, Ordering},
-    },
+    sync::Arc,
 };
 
 pub(crate) const NAME: &str = "postings.v1";
@@ -26,18 +23,6 @@ const MAGIC: &[u8; 8] = b"LGPOST01";
 const MAX_DIRECTORY: usize = 64 * 1024 * 1024;
 const CHUNK: usize = 64 * 1024;
 const ATTRIBUTES: [&str; 2] = ["lemma", "unidic.pos1"];
-
-#[derive(Clone, Default)]
-pub struct PreparedFilterStats(Arc<AtomicU64>);
-impl PreparedFilterStats {
-    #[must_use]
-    pub fn sentences_proven_absent(&self) -> u64 {
-        self.0.load(Ordering::Relaxed)
-    }
-    pub(crate) fn record(&self, count: usize) {
-        self.0.fetch_add(count as u64, Ordering::Relaxed);
-    }
-}
 
 #[derive(Clone)]
 struct Chunk {

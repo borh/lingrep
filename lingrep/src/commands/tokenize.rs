@@ -301,7 +301,8 @@ pub fn run(
                 elapsed_millis: started.elapsed().as_millis().try_into().unwrap_or(u64::MAX),
                 resources: ResourceHighWater {
                     staged_raw_bytes: stream
-                        .source_stats
+                        .source
+                        .into_stats()
                         .max_staged_raw_bytes()
                         .try_into()
                         .unwrap_or(u64::MAX),

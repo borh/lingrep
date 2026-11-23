@@ -1726,7 +1726,7 @@ impl CorpusArtifact {
     /// Prunes sentences using a proof from the catalog the caller will execute.
     ///
     /// Unvisited token blocks remain unchecked; complete integrity requires `verify_integrity`.
-    /// Admission population includes `filter_stats().sentences_proven_absent()` in addition to returned sentences.
+    /// Admission includes sentences counted by `sentences_proven_absent()` and returned sentences.
     pub fn filtered_sentence_source(
         &self,
         projection: &BoundProjection,

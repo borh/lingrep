@@ -552,13 +552,13 @@ fn borrowed_match_envelope<'a>(
 fn resolve_matches_completion<T>(
     terminal: &TerminalArbiter,
     validate: impl FnOnce() -> Result<T, CliError>,
-    observe_omissions: impl FnOnce() -> Result<Option<OversizedSentenceOmissionSummary>, ExecutionError>,
+    observe_omissions: impl FnOnce() -> Option<OversizedSentenceOmissionSummary>,
 ) -> Result<ValidatedCompletion<T>, CliError> {
     let validated = validate()?;
     if !terminal.try_claim_completion() {
         return Ok(ValidatedCompletion::Cancelled);
     }
-    if let Some(summary) = observe_omissions()? {
+    if let Some(summary) = observe_omissions() {
         return Err(oversized_omissions_error(summary));
     }
     Ok(ValidatedCompletion::Publish(validated))
@@ -1881,7 +1881,7 @@ mod tests {
             || Err::<(), CliError>(CliError::Execution(ExecutionError::InventoryMismatch)),
             || {
                 omission_read.set(true);
-                Ok(None)
+                None
             },
         )
         .unwrap_err();
@@ -1915,13 +1915,13 @@ mod tests {
             &terminal,
             || Ok("validated"),
             || {
-                Ok(Some(OversizedSentenceOmissionSummary {
+                Some(OversizedSentenceOmissionSummary {
                     count: 2,
                     first_source_name: "00027.md".into(),
                     first_ordinal: 7,
                     first_actual: 187_965,
                     limit: 65_536,
-                }))
+                })
             },
         )
         .unwrap_err();
@@ -1933,19 +1933,11 @@ mod tests {
     }
 
     #[test]
-    fn omission_observation_failure_prevents_publication() {
+    fn completion_publishes_validated_facts_when_no_sentences_were_omitted() {
         let terminal = TerminalArbiter::new();
-        let error = resolve_matches_completion(
-            &terminal,
-            || Ok("validated"),
-            || Err(ExecutionError::ResourceAccounting),
-        )
-        .unwrap_err();
+        let outcome = resolve_matches_completion(&terminal, || Ok("validated"), || None).unwrap();
 
-        assert!(matches!(
-            error,
-            CliError::Execution(ExecutionError::ResourceAccounting)
-        ));
+        assert_eq!(outcome, ValidatedCompletion::Publish("validated"));
     }
 
     fn analyzer_record(family: &str, profile: &str) -> lingrep_corpus::AnalyzerRecord {

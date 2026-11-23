@@ -3,8 +3,7 @@ use std::{collections::HashMap, sync::Arc};
 use axum::response::{IntoResponse, Response};
 use lingrep_core::execution::SentenceAdmission;
 use lingrep_core::execution::{
-    ExecutionBatch, ExecutionLimits, OversizedSentenceOmissions, SentenceBatchSource,
-    TokenizedAdmission, explain_in_windows,
+    ExecutionBatch, ExecutionLimits, SentenceBatchSource, TokenizedAdmission, explain_in_windows,
 };
 use lingrep_core::fsm::{BoundCatalog, CompiledCatalog, SentenceExplanation};
 
@@ -118,9 +117,7 @@ impl ScanWindows {
                 )
                 .map_err(|_| corrupt())?
                 .with_ordinal_range(range.clone())
-                .with_tokenized_admission(TokenizedAdmission::Omit(Arc::new(
-                    std::sync::Mutex::new(OversizedSentenceOmissions::default()),
-                )));
+                .with_tokenized_admission(TokenizedAdmission::Omit);
             let (mut locations, mut inputs) = (Vec::new(), Vec::new());
             while let Some(batch) = source
                 .next_batch(&ExecutionLimits::default())

@@ -123,7 +123,7 @@ pub(super) fn run(
     if completed
         .metrics
         .source_stats
-        .oversized_sentence_omissions()?
+        .oversized_sentence_omissions()
         .is_some()
     {
         return Err(ExecutionError::Sink(

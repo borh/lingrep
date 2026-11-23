@@ -1,7 +1,7 @@
 //! Bounded sentence batching over admitted corpus events.
 
 use std::io;
-use std::sync::{Arc, Mutex};
+use std::sync::Arc;
 
 use lingrep_core::analysis::{
     InputUnitId, NormalizationPolicy, SegmentationMode, TextUnit, TextUnitKind,
@@ -15,11 +15,12 @@ use lingrep_core::token_match::BoundProjection;
 
 use super::discovery::{SourceInputError, terminal_failure_from_discovery};
 
-/// Observable bounded-state facts retained after the source is moved into the
-/// shared executor.
 #[derive(Clone, Default)]
 pub struct DirectSourceStats {
-    state: Arc<Mutex<DirectSourceStatsState>>,
+    documents_admitted: u64,
+    max_staged_raw_bytes: usize,
+    oversized_sentence_omissions: Option<OversizedSentenceOmissionSummary>,
+    observed_division_kinds: std::collections::BTreeSet<compact_str::CompactString>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -31,60 +32,33 @@ pub(crate) struct OversizedSentenceOmissionSummary {
     pub(crate) limit: usize,
 }
 
-#[derive(Clone, Default)]
-struct DirectSourceStatsState {
-    documents_admitted: u64,
-    last_admitted_document: Option<u64>,
-    max_staged_raw_bytes: usize,
-    oversized_sentence_omissions: Option<OversizedSentenceOmissionSummary>,
-    observed_division_kinds: std::collections::BTreeSet<compact_str::CompactString>,
-}
-
 impl DirectSourceStats {
     /// The documents with at least one sentence this source has returned.
     pub fn documents_admitted(&self) -> u64 {
-        self.state
-            .lock()
-            .map(|state| state.documents_admitted)
-            .unwrap_or_default()
+        self.documents_admitted
     }
 
     pub(crate) fn observed_division_kinds(
         &self,
-    ) -> std::collections::BTreeSet<compact_str::CompactString> {
-        self.state
-            .lock()
-            .map(|state| state.observed_division_kinds.clone())
-            .unwrap_or_default()
+    ) -> &std::collections::BTreeSet<compact_str::CompactString> {
+        &self.observed_division_kinds
     }
 
     pub fn max_staged_raw_bytes(&self) -> usize {
-        self.state
-            .lock()
-            .map(|state| state.max_staged_raw_bytes)
-            .unwrap_or_default()
+        self.max_staged_raw_bytes
     }
 
-    pub(crate) fn oversized_sentence_omissions(
-        &self,
-    ) -> Result<Option<OversizedSentenceOmissionSummary>, ExecutionError> {
-        self.state
-            .lock()
-            .map(|state| state.oversized_sentence_omissions.clone())
-            .map_err(|_| ExecutionError::ResourceAccounting)
+    pub(crate) fn oversized_sentence_omissions(&self) -> Option<OversizedSentenceOmissionSummary> {
+        self.oversized_sentence_omissions.clone()
     }
 
     fn record_oversized_sentence(
-        &self,
+        &mut self,
         location: &SentenceLocation,
         actual: usize,
         limit: usize,
     ) -> Result<(), ExecutionError> {
-        let mut state = self
-            .state
-            .lock()
-            .map_err(|_| ExecutionError::ResourceAccounting)?;
-        match &mut state.oversized_sentence_omissions {
+        match &mut self.oversized_sentence_omissions {
             Some(summary) => {
                 summary.count = summary
                     .count
@@ -92,7 +66,7 @@ impl DirectSourceStats {
                     .ok_or(ExecutionError::ResourceAccounting)?;
             }
             None => {
-                state.oversized_sentence_omissions = Some(OversizedSentenceOmissionSummary {
+                self.oversized_sentence_omissions = Some(OversizedSentenceOmissionSummary {
                     count: 1,
                     first_source_name: location.source_name.to_string(),
                     first_ordinal: location.corpus_sentence_ordinal,
@@ -125,6 +99,7 @@ pub struct DirectSentenceSource<I> {
     next_sentence_ordinal: u64,
     terminal_failure: Option<TerminalFailure>,
     stats: DirectSourceStats,
+    last_admitted_document: Option<u64>,
     oversized_sentence_disposition: OversizedSentenceDisposition,
     normalization: NormalizationPolicy,
     segmentation: SegmentationMode,
@@ -184,8 +159,8 @@ impl<I> DirectSentenceSource<I> {
         self
     }
 
-    pub fn stats(&self) -> DirectSourceStats {
-        self.stats.clone()
+    pub fn into_stats(self) -> DirectSourceStats {
+        self.stats
     }
 }
 
@@ -281,6 +256,7 @@ fn source_from_events_with_disposition<I>(
         next_sentence_ordinal: 0,
         terminal_failure: None,
         stats: DirectSourceStats::default(),
+        last_admitted_document: None,
         oversized_sentence_disposition,
         normalization: NormalizationPolicy::Nfc,
         segmentation: SegmentationMode::Input,
@@ -297,16 +273,6 @@ pub(crate) fn source_from_events_skipping_oversized<I>(events: I) -> DirectSente
 }
 
 pub(crate) type BoxSentenceSource = Box<dyn SentenceBatchSource + Send>;
-
-pub(crate) fn boxed_direct_source<I>(
-    source: Box<DirectSentenceSource<I>>,
-) -> (BoxSentenceSource, DirectSourceStats)
-where
-    DirectSentenceSource<I>: SentenceBatchSource + Send + 'static,
-{
-    let stats = source.stats();
-    (source, stats)
-}
 
 impl<I> SentenceBatchSource for DirectSentenceSource<I>
 where
@@ -369,12 +335,7 @@ where
                             .ok_or(ExecutionError::ResourceAccounting)?;
                         for kind in &self.lookaround_division_kinds {
                             if sentence.structure.observes(kind) {
-                                let mut stats = self
-                                    .stats
-                                    .state
-                                    .lock()
-                                    .map_err(|_| ExecutionError::ResourceAccounting)?;
-                                stats.observed_division_kinds.insert(kind.clone());
+                                self.stats.observed_division_kinds.insert(kind.clone());
                             }
                         }
                         let location = SentenceLocation {
@@ -575,17 +536,13 @@ where
         }
 
         if !batch.is_empty() {
-            let mut stats = self
-                .stats
-                .state
-                .lock()
-                .map_err(|_| ExecutionError::ResourceAccounting)?;
-            stats.max_staged_raw_bytes = stats.max_staged_raw_bytes.max(raw_bytes);
+            self.stats.max_staged_raw_bytes = self.stats.max_staged_raw_bytes.max(raw_bytes);
             for sentence in &batch {
                 let document = sentence.location.document_ordinal;
-                if stats.last_admitted_document != Some(document) {
-                    stats.last_admitted_document = Some(document);
-                    stats.documents_admitted = stats
+                if self.last_admitted_document != Some(document) {
+                    self.last_admitted_document = Some(document);
+                    self.stats.documents_admitted = self
+                        .stats
                         .documents_admitted
                         .checked_add(1)
                         .ok_or(ExecutionError::ResourceAccounting)?;
@@ -690,8 +647,6 @@ fn terminal_failure_from_io(ordinal: u64, source_name: &str, error: &io::Error) 
 
 #[cfg(test)]
 mod tests {
-    use std::panic::{AssertUnwindSafe, catch_unwind};
-
     use lingrep_core::corpus::{AdmittedSentence, SentenceId};
 
     use super::*;
@@ -787,7 +742,6 @@ mod tests {
             Ok(AdmittedCorpusEvent::DocumentEnd { id: document }),
         ];
         let mut source = source_from_events_skipping_oversized(events.into_iter());
-        let stats = source.stats();
 
         let Some(ExecutionBatch::Text(batch)) = source.next_batch(&small_limits()).unwrap() else {
             panic!("expected one text batch");
@@ -801,7 +755,7 @@ mod tests {
         );
         assert!(source.next_batch(&small_limits()).unwrap().is_none());
         assert_eq!(
-            stats.oversized_sentence_omissions().unwrap(),
+            source.into_stats().oversized_sentence_omissions(),
             Some(OversizedSentenceOmissionSummary {
                 count: 1,
                 first_source_name: "a.md".into(),
@@ -823,10 +777,9 @@ mod tests {
         events.extend((0..1_000).map(|ordinal| Ok(sentence(document, ordinal, "over?size"))));
         events.push(Ok(AdmittedCorpusEvent::DocumentEnd { id: document }));
         let mut source = source_from_events_skipping_oversized(events.into_iter());
-        let stats = source.stats();
 
         assert!(source.next_batch(&small_limits()).unwrap().is_none());
-        let summary = stats.oversized_sentence_omissions().unwrap().unwrap();
+        let summary = source.into_stats().oversized_sentence_omissions().unwrap();
         assert_eq!(summary.count, 1_000);
         assert_eq!(summary.first_source_name, "first.md");
         assert_eq!(summary.first_ordinal, 0);
@@ -834,17 +787,31 @@ mod tests {
     }
 
     #[test]
-    fn omission_stats_fail_closed_when_the_lock_is_poisoned() {
-        let stats = DirectSourceStats::default();
-        let state = Arc::clone(&stats.state);
-        let _ = catch_unwind(AssertUnwindSafe(|| {
-            let _guard = state.lock().unwrap();
-            panic!("poison omission stats");
-        }));
-
+    fn omission_count_overflow_fails_without_replacing_the_first_sample() {
+        let first = OversizedSentenceOmissionSummary {
+            count: u64::MAX,
+            first_source_name: "first.md".into(),
+            first_ordinal: 7,
+            first_actual: 9,
+            limit: 4,
+        };
+        let mut stats = DirectSourceStats {
+            oversized_sentence_omissions: Some(first.clone()),
+            ..Default::default()
+        };
+        let location = SentenceLocation {
+            corpus_sentence_ordinal: 8,
+            document_id: lingrep_core::corpus::DocumentId::new(1),
+            document_ordinal: 1,
+            document_sentence_ordinal: 0,
+            source_name: "later.md".into(),
+            source_metadata: None,
+            lookaround_divisions: None,
+        };
         assert!(matches!(
-            stats.oversized_sentence_omissions(),
+            stats.record_oversized_sentence(&location, 11, 4),
             Err(ExecutionError::ResourceAccounting)
         ));
+        assert_eq!(stats.oversized_sentence_omissions(), Some(first));
     }
 }

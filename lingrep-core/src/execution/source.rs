@@ -2,7 +2,7 @@
 
 use std::convert::Infallible;
 use std::fmt;
-use std::sync::{Arc, Mutex};
+use std::sync::Arc;
 
 use crate::analysis::{InputUnitId, NormalizationPolicy, TextUnit};
 use crate::corpus::{DivisionId, DocumentId, SentenceId};
@@ -40,14 +40,14 @@ pub struct SentenceLocation {
 
 /// How a sentence source treats a sentence whose tokenized residency
 /// estimate exceeds `ExecutionLimits::max_tokenized_bytes`.
-#[derive(Debug, Default)]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub enum TokenizedAdmission {
     /// Fail the run on the first oversized sentence.
     #[default]
     Fail,
-    /// Skip oversized sentences and record omissions in the shared handle; read the final
-    /// counts after execution completes.
-    Omit(Arc<Mutex<OversizedSentenceOmissions>>),
+    /// Skip oversized sentences and record omissions on the source; read the
+    /// final summary directly from the source after execution completes.
+    Omit,
 }
 
 /// Omissions recorded by a source running under [`TokenizedAdmission::Omit`].
@@ -358,6 +358,19 @@ pub trait SentenceBatchSource {
 }
 
 impl<S: SentenceBatchSource + ?Sized> SentenceBatchSource for Box<S> {
+    fn next_batch(
+        &mut self,
+        limits: &ExecutionLimits,
+    ) -> Result<Option<ExecutionBatch>, ExecutionError> {
+        (**self).next_batch(limits)
+    }
+
+    fn wants_lookahead(&self) -> bool {
+        (**self).wants_lookahead()
+    }
+}
+
+impl<S: SentenceBatchSource + ?Sized> SentenceBatchSource for &mut S {
     fn next_batch(
         &mut self,
         limits: &ExecutionLimits,

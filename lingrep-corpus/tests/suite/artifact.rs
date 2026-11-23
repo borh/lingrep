@@ -2518,14 +2518,14 @@ async fn prepared_admission_checks_declared_index_and_leaves_unvisited_tokens_fo
     let mut source = artifact
         .filtered_sentence_source(bound.projection(), bound.sentence_filter().unwrap())
         .unwrap();
-    let stats = source.filter_stats();
     assert!(
         source
             .next_batch(&ExecutionLimits::default())
             .unwrap()
             .is_none()
     );
-    assert_eq!(stats.sentences_proven_absent(), 2);
+    assert_eq!(source.sentences_proven_absent(), 2);
+    assert_eq!(source.admitted_documents(), 2);
     drop(source);
     drop(artifact);
 
@@ -2577,7 +2577,7 @@ async fn prepared_admission_checks_declared_index_and_leaves_unvisited_tokens_fo
         .filtered_sentence_source(bound.projection(), bound.sentence_filter().unwrap())
         .unwrap();
     assert!(source.next_batch(&ExecutionLimits::default()).is_err());
-    assert_eq!(source.filter_stats().sentences_proven_absent(), 0);
+    assert_eq!(source.sentences_proven_absent(), 0);
 }
 
 #[tokio::test]
