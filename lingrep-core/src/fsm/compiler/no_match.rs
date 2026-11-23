@@ -340,6 +340,10 @@ struct Failure {
     satisfied: usize,
 }
 
+/// A consumed token's index, the source spans that reached it, and the
+/// attribute tests of its token element.
+type Consumed<'p> = (usize, Vec<SourceSpan>, &'p [SymbolicAttrValue]);
+
 struct Run<'t, S: ?Sized> {
     tokens: &'t S,
     /// End positions by node address, start position, and whether failures
@@ -546,22 +550,22 @@ impl<S: TokenSequence + ?Sized> Run<'_, S> {
     /// Records, for one derivation of `node` over `start..end`, each consumed
     /// token with the source spans of its element and of the references that
     /// enclose the element, innermost first. False when there is none.
-    fn derive(
+    fn derive<'p>(
         &mut self,
-        node: &Rc<Node<'_>>,
+        node: &Rc<Node<'p>>,
         start: usize,
         end: usize,
         enclosing: &mut Vec<SourceSpan>,
-        consumed: &mut Vec<(usize, Vec<SourceSpan>)>,
+        consumed: &mut Vec<Consumed<'p>>,
     ) -> bool {
         if !self.ends(node, start).contains(&end) {
             return false;
         }
         match node.as_ref() {
-            Node::Token { span, .. } => {
+            Node::Token { predicate, span } => {
                 let mut spans = vec![*span];
                 spans.extend(enclosing.iter().rev().copied());
-                consumed.push((start, spans));
+                consumed.push((start, spans, predicate));
                 true
             }
             Node::SentenceStart | Node::SentenceEnd | Node::Lookaround { .. } => true,
@@ -586,13 +590,13 @@ impl<S: TokenSequence + ?Sized> Run<'_, S> {
         }
     }
 
-    fn derive_sequence(
+    fn derive_sequence<'p>(
         &mut self,
-        nodes: &[Rc<Node<'_>>],
+        nodes: &[Rc<Node<'p>>],
         start: usize,
         end: usize,
         enclosing: &mut Vec<SourceSpan>,
-        consumed: &mut Vec<(usize, Vec<SourceSpan>)>,
+        consumed: &mut Vec<Consumed<'p>>,
     ) -> bool {
         let Some((first, rest)) = nodes.split_first() else {
             return start == end;
@@ -611,15 +615,15 @@ impl<S: TokenSequence + ?Sized> Run<'_, S> {
     }
 
     #[allow(clippy::too_many_arguments)]
-    fn derive_repeat(
+    fn derive_repeat<'p>(
         &mut self,
-        node: &Rc<Node<'_>>,
+        node: &Rc<Node<'p>>,
         (min, max): (usize, Option<usize>),
         count: usize,
         start: usize,
         end: usize,
         enclosing: &mut Vec<SourceSpan>,
-        consumed: &mut Vec<(usize, Vec<SourceSpan>)>,
+        consumed: &mut Vec<Consumed<'p>>,
     ) -> bool {
         if start == end && count >= min {
             return true;
@@ -919,6 +923,9 @@ pub struct ConsumedToken {
     /// The token element, then each reference the element was reached
     /// through, innermost first.
     pub elements: Vec<ElementLocation>,
+    /// The token element's attribute tests against this token, in source
+    /// order. Each one held.
+    pub tests: Vec<AttributeTestOutcome>,
 }
 
 impl super::CompileOutput {
@@ -965,11 +972,15 @@ impl super::CompileOutput {
         (derived && !run.truncated).then(|| {
             consumed
                 .into_iter()
-                .map(|(token, spans)| ConsumedToken {
+                .map(|(token, spans, predicate)| ConsumedToken {
                     token,
                     elements: spans
                         .into_iter()
                         .map(|span| explainer.location(span))
+                        .collect(),
+                    tests: predicate
+                        .iter()
+                        .map(|test| attribute_test(tokens, token, test))
                         .collect(),
                 })
                 .collect()
