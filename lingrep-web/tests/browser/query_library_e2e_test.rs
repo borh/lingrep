@@ -30,6 +30,7 @@ const PAGE: &str = r##"<!doctype html>
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width,initial-scale=1">
+  <link rel="stylesheet" href="/assets/questions/site.css">
   <link rel="stylesheet" href="/assets/app.css">
   <link rel="stylesheet" href="/assets/editor/pattern-editor.css">
   <script src="/assets/vendor/htmx.min.js"></script>
@@ -92,6 +93,15 @@ async fn fixture(counter: Arc<AtomicUsize>) -> String {
                 }
             }),
         )
+        .route(
+            "/assets/questions/site.css",
+            get(|| async {
+                (
+                    [(axum::http::header::CONTENT_TYPE, "text/css")],
+                    include_str!("../../question-ui/site.css"),
+                )
+            }),
+        )
         .nest("/assets", handlers::results_assets::routes())
         .nest("/assets/editor", handlers::editor_assets::routes())
         .nest("/api/pattern", handlers::pattern_editor::routes())
@@ -116,6 +126,7 @@ const CATALOG_PAGE_TEMPLATE: &str = r##"<!doctype html>
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width,initial-scale=1">
+  <link rel="stylesheet" href="/assets/questions/site.css">
   <link rel="stylesheet" href="/assets/app.css">
   <link rel="stylesheet" href="/assets/editor/pattern-editor.css">
   <script src="/assets/vendor/htmx.min.js"></script>
@@ -194,6 +205,15 @@ async fn fixture_with_catalogs(root: &std::path::Path) -> String {
             get(move || {
                 let page = page.clone();
                 async move { Html(page) }
+            }),
+        )
+        .route(
+            "/assets/questions/site.css",
+            get(|| async {
+                (
+                    [(axum::http::header::CONTENT_TYPE, "text/css")],
+                    include_str!("../../question-ui/site.css"),
+                )
             }),
         )
         .nest("/assets", handlers::results_assets::routes())

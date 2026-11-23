@@ -1,30 +1,6 @@
-{% if current_page == "frequencies" || current_page == "compare" %}
-<header class="site">
+<header class="site{% if current_page != "frequencies" && current_page != "compare" %} site-wide{% endif %}">
     {{ crate::question_assets::site_routes(current_page, frequency_view.clone())|safe }}
-    <button type="button" class="locale-toggle" data-locale-toggle aria-label="Switch language">日本語</button>
-</header>
-{% else %}
-<nav class="site-nav">
-    <a href="./" class="site-nav-brand">lingrep</a>
-    <span class="site-nav-sep">|</span>
-    <a href="./" class="site-nav-link"><span data-i18n="nav.question">Question</span></a>
-    <span class="site-nav-sep">|</span>
-    <a href="workbench" class="site-nav-link"{% if current_page == "corpus" %} aria-current="page"{% endif %}><span data-i18n="nav.workbench">Analysis tools</span></a>
-    {% if frequency_view %}
-    <span class="site-nav-sep">|</span>
-    <a href="frequencies" class="site-nav-link"{% if current_page == "frequencies" %} aria-current="page"{% endif %}><span data-i18n="nav.frequencies">Frequencies</span></a>
-    <span class="site-nav-sep">|</span>
-    <a href="compare" class="site-nav-link"{% if current_page == "compare" %} aria-current="page"{% endif %}><span data-i18n="nav.compare">Compare</span></a>
-    {% endif %}
-    {% if crate::patterns::has_word_vectors() %}
-    <span class="site-nav-sep">|</span>
-    <a href="neighbors" class="site-nav-link"{% if current_page == "neighbors" %} aria-current="page"{% endif %}><span data-i18n="nav.neighbors">Similar Words</span></a>
-    {% endif %}
-    <span class="site-nav-sep">|</span>
-    {% if current_page == "sample" %}<a href="sample" class="site-nav-link" aria-current="page"><span data-i18n="nav.sample">Sample debugger</span></a>{% else %}<a href="sample" target="_blank" rel="noopener" title="Open Sample debugger in a new tab" data-i18n-title="nav.sample_new_tab" class="site-nav-link"><span data-i18n="nav.sample">Sample debugger</span></a>{% endif %}
-    <span class="site-nav-sep">|</span>
-    <a href="help" target="_blank" rel="noopener" data-site-help-open aria-haspopup="dialog" aria-controls="site-help" class="site-nav-link"{% if current_page == "help" %} aria-current="page"{% endif %}><span data-i18n="nav.help">Help</span></a>
-    <span class="site-nav-spacer"></span>
+    <span class="site-tools">
     {% if current_page == "corpus" %}
     <button type="button" class="editor-help-open" data-editor-help-open
             aria-haspopup="dialog" title="Syntax and shortcuts" data-i18n-title="editor.help_summary">
@@ -32,6 +8,7 @@
         <span class="visually-hidden" data-i18n="editor.help_summary">Syntax and shortcuts</span>
     </button>
     {% endif %}
+    <button type="button" class="theme-toggle" data-theme-toggle aria-label="Switch to dark theme"><svg width="16" height="16" viewBox="0 0 16 16" aria-hidden="true" focusable="false"><circle cx="8" cy="8" r="6.25" fill="none" stroke="currentColor" stroke-width="1.5"/><path d="M8 1.75a6.25 6.25 0 0 1 0 12.5z" fill="currentColor"/></svg></button>
     <button type="button" class="locale-toggle" data-locale-toggle aria-label="Switch language">日本語</button>
-</nav>
-{% endif %}
+    </span>
+</header>

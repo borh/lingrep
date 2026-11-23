@@ -41,6 +41,8 @@ NAMESPACED = re.compile(
 # landing notice, a refusal banner) is emitted through `data-i18n="{{ … }}"`,
 # which no template scan can see.
 RUST = [
+    # The header links, the same on every page.
+    WEB / "src" / "question_assets.rs",
     WEB / "src" / "revision_status.rs",
     WEB / "src" / "corpus_context.rs",
     WEB / "src" / "handlers" / "index.rs",

@@ -5,6 +5,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>{% block title %}lingrep-web{% endblock %}</title>
     <link rel="icon" href="data:,">
+    <script src="assets/questions/theme.js"></script>
     <script defer src="assets/vendor/htmx.min.js"></script>
     <script defer src="assets/vendor/htmx-ext-sse.min.js"></script>
     {# A module, not a `defer` classic script: app.js exports `shouldRunOnReady`
@@ -15,6 +16,7 @@
     <script type="module" src="assets/results-explorer.js"></script>
     <script type="module" src="assets/i18n.js"></script>
     {% block head %}{% endblock %}
+    <link rel="stylesheet" href="assets/questions/site.css">
     <link rel="stylesheet" href="assets/app.css">
 </head>
 <body hx-ext="sse">

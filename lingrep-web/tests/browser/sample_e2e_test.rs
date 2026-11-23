@@ -341,6 +341,56 @@ async fn a_sample_sentence_becomes_an_example_and_a_counterexample_that_are_chec
 }
 
 #[tokio::test]
+async fn the_theme_switch_overrides_the_system_theme_and_is_kept_across_pages()
+-> WebDriverResult<()> {
+    let Some(driver) = driver().await? else {
+        return Ok(());
+    };
+    let served = serve().await;
+    let theme = "return [document.documentElement.dataset.theme ?? null, \
+                 getComputedStyle(document.documentElement).colorScheme, \
+                 getComputedStyle(document.body).backgroundColor, \
+                 document.querySelector('[data-theme-toggle]').getAttribute('aria-label')]";
+    let result: WebDriverResult<()> = async {
+        driver.goto(&served.base).await?;
+        wait_for(&driver, RESULTS, "the sample page").await?;
+        observed(
+            &driver,
+            theme,
+            json!([
+                null,
+                "light dark",
+                "rgb(253, 252, 249)",
+                "Switch to dark theme"
+            ]),
+            "the system theme before any choice",
+        )
+        .await?;
+        driver
+            .execute(
+                "document.querySelector('[data-theme-toggle]').click()",
+                vec![],
+            )
+            .await?;
+        let dark = json!(["dark", "dark", "rgb(21, 23, 27)", "Switch to light theme"]);
+        observed(&driver, theme, dark.clone(), "the chosen theme").await?;
+        // The question page is a separate document with its own scripts.
+        driver.goto(served.base.trim_end_matches("sample")).await?;
+        wait_for(
+            &driver,
+            "return !!document.querySelector('header.site [data-theme-toggle]')",
+            "the question page's header",
+        )
+        .await?;
+        observed(&driver, theme, dark, "the same choice on the question page").await
+    }
+    .await;
+    driver.quit().await?;
+    served.server.abort();
+    result
+}
+
+#[tokio::test]
 async fn a_pattern_error_marks_the_previous_results_until_the_pattern_compiles_again()
 -> WebDriverResult<()> {
     let Some(driver) = driver().await? else {

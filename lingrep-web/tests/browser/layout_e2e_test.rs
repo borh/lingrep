@@ -210,7 +210,7 @@ async fn search_scope_reruns_matching_and_keeps_comparison_selection_local() -> 
     );
     let original_window = driver.window().await?;
     driver
-        .find(By::Css(".site-nav a[href='sample']"))
+        .find(By::Css(".site a[href='sample']"))
         .await?
         .click()
         .await?;
@@ -1520,7 +1520,10 @@ async fn fixture_server_with(format_mode: FormatMode) -> FixtureServer {
             get(|| async {
                 (
                     [(header::CONTENT_TYPE, "text/css; charset=utf-8")],
-                    include_str!("../../assets/app.css"),
+                    concat!(
+                        include_str!("../../question-ui/site.css"),
+                        include_str!("../../assets/app.css")
+                    ),
                 )
             }),
         )
@@ -4322,12 +4325,7 @@ async fn header_help_preserves_navigation_and_dialog_access_at_narrow_widths() -
     driver
         .goto(format!("{}/header-help", fixture.address))
         .await?;
-    assert!(
-        driver
-            .find(By::Css(".site-nav a[href='help']"))
-            .await
-            .is_ok()
-    );
+    assert!(driver.find(By::Css(".site a[href='help']")).await.is_ok());
     for locale in ["en", "ja"] {
         let current: Option<String> = driver
             .execute(
@@ -4352,7 +4350,7 @@ async fn header_help_preserves_navigation_and_dialog_access_at_narrow_widths() -
         for width in [320, 768, 1440] {
             crate::resize(&driver, width, 900).await?;
             let clipped: Vec<String> = driver.execute(
-                "return [...document.querySelectorAll('.site-nav a, .site-nav button')].filter(el => {const r = el.getBoundingClientRect(); return r.left < 0 || r.right > innerWidth + 1;}).map(el => el.textContent || el.getAttribute('aria-label'));",
+                "return [...document.querySelectorAll('.site a, .site button')].filter(el => {const r = el.getBoundingClientRect(); return r.left < 0 || r.right > innerWidth + 1;}).map(el => el.textContent || el.getAttribute('aria-label'));",
                 vec![],
             ).await?.convert()?;
             assert!(
@@ -4409,7 +4407,7 @@ async fn header_help_preserves_navigation_and_dialog_access_at_narrow_widths() -
                     .await?
             );
             let opener = driver
-                .find(By::Css(".site-nav [data-editor-help-open]"))
+                .find(By::Css(".site [data-editor-help-open]"))
                 .await?;
             let compact: bool = driver.execute("return document.querySelector('[data-editor-help-open]').getBoundingClientRect().width <= 40;", vec![]).await?.convert()?;
             assert!(compact);

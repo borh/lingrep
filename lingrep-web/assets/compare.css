@@ -1,14 +1,7 @@
 .cmp {
-  --cmp-where: #2a6fb8;
-  --cmp-versus: #c25a1c;
+  --cmp-where: light-dark(#2a6fb8, #4a8fd8);
+  --cmp-versus: light-dark(#c25a1c, #d4702f);
 }
-@media (prefers-color-scheme: dark) {
-  .cmp {
-    --cmp-where: #4a8fd8;
-    --cmp-versus: #d4702f;
-  }
-}
-
 html { scrollbar-gutter: stable; }
 
 .cmp-swatch {
