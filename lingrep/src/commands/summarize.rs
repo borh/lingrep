@@ -221,6 +221,338 @@ fn publish_summary_rows_and_complete(
     Ok(emitted)
 }
 
+enum SummarizeMode<'a> {
+    Corpus,
+    ByDocument {
+        metadata_projection: Option<lingrep_core::corpus::SourceMetadataProjection>,
+    },
+    BySection,
+    ByMetadata {
+        key: &'a str,
+    },
+    WriteTable {
+        path: &'a std::path::Path,
+    },
+}
+
+impl<'a> SummarizeMode<'a> {
+    fn parse(
+        args: &'a SummarizeArgs,
+        output: OutputMode,
+        sample: Option<lingrep_core::execution::CorpusSample>,
+    ) -> Result<Self, CliError> {
+        if args.grouping_coverage && output != OutputMode::Jsonl {
+            return Err(CliError::InvalidArgs(
+                "--grouping-coverage requires --json".to_owned(),
+            ));
+        }
+        if args.by_document && output != OutputMode::Jsonl {
+            return Err(CliError::InvalidArgs(
+                "--by-document requires --json".to_owned(),
+            ));
+        }
+        if args.by_section && output != OutputMode::Jsonl {
+            return Err(CliError::InvalidArgs(
+                "--by-section requires --json".to_owned(),
+            ));
+        }
+        if args.by_metadata.is_some() && output != OutputMode::Jsonl {
+            return Err(CliError::InvalidArgs(
+                "--by-metadata requires --json".to_owned(),
+            ));
+        }
+        if let Some(key) = args
+            .by_metadata
+            .as_ref()
+            .filter(|key| key.strip_prefix("@document.").is_none_or(str::is_empty))
+        {
+            return Err(CliError::InvalidArgs(format!(
+                "summarize --by-metadata accepts only @document.KEY, not {key}"
+            )));
+        }
+        if args.write_table.is_some() && (args.selection.clause.is_some() || sample.is_some()) {
+            return Err(CliError::InvalidArgs(
+                "--write-table counts the whole corpus; it does not accept --where or --sample"
+                    .to_owned(),
+            ));
+        }
+        if let Some(key) = args
+            .source_metadata
+            .iter()
+            .find(|key| !key.starts_with("@document."))
+        {
+            return Err(CliError::InvalidArgs(format!(
+                "summarize --source-metadata accepts only @document.KEY, not {key}"
+            )));
+        }
+        let metadata_projection = if args.source_metadata.is_empty() {
+            None
+        } else {
+            Some(
+                lingrep_core::corpus::SourceMetadataProjection::new(args.source_metadata.clone())
+                    .map_err(|error| CliError::InvalidArgs(error.to_string()))?,
+            )
+        };
+        if let Some(path) = args.write_table.as_deref() {
+            if args.input.corpus.is_none() && !args.cache.cache {
+                return Err(CliError::InvalidArgs(
+                    "--write-table requires a prepared corpus: pass --corpus or --cache".to_owned(),
+                ));
+            }
+            lingrep_corpus::CountTableWriter::check_destination(path)
+                .map_err(|error| CliError::from(error).at_path(path))?;
+            return Ok(Self::WriteTable { path });
+        }
+        if args.by_document {
+            Ok(Self::ByDocument {
+                metadata_projection,
+            })
+        } else if args.by_section {
+            Ok(Self::BySection)
+        } else if let Some(key) = args.by_metadata.as_deref() {
+            Ok(Self::ByMetadata { key })
+        } else {
+            Ok(Self::Corpus)
+        }
+    }
+
+    fn require_prepared_corpus(
+        &self,
+        selected_corpus: Option<&std::path::Path>,
+    ) -> Result<(), CliError> {
+        if selected_corpus.is_some() {
+            return Ok(());
+        }
+        let flag = match self {
+            Self::BySection => "--by-section",
+            Self::WriteTable { .. } => "--write-table",
+            Self::ByMetadata { .. } => "--by-metadata",
+            Self::Corpus | Self::ByDocument { .. } => return Ok(()),
+        };
+        Err(CliError::InvalidArgs(format!(
+            "{flag} requires a prepared corpus: pass --corpus or --cache"
+        )))
+    }
+
+    fn metadata_projection(&self) -> Option<&lingrep_core::corpus::SourceMetadataProjection> {
+        match self {
+            Self::ByDocument {
+                metadata_projection,
+            } => metadata_projection.as_ref(),
+            Self::Corpus | Self::BySection | Self::ByMetadata { .. } | Self::WriteTable { .. } => {
+                None
+            }
+        }
+    }
+
+    fn allows_selective(&self) -> bool {
+        matches!(self, Self::Corpus)
+    }
+
+    fn needs_provenance(&self) -> bool {
+        matches!(self, Self::BySection | Self::ByMetadata { .. })
+    }
+
+    fn is_by_document(&self) -> bool {
+        matches!(self, Self::ByDocument { .. })
+    }
+
+    fn writes_table(&self) -> bool {
+        matches!(self, Self::WriteTable { .. })
+    }
+
+    fn extra_tally_count(&self) -> usize {
+        usize::from(matches!(self, Self::BySection | Self::ByMetadata { .. }))
+    }
+}
+
+enum PreparedSummarizeMode<'a> {
+    Corpus,
+    ByDocument,
+    BySection(Vec<(String, RoaringTreemap)>),
+    ByMetadata {
+        key: &'a str,
+        documents: Vec<(u64, std::ops::Range<u64>, Vec<String>)>,
+    },
+    WriteTable {
+        path: &'a std::path::Path,
+    },
+}
+
+impl<'a> PreparedSummarizeMode<'a> {
+    fn prepare(
+        mode: &SummarizeMode<'a>,
+        provenance: Option<&lingrep_corpus::BlockingProvenance>,
+    ) -> Result<Self, CliError> {
+        match mode {
+            SummarizeMode::Corpus => Ok(Self::Corpus),
+            SummarizeMode::ByDocument { .. } => Ok(Self::ByDocument),
+            SummarizeMode::BySection => {
+                let reader = provenance
+                    .expect("a prepared query opens provenance for --by-section and --by-metadata");
+                Ok(Self::BySection(section_labels(reader)?))
+            }
+            SummarizeMode::ByMetadata { key } => {
+                let reader = provenance
+                    .expect("a prepared query opens provenance for --by-section and --by-metadata");
+                Ok(Self::ByMetadata {
+                    key,
+                    documents: document_values(reader, key)?,
+                })
+            }
+            SummarizeMode::WriteTable { path } => Ok(Self::WriteTable { path }),
+        }
+    }
+}
+
+enum SpanGrouping<'a> {
+    Policy,
+    BySpan { kind: &'a str, observed: bool },
+}
+
+impl<'a> SpanGrouping<'a> {
+    fn new(kind: Option<&'a str>) -> Self {
+        match kind {
+            Some(kind) => Self::BySpan {
+                kind,
+                observed: false,
+            },
+            None => Self::Policy,
+        }
+    }
+
+    fn kind(&self) -> Option<&'a str> {
+        match self {
+            Self::Policy => None,
+            Self::BySpan { kind, .. } => Some(kind),
+        }
+    }
+
+    fn observe(&mut self, sentence: &dyn lingrep_core::token_match::TokenSequence) {
+        if let Self::BySpan { kind, observed } = self
+            && !*observed
+        {
+            *observed = sentence.spans().iter().any(|span| span.kind == *kind);
+        }
+    }
+
+    fn notice_state(&self) -> Option<(&'a str, bool)> {
+        match self {
+            Self::Policy => None,
+            Self::BySpan { kind, observed } => Some((kind, *observed)),
+        }
+    }
+}
+
+enum SummaryAccumulator<'a> {
+    Windows(WindowTally),
+    Corpus(SummaryAggregator),
+    ByDocument {
+        aggregation: SummaryAggregator,
+        documents: BTreeMap<u64, DocumentTally>,
+    },
+    BySection {
+        aggregation: SummaryAggregator,
+        sections: SectionTally,
+    },
+    ByMetadata {
+        aggregation: SummaryAggregator,
+        metadata_values: MetadataValueTally,
+    },
+    WriteTable {
+        path: &'a std::path::Path,
+        aggregation: SummaryAggregator,
+        documents: BTreeMap<u64, DocumentTally>,
+    },
+}
+
+impl SummaryAccumulator<'_> {
+    fn temp_budget(&self) -> Option<Arc<lingrep_core::spill::TempBudget>> {
+        match self {
+            Self::Windows(_) => None,
+            Self::Corpus(aggregation)
+            | Self::ByDocument { aggregation, .. }
+            | Self::BySection { aggregation, .. }
+            | Self::ByMetadata { aggregation, .. }
+            | Self::WriteTable { aggregation, .. } => Some(aggregation.temp_budget()),
+        }
+    }
+
+    fn is_windows(&self) -> bool {
+        matches!(self, Self::Windows(_))
+    }
+
+    fn observes_slots(&self) -> bool {
+        matches!(self, Self::BySection { .. } | Self::ByMetadata { .. })
+    }
+
+    fn partition(
+        &self,
+        pattern_ordinal: u64,
+        location: &lingrep_core::execution::SentenceLocation,
+    ) -> SummaryPartition {
+        match self {
+            Self::ByDocument { .. } => {
+                SummaryPartition::document(pattern_ordinal, location.document_ordinal)
+            }
+            Self::WriteTable { .. } => SummaryPartition::sentence(
+                pattern_ordinal,
+                location.document_ordinal,
+                location.corpus_sentence_ordinal,
+            ),
+            Self::Windows(_)
+            | Self::Corpus(_)
+            | Self::BySection { .. }
+            | Self::ByMetadata { .. } => SummaryPartition::pattern(pattern_ordinal),
+        }
+    }
+
+    fn documents_mut(&mut self) -> Option<&mut BTreeMap<u64, DocumentTally>> {
+        match self {
+            Self::ByDocument { documents, .. } | Self::WriteTable { documents, .. } => {
+                Some(documents)
+            }
+            Self::Windows(_)
+            | Self::Corpus(_)
+            | Self::BySection { .. }
+            | Self::ByMetadata { .. } => None,
+        }
+    }
+
+    fn aggregator_mut(&mut self) -> Result<&mut SummaryAggregator, ExecutionError> {
+        match self {
+            Self::Windows(_) => Err(ExecutionError::Sink(
+                "summary counts token windows, not matches".into(),
+            )),
+            Self::Corpus(aggregation)
+            | Self::ByDocument { aggregation, .. }
+            | Self::BySection { aggregation, .. }
+            | Self::ByMetadata { aggregation, .. }
+            | Self::WriteTable { aggregation, .. } => Ok(aggregation),
+        }
+    }
+}
+
+enum RowExtras<'b> {
+    None,
+    Documents(BTreeMap<u64, DocumentTally>),
+    Sections(Box<crate::summary::SectionRecords<'b>>),
+    MetadataValues(Box<crate::summary::MetadataValueRecords<'b>>),
+}
+
+enum FinalizedSummarizeOutput<'a, 'b> {
+    Windows(crate::window_summary::FinalizedWindows),
+    Rows {
+        finalized: crate::summary::FinalizedSummary,
+        extras: RowExtras<'b>,
+    },
+    Table {
+        path: &'a std::path::Path,
+        staged: lingrep_corpus::StagedCountTable,
+        peak_temp_bytes: u64,
+    },
+}
+
 pub fn run(
     args: &SummarizeArgs,
     config: &ExecutionCliConfig,
@@ -309,68 +641,7 @@ pub fn run(
         QueryMode::Summarize,
     )?;
 
-    if args.grouping_coverage && output != OutputMode::Jsonl {
-        return Err(CliError::InvalidArgs(
-            "--grouping-coverage requires --json".to_owned(),
-        ));
-    }
-    if args.by_document && output != OutputMode::Jsonl {
-        return Err(CliError::InvalidArgs(
-            "--by-document requires --json".to_owned(),
-        ));
-    }
-    if args.by_section && output != OutputMode::Jsonl {
-        return Err(CliError::InvalidArgs(
-            "--by-section requires --json".to_owned(),
-        ));
-    }
-    if args.by_metadata.is_some() && output != OutputMode::Jsonl {
-        return Err(CliError::InvalidArgs(
-            "--by-metadata requires --json".to_owned(),
-        ));
-    }
-    if let Some(key) = args
-        .by_metadata
-        .as_ref()
-        .filter(|key| key.strip_prefix("@document.").is_none_or(str::is_empty))
-    {
-        return Err(CliError::InvalidArgs(format!(
-            "summarize --by-metadata accepts only @document.KEY, not {key}"
-        )));
-    }
-    if args.write_table.is_some() && (args.selection.clause.is_some() || sample.is_some()) {
-        return Err(CliError::InvalidArgs(
-            "--write-table counts the whole corpus; it does not accept --where or --sample"
-                .to_owned(),
-        ));
-    }
-    if let Some(key) = args
-        .source_metadata
-        .iter()
-        .find(|key| !key.starts_with("@document."))
-    {
-        return Err(CliError::InvalidArgs(format!(
-            "summarize --source-metadata accepts only @document.KEY, not {key}"
-        )));
-    }
-    let metadata_projection = if args.source_metadata.is_empty() {
-        None
-    } else {
-        Some(
-            lingrep_core::corpus::SourceMetadataProjection::new(args.source_metadata.clone())
-                .map_err(|error| CliError::InvalidArgs(error.to_string()))?,
-        )
-    };
-
-    if let Some(path) = &args.write_table {
-        if args.input.corpus.is_none() && !args.cache.cache {
-            return Err(CliError::InvalidArgs(
-                "--write-table requires a prepared corpus: pass --corpus or --cache".to_owned(),
-            ));
-        }
-        lingrep_corpus::CountTableWriter::check_destination(path)
-            .map_err(|error| CliError::from(error).at_path(path))?;
-    }
+    let mode = SummarizeMode::parse(args, output, sample)?;
 
     // Before query execution: direct execution is the default; `--cache`
     // observes ROOT, then reuses or creates a compatible artifact beside it.
@@ -383,21 +654,7 @@ pub fn run(
         output,
     )?;
     let selected_corpus = resolved_corpus.corpus.as_deref();
-    if args.by_section && selected_corpus.is_none() {
-        return Err(CliError::InvalidArgs(
-            "--by-section requires a prepared corpus: pass --corpus or --cache".to_owned(),
-        ));
-    }
-    if args.write_table.is_some() && selected_corpus.is_none() {
-        return Err(CliError::InvalidArgs(
-            "--write-table requires a prepared corpus: pass --corpus or --cache".to_owned(),
-        ));
-    }
-    if args.by_metadata.is_some() && selected_corpus.is_none() {
-        return Err(CliError::InvalidArgs(
-            "--by-metadata requires a prepared corpus: pass --corpus or --cache".to_owned(),
-        ));
-    }
+    mode.require_prepared_corpus(selected_corpus)?;
     let single_tokens: BTreeSet<_> = compiled
         .analysis
         .single_token_definitions()
@@ -423,37 +680,18 @@ pub fn run(
             scope_clause: scope_clause.as_ref(),
             mode: QueryMode::Summarize,
             char_offsets: needs_surface_offsets,
-            metadata_projection: metadata_projection.clone(),
+            metadata_projection: mode.metadata_projection().cloned(),
             block_sample: sample.filter(|_| args.sample.blocks),
             // A sentence the posting index skips still counts toward its
             // document's admitted tokens.
-            allow_selective: sample.is_none()
-                && scope_clause.is_none()
-                && !args.by_document
-                && args.write_table.is_none()
-                && !args.by_section
-                && args.by_metadata.is_none(),
-            needs_provenance: args.by_section || args.by_metadata.is_some(),
+            allow_selective: sample.is_none() && scope_clause.is_none() && mode.allows_selective(),
+            needs_provenance: mode.needs_provenance(),
         },
         config,
         terminal,
     )?;
     let pool = Arc::clone(&session.pool);
-    let provenance = || {
-        session
-            .provenance
-            .as_deref()
-            .expect("a prepared query opens provenance for --by-section and --by-metadata")
-    };
-    let sections = args
-        .by_section
-        .then(|| section_labels(provenance()))
-        .transpose()?;
-    let metadata_values = args
-        .by_metadata
-        .as_ref()
-        .map(|key| Ok::<_, CliError>((key.clone(), document_values(provenance(), key)?)))
-        .transpose()?;
+    let prepared_mode = PreparedSummarizeMode::prepare(&mode, session.provenance.as_deref())?;
     let run_corpus = session.lifecycle.run_corpus();
     let run_inventory = session.lifecycle.run_inventory();
     let run_id = session.run_id.clone();
@@ -486,8 +724,8 @@ pub fn run(
         // `summarize` publishes counts, never token evidence, so the honest
         // declaration is that this run publishes no token attributes.
         published_attributes: Vec::new(),
-        published_source_metadata: metadata_projection
-            .as_ref()
+        published_source_metadata: mode
+            .metadata_projection()
             .map_or_else(Vec::new, |projection| projection.keys().to_vec()),
         sample: session
             .run
@@ -522,16 +760,11 @@ pub fn run(
             publish_run_and_definitions(&mut writer, &run, &descriptors)?;
         }
 
-        let tallies = usize::from(sections.is_some())
-            + usize::from(metadata_values.is_some())
-            + usize::from(args.grouping_coverage);
+        let tallies = mode.extra_tally_count() + usize::from(args.grouping_coverage);
         let window_plan = if args.by_span.is_some()
             || args.grouping_coverage
-            || args.by_document
-            || args.write_table.is_some()
             || args.trace_policy.is_some()
-            || sections.is_some()
-            || metadata_values.is_some()
+            || !matches!(prepared_mode, PreparedSummarizeMode::Corpus)
         {
             None
         } else if let Some(windows) = compiled.matcher.token_windows() {
@@ -543,59 +776,84 @@ pub fn run(
             SpillLayout::new(config.workers.clamp(1, 8)),
             tallies,
             window_plan.is_some(),
-            args.write_table.is_some(),
+            mode.writes_table(),
             config,
             &run_id,
         )?;
-        let aggregation =
-            SummaryAggregator::new(config.max_temp_bytes, layout).map_err(CliError::Aggregation)?;
-        let sections = sections
-            .map(|labels| SectionTally::new(labels, layout.merge_fan_in, aggregation.temp_budget()))
-            .transpose()
-            .map_err(CliError::Aggregation)?;
-        let metadata_values = metadata_values
-            .map(|(key, documents)| {
-                MetadataValueTally::new(
-                    key,
-                    documents
-                        .into_iter()
-                        .map(|(_, range, values)| (range, values)),
-                    layout.merge_fan_in,
-                    aggregation.temp_budget(),
-                )
-            })
-            .transpose()
-            .map_err(CliError::Aggregation)?;
+        let accumulator = match (prepared_mode, window_plan) {
+            (PreparedSummarizeMode::Corpus, Some(plan)) => SummaryAccumulator::Windows(plan.tally(
+                Arc::new(lingrep_core::spill::TempBudget::new(config.max_temp_bytes)),
+                layout.merge_fan_in,
+            )),
+            (prepared_mode, _) => {
+                let aggregation = SummaryAggregator::new(config.max_temp_bytes, layout)
+                    .map_err(CliError::Aggregation)?;
+                match prepared_mode {
+                    PreparedSummarizeMode::Corpus => SummaryAccumulator::Corpus(aggregation),
+                    PreparedSummarizeMode::ByDocument => SummaryAccumulator::ByDocument {
+                        aggregation,
+                        documents: BTreeMap::new(),
+                    },
+                    PreparedSummarizeMode::BySection(labels) => {
+                        let sections = SectionTally::new(
+                            labels,
+                            layout.merge_fan_in,
+                            aggregation.temp_budget(),
+                        )
+                        .map_err(CliError::Aggregation)?;
+                        SummaryAccumulator::BySection {
+                            aggregation,
+                            sections,
+                        }
+                    }
+                    PreparedSummarizeMode::ByMetadata { key, documents } => {
+                        let metadata_values = MetadataValueTally::new(
+                            key.to_owned(),
+                            documents
+                                .into_iter()
+                                .map(|(_, range, values)| (range, values)),
+                            layout.merge_fan_in,
+                            aggregation.temp_budget(),
+                        )
+                        .map_err(CliError::Aggregation)?;
+                        SummaryAccumulator::ByMetadata {
+                            aggregation,
+                            metadata_values,
+                        }
+                    }
+                    PreparedSummarizeMode::WriteTable { path } => SummaryAccumulator::WriteTable {
+                        path,
+                        aggregation,
+                        documents: BTreeMap::new(),
+                    },
+                }
+            }
+        };
         let grouping_coverage = args
             .grouping_coverage
             .then(|| {
+                let budget = accumulator
+                    .temp_budget()
+                    .expect("grouping coverage disables the window fast path");
                 GroupingTally::new(
                     pattern_projection.selected.iter().copied(),
-                    args.by_document,
+                    mode.is_by_document(),
                     layout.merge_fan_in,
-                    aggregation.temp_budget(),
+                    budget,
                 )
             })
             .transpose()
             .map_err(CliError::Aggregation)?;
-        let windows =
-            window_plan.map(|plan| plan.tally(aggregation.temp_budget(), layout.merge_fan_in));
         let mut sink = SummarySink {
-            span_kind: args.by_span.as_deref(),
-            span_kind_observed: false,
+            span_grouping: SpanGrouping::new(args.by_span.as_deref()),
             grouping_coverage,
-            windows,
-            aggregation: Some(aggregation),
+            accumulator,
             aggregation_error: None,
             pattern_ordinals: &pattern_ordinals,
             selected_patterns: (args.pattern_filter.is_some() || args.group_patterns_by.is_some())
                 .then_some(&pattern_projection.selected),
             policy: compiled.matcher.catalog_policy(),
             records_unkeyed: 0,
-            documents: (args.by_document || args.write_table.is_some()).then(BTreeMap::new),
-            sentences: args.write_table.is_some(),
-            sections,
-            metadata_values,
         };
         let presentation_progress = PresentationProgress::stderr(
             &config.stderr,
@@ -645,20 +903,15 @@ pub fn run(
             &compiled,
             config,
             false,
-            sink.span_kind.map(|kind| (kind, sink.span_kind_observed)),
+            sink.span_grouping.notice_state(),
             args.trace_policy.is_some(),
         )?;
-        let aggregation = sink
-            .aggregation
-            .take()
-            .expect("summary aggregation remains available after successful execution");
-        let grouping_coverage = sink.grouping_coverage.take();
-        let windows = sink.windows.take();
-        let mut records_unkeyed = sink.records_unkeyed;
-        let documents = sink.documents.take();
-        let sections = sink.sections.take();
-        let metadata_values = sink.metadata_values.take();
-        drop(sink);
+        let SummarySink {
+            grouping_coverage,
+            accumulator,
+            mut records_unkeyed,
+            ..
+        } = sink;
 
         let (complete_corpus, inventory) =
             completed.lifecycle.complete(FilesystemCompletion::Full)?;
@@ -675,75 +928,90 @@ pub fn run(
             .map(|coverage| coverage.take_partition(None, &pattern_names))
             .transpose()
             .map_err(CliError::Aggregation)?;
-        let mut finalized_windows = windows
-            .map(|windows| windows.finalize(&pool))
-            .transpose()
-            .map_err(CliError::Aggregation)?;
-        if let Some(windows) = &finalized_windows {
-            records_unkeyed = windows.records_unkeyed();
-        }
-        let (mut finalized, mut aggregation) = if args.write_table.is_some() {
-            (None, Some(aggregation))
-        } else if finalized_windows.is_some() {
-            (None, None)
-        } else {
-            (
-                Some(aggregation.finalize().map_err(CliError::Aggregation)?),
-                None,
-            )
-        };
         let published = pattern_projection
             .selected
             .iter()
             .copied()
             .collect::<Vec<_>>();
-        let mut sections = sections
-            .map(|sections| sections.into_records(&published, &pattern_names))
-            .transpose()
-            .map_err(CliError::Aggregation)?;
-        let mut metadata_values = metadata_values
-            .map(|values| values.into_records(&published, &pattern_names))
-            .transpose()
-            .map_err(CliError::Aggregation)?;
-        let mut temp_high_water = match (&finalized, &finalized_windows) {
-            (Some(finalized), _) => finalized.peak_temp_bytes(),
-            (None, Some(windows)) => windows.peak_temp_bytes(),
-            (None, None) => 0,
-        };
-
-        let mut documents = documents;
-        let mut staged_table = None;
-        if let (Some(path), Some(aggregation)) = (args.write_table.as_deref(), aggregation.take()) {
-            let crate::protocol::query::CompleteCorpus::Prepared {
-                analysis_identity, ..
-            } = &complete_corpus
-            else {
-                return Err(CliError::InvalidArgs(
-                    "--write-table requires a prepared corpus".to_owned(),
-                ));
-            };
-            let key = lingrep_corpus::CountTableKey {
-                analysis_identity: analysis_identity.clone(),
-                catalog_fingerprint: table_fingerprint,
-                matcher_revision: lingrep_core::fsm::MATCHER_SEMANTICS_IDENTITY.to_owned(),
-            };
-            match write_count_table(
-                path,
-                key,
-                aggregation,
-                documents.take().unwrap_or_default(),
-                &pattern_ordinals,
-                &pattern_names,
-                Arc::clone(&pool),
-                terminal.cancellation(),
-            ) {
-                Ok(staged) => staged_table = Some(staged),
-                Err(_) if terminal.cancellation().is_cancelled() => {
-                    return Ok(CommandOutcome::Cancelled);
-                }
-                Err(error) => return Err(error),
+        let finalized_output = match accumulator {
+            SummaryAccumulator::Windows(windows) => {
+                let finalized = windows.finalize(&pool).map_err(CliError::Aggregation)?;
+                records_unkeyed = finalized.records_unkeyed();
+                FinalizedSummarizeOutput::Windows(finalized)
             }
-        }
+            SummaryAccumulator::Corpus(aggregation) => FinalizedSummarizeOutput::Rows {
+                finalized: aggregation.finalize().map_err(CliError::Aggregation)?,
+                extras: RowExtras::None,
+            },
+            SummaryAccumulator::ByDocument {
+                aggregation,
+                documents,
+            } => FinalizedSummarizeOutput::Rows {
+                finalized: aggregation.finalize().map_err(CliError::Aggregation)?,
+                extras: RowExtras::Documents(documents),
+            },
+            SummaryAccumulator::BySection {
+                aggregation,
+                sections,
+            } => FinalizedSummarizeOutput::Rows {
+                finalized: aggregation.finalize().map_err(CliError::Aggregation)?,
+                extras: RowExtras::Sections(Box::new(
+                    sections
+                        .into_records(&published, &pattern_names)
+                        .map_err(CliError::Aggregation)?,
+                )),
+            },
+            SummaryAccumulator::ByMetadata {
+                aggregation,
+                metadata_values,
+            } => FinalizedSummarizeOutput::Rows {
+                finalized: aggregation.finalize().map_err(CliError::Aggregation)?,
+                extras: RowExtras::MetadataValues(Box::new(
+                    metadata_values
+                        .into_records(&published, &pattern_names)
+                        .map_err(CliError::Aggregation)?,
+                )),
+            },
+            SummaryAccumulator::WriteTable {
+                path,
+                aggregation,
+                documents,
+            } => {
+                let crate::protocol::query::CompleteCorpus::Prepared {
+                    analysis_identity, ..
+                } = &complete_corpus
+                else {
+                    return Err(CliError::InvalidArgs(
+                        "--write-table requires a prepared corpus".to_owned(),
+                    ));
+                };
+                let key = lingrep_corpus::CountTableKey {
+                    analysis_identity: analysis_identity.clone(),
+                    catalog_fingerprint: table_fingerprint,
+                    matcher_revision: lingrep_core::fsm::MATCHER_SEMANTICS_IDENTITY.to_owned(),
+                };
+                match write_count_table(
+                    path,
+                    key,
+                    aggregation,
+                    documents,
+                    &pattern_ordinals,
+                    &pattern_names,
+                    Arc::clone(&pool),
+                    terminal.cancellation(),
+                ) {
+                    Ok((staged, peak_temp_bytes)) => FinalizedSummarizeOutput::Table {
+                        path,
+                        staged,
+                        peak_temp_bytes,
+                    },
+                    Err(_) if terminal.cancellation().is_cancelled() => {
+                        return Ok(CommandOutcome::Cancelled);
+                    }
+                    Err(error) => return Err(error),
+                }
+            }
+        };
 
         if !terminal.try_claim_completion() {
             return Ok(CommandOutcome::Cancelled);
@@ -758,15 +1026,12 @@ pub fn run(
         {
             write_alias_warning(config, &run_id, inventory)?;
         }
-        let table_stats = match staged_table {
-            Some((staged, peak)) => {
-                temp_high_water = peak;
-                Some(staged.publish().map_err(|error| match &args.write_table {
-                    Some(path) => CliError::from(error).at_path(path),
-                    None => CliError::from(error),
-                })?)
-            }
-            None => None,
+        let temp_high_water = match &finalized_output {
+            FinalizedSummarizeOutput::Windows(windows) => windows.peak_temp_bytes(),
+            FinalizedSummarizeOutput::Rows { finalized, .. } => finalized.peak_temp_bytes(),
+            FinalizedSummarizeOutput::Table {
+                peak_temp_bytes, ..
+            } => *peak_temp_bytes,
         };
 
         // `summarize` publishes no per-match prefix, so it always runs to
@@ -792,126 +1057,163 @@ pub fn run(
             termination: Termination::Eof,
             scope: scope_report.clone(),
         };
-        for (ordinal, tally) in documents.into_iter().flatten() {
-            write_jsonl_buffered(
-                &mut writer,
-                &mut scratch,
-                &QueryEnvelope::new(QueryEvent::Document(DocumentData {
-                    grouping_coverage: grouping_coverage
-                        .as_mut()
-                        .map(|coverage| coverage.take_partition(Some(ordinal), &pattern_names))
-                        .transpose()
-                        .map_err(CliError::Aggregation)?,
-                    document: ordinal,
-                    source_name: tally.source_name.to_string(),
-                    sentences_admitted: tally.sentences,
-                    tokens_admitted: tally.tokens,
-                    source_metadata: tally.source_metadata,
-                })),
-            )
-            .map_err(execution_output_error)?;
-        }
-        if let Some(sections) = sections.as_mut() {
-            while let Some(mut section) = sections.next_record().map_err(CliError::Aggregation)? {
-                if args.pattern_filter.is_some() || args.group_patterns_by.is_some() {
-                    let mut groups = Vec::new();
-                    if args.group_patterns_by.is_some() {
-                        let by_name = section
-                            .patterns
-                            .iter()
-                            .map(|pattern| (pattern.pattern.as_str(), pattern))
-                            .collect::<BTreeMap<_, _>>();
-                        for row in &pattern_projection.rows {
-                            let names = row
-                                .members
-                                .iter()
-                                .map(|ordinal| pattern_names[*ordinal as usize])
-                                .collect::<BTreeSet<_>>();
-                            let members = names
-                                .iter()
-                                .filter_map(|name| by_name.get(name))
-                                .collect::<Vec<_>>();
-                            groups.push(crate::protocol::query::SectionPatternGroup {
-                                value: row.name.clone(),
-                                patterns: names.into_iter().map(str::to_owned).collect(),
-                                matches: members.iter().map(|pattern| pattern.matches).sum(),
-                                pattern_sentences: members
-                                    .iter()
-                                    .map(|pattern| pattern.sentences_matched)
-                                    .sum(),
-                            });
+        match finalized_output {
+            FinalizedSummarizeOutput::Windows(mut windows) => {
+                let mut event_writer = MachineSummaryEventWriter {
+                    writer: &mut writer,
+                    scratch: &mut scratch,
+                    output,
+                    pool: &pool,
+                };
+                publish_summary_rows_and_complete(
+                    &mut windows,
+                    top,
+                    &pattern_names,
+                    complete,
+                    &mut event_writer,
+                )?;
+            }
+            FinalizedSummarizeOutput::Rows {
+                mut finalized,
+                extras,
+            } => {
+                match extras {
+                    RowExtras::None => {}
+                    RowExtras::Documents(documents) => {
+                        for (ordinal, tally) in documents {
+                            write_jsonl_buffered(
+                                &mut writer,
+                                &mut scratch,
+                                &QueryEnvelope::new(QueryEvent::Document(DocumentData {
+                                    grouping_coverage: grouping_coverage
+                                        .as_mut()
+                                        .map(|coverage| {
+                                            coverage.take_partition(Some(ordinal), &pattern_names)
+                                        })
+                                        .transpose()
+                                        .map_err(CliError::Aggregation)?,
+                                    document: ordinal,
+                                    source_name: tally.source_name.to_string(),
+                                    sentences_admitted: tally.sentences,
+                                    tokens_admitted: tally.tokens,
+                                    source_metadata: tally.source_metadata,
+                                })),
+                            )
+                            .map_err(execution_output_error)?;
                         }
-                        groups.sort_by(|left, right| {
-                            right
-                                .pattern_sentences
-                                .cmp(&left.pattern_sentences)
-                                .then_with(|| left.value.cmp(&right.value))
-                        });
-                        section.patterns.clear();
                     }
-                    section.pattern_metadata =
-                        Some(crate::protocol::query::SectionPatternMetadata {
-                            selection: pattern_request
-                                .clone()
-                                .expect("requested metadata selection"),
-                            groups,
-                        });
+                    RowExtras::Sections(mut sections) => {
+                        while let Some(mut section) =
+                            sections.next_record().map_err(CliError::Aggregation)?
+                        {
+                            if args.pattern_filter.is_some() || args.group_patterns_by.is_some() {
+                                let mut groups = Vec::new();
+                                if args.group_patterns_by.is_some() {
+                                    let by_name = section
+                                        .patterns
+                                        .iter()
+                                        .map(|pattern| (pattern.pattern.as_str(), pattern))
+                                        .collect::<BTreeMap<_, _>>();
+                                    for row in &pattern_projection.rows {
+                                        let names = row
+                                            .members
+                                            .iter()
+                                            .map(|ordinal| pattern_names[*ordinal as usize])
+                                            .collect::<BTreeSet<_>>();
+                                        let members = names
+                                            .iter()
+                                            .filter_map(|name| by_name.get(name))
+                                            .collect::<Vec<_>>();
+                                        groups.push(crate::protocol::query::SectionPatternGroup {
+                                            value: row.name.clone(),
+                                            patterns: names
+                                                .into_iter()
+                                                .map(str::to_owned)
+                                                .collect(),
+                                            matches: members
+                                                .iter()
+                                                .map(|pattern| pattern.matches)
+                                                .sum(),
+                                            pattern_sentences: members
+                                                .iter()
+                                                .map(|pattern| pattern.sentences_matched)
+                                                .sum(),
+                                        });
+                                    }
+                                    groups.sort_by(|left, right| {
+                                        right
+                                            .pattern_sentences
+                                            .cmp(&left.pattern_sentences)
+                                            .then_with(|| left.value.cmp(&right.value))
+                                    });
+                                    section.patterns.clear();
+                                }
+                                section.pattern_metadata =
+                                    Some(crate::protocol::query::SectionPatternMetadata {
+                                        selection: pattern_request
+                                            .clone()
+                                            .expect("requested metadata selection"),
+                                        groups,
+                                    });
+                            }
+                            write_jsonl_buffered(
+                                &mut writer,
+                                &mut scratch,
+                                &QueryEnvelope::new(QueryEvent::Section(section)),
+                            )
+                            .map_err(execution_output_error)?;
+                        }
+                    }
+                    RowExtras::MetadataValues(mut values) => {
+                        while let Some(value) =
+                            values.next_record().map_err(CliError::Aggregation)?
+                        {
+                            write_jsonl_buffered(
+                                &mut writer,
+                                &mut scratch,
+                                &QueryEnvelope::new(QueryEvent::MetadataValue(value)),
+                            )
+                            .map_err(execution_output_error)?;
+                        }
+                    }
                 }
-                write_jsonl_buffered(
-                    &mut writer,
-                    &mut scratch,
-                    &QueryEnvelope::new(QueryEvent::Section(section)),
-                )
-                .map_err(execution_output_error)?;
+                let mut event_writer = MachineSummaryEventWriter {
+                    writer: &mut writer,
+                    scratch: &mut scratch,
+                    output,
+                    pool: &pool,
+                };
+                publish_summary_rows_and_complete(
+                    &mut finalized,
+                    top,
+                    &pattern_names,
+                    complete,
+                    &mut event_writer,
+                )?;
             }
-        }
-        if let Some(values) = metadata_values.as_mut() {
-            while let Some(value) = values.next_record().map_err(CliError::Aggregation)? {
-                write_jsonl_buffered(
-                    &mut writer,
-                    &mut scratch,
-                    &QueryEnvelope::new(QueryEvent::MetadataValue(value)),
-                )
-                .map_err(execution_output_error)?;
+            FinalizedSummarizeOutput::Table { path, staged, .. } => {
+                let stats = staged
+                    .publish()
+                    .map_err(|error| CliError::from(error).at_path(path))?;
+                let mut event_writer = MachineSummaryEventWriter {
+                    writer: &mut writer,
+                    scratch: &mut scratch,
+                    output,
+                    pool: &pool,
+                };
+                if output == OutputMode::Human {
+                    writeln!(
+                        event_writer.writer,
+                        "wrote count table {}: {} entries, {} document pairs, {} bytes",
+                        sanitize_terminal(&path.display().to_string()),
+                        stats.entries,
+                        stats.pairs,
+                        stats.bytes
+                    )
+                    .map_err(execution_output_io)?;
+                }
+                event_writer.write_complete(&complete)?;
             }
-        }
-        let mut event_writer = MachineSummaryEventWriter {
-            writer: &mut writer,
-            scratch: &mut scratch,
-            output,
-            pool: &pool,
-        };
-        if let Some(finalized) = finalized.as_mut() {
-            publish_summary_rows_and_complete(
-                finalized,
-                top,
-                &pattern_names,
-                complete,
-                &mut event_writer,
-            )?;
-        } else if let Some(windows) = finalized_windows.as_mut() {
-            publish_summary_rows_and_complete(
-                windows,
-                top,
-                &pattern_names,
-                complete,
-                &mut event_writer,
-            )?;
-        } else {
-            if let (Some(stats), Some(path), OutputMode::Human) =
-                (table_stats, args.write_table.as_deref(), output)
-            {
-                writeln!(
-                    event_writer.writer,
-                    "wrote count table {}: {} entries, {} document pairs, {} bytes",
-                    sanitize_terminal(&path.display().to_string()),
-                    stats.entries,
-                    stats.pairs,
-                    stats.bytes
-                )
-                .map_err(execution_output_io)?;
-            }
-            event_writer.write_complete(&complete)?;
         }
         writer.flush().map_err(execution_output_io)?;
         Ok(CommandOutcome::Success)
@@ -920,12 +1222,9 @@ pub fn run(
 }
 
 struct SummarySink<'a> {
-    span_kind: Option<&'a str>,
-    /// Whether any admitted sentence carried a span of `span_kind`.
-    span_kind_observed: bool,
+    span_grouping: SpanGrouping<'a>,
     grouping_coverage: Option<GroupingTally>,
-    windows: Option<WindowTally>,
-    aggregation: Option<SummaryAggregator>,
+    accumulator: SummaryAccumulator<'a>,
     aggregation_error: Option<io::Error>,
     pattern_ordinals: &'a BTreeMap<String, u64>,
     selected_patterns: Option<&'a BTreeSet<u64>>,
@@ -939,11 +1238,6 @@ struct SummarySink<'a> {
     /// silently, because a row that vanished without a number is
     /// indistinguishable from one that never matched.
     records_unkeyed: u64,
-    /// Per-document admission under `--by-document`, keyed by document ordinal.
-    documents: Option<BTreeMap<u64, DocumentTally>>,
-    sentences: bool,
-    sections: Option<SectionTally>,
-    metadata_values: Option<MetadataValueTally>,
 }
 
 fn section_labels(
@@ -1293,33 +1587,19 @@ impl SummarySink<'_> {
         pattern_ordinal: u64,
         location: &lingrep_core::execution::SentenceLocation,
     ) -> SummaryPartition {
-        if self.sentences {
-            SummaryPartition::sentence(
-                pattern_ordinal,
-                location.document_ordinal,
-                location.corpus_sentence_ordinal,
-            )
-        } else if self.documents.is_some() {
-            SummaryPartition::document(pattern_ordinal, location.document_ordinal)
-        } else {
-            SummaryPartition::pattern(pattern_ordinal)
-        }
+        self.accumulator.partition(pattern_ordinal, location)
     }
 
     /// Records one admitted sentence: whether it carries a `--by-span` span,
-    /// and its document tally under `--by-document`.
+    /// and its document tally under `--by-document` or `--write-table`.
     fn observe_sentence(
         &mut self,
         location: &lingrep_core::execution::SentenceLocation,
         sentence: &dyn lingrep_core::token_match::TokenSequence,
     ) -> Result<(), ExecutionError> {
-        if let Some(kind) = self.span_kind
-            && !self.span_kind_observed
-        {
-            self.span_kind_observed = sentence.spans().iter().any(|span| span.kind == kind);
-        }
+        self.span_grouping.observe(sentence);
         let tokens = sentence.len();
-        let Some(documents) = self.documents.as_mut() else {
+        let Some(documents) = self.accumulator.documents_mut() else {
             return Ok(());
         };
         let tally = documents
@@ -1364,7 +1644,7 @@ impl SummarySink<'_> {
         sentence: &dyn lingrep_core::token_match::TokenSequence,
         record: RecordView<'r>,
     ) -> Result<Option<AggregationInput<'r>>, ExecutionError> {
-        if let Some(kind) = self.span_kind {
+        if let Some(kind) = self.span_grouping.kind() {
             return Ok(
                 Self::span_surface(kind, location, sentence, record.start, record.end)?
                     .map(AggregationInput::Surface),
@@ -1392,7 +1672,7 @@ impl SummarySink<'_> {
         sentence: &dyn lingrep_core::token_match::TokenSequence,
         mut record: PublishedRecord,
     ) -> Result<Option<OwnedAggregationInput>, ExecutionError> {
-        if let Some(kind) = self.span_kind {
+        if let Some(kind) = self.span_grouping.kind() {
             return Ok(
                 Self::span_surface(kind, location, sentence, record.start, record.end)?
                     .map(OwnedAggregationInput::Surface),
@@ -1478,17 +1758,20 @@ impl SummarySink<'_> {
         tokens: usize,
         patterns: impl Iterator<Item = u64>,
     ) -> Result<(), ExecutionError> {
-        let observed = match (self.sections.as_mut(), self.metadata_values.as_mut()) {
-            (None, None) => return Ok(()),
-            (Some(sections), _) => sections.observe(
+        let observed = match &mut self.accumulator {
+            SummaryAccumulator::BySection { sections, .. } => sections.observe(
                 location.corpus_sentence_ordinal,
                 location.document_ordinal,
                 tokens,
                 patterns,
             ),
-            (None, Some(values)) => {
-                values.observe(location.corpus_sentence_ordinal, tokens, patterns)
-            }
+            SummaryAccumulator::ByMetadata {
+                metadata_values, ..
+            } => metadata_values.observe(location.corpus_sentence_ordinal, tokens, patterns),
+            SummaryAccumulator::Windows(_)
+            | SummaryAccumulator::Corpus(_)
+            | SummaryAccumulator::ByDocument { .. }
+            | SummaryAccumulator::WriteTable { .. } => return Ok(()),
         };
         if let Err(error) = observed {
             let message = error.to_string();
@@ -1524,12 +1807,11 @@ impl SummarySink<'_> {
                 self.records_unkeyed += 1;
                 continue;
             };
-            if let Err(error) = self
-                .aggregation
-                .as_mut()
-                .expect("aggregation exists during execution")
-                .add_owned_prehashed(partition, grouped, hash)
-            {
+            let result = self
+                .accumulator
+                .aggregator_mut()?
+                .add_owned_prehashed(partition, grouped, hash);
+            if let Err(error) = result {
                 let message = error.to_string();
                 self.aggregation_error = Some(error);
                 return Err(ExecutionError::Sink(message));
@@ -1560,7 +1842,7 @@ impl SummarySink<'_> {
                 continue;
             }
             records_emitted += 1;
-            if self.sections.is_some() || self.metadata_values.is_some() {
+            if self.accumulator.observes_slots() {
                 matched.push(pattern_ordinal);
             }
             let partition = self.partition(pattern_ordinal, location);
@@ -1570,12 +1852,8 @@ impl SummarySink<'_> {
                 self.records_unkeyed += 1;
                 continue;
             };
-            if let Err(error) = self
-                .aggregation
-                .as_mut()
-                .expect("aggregation exists during execution")
-                .add(partition, grouped)
-            {
+            let result = self.accumulator.aggregator_mut()?.add(partition, grouped);
+            if let Err(error) = result {
                 let message = error.to_string();
                 self.aggregation_error = Some(error);
                 return Err(ExecutionError::Sink(message));
@@ -1593,7 +1871,7 @@ impl MatchSink for SummarySink<'_> {
     }
 
     fn counts_token_windows(&self) -> bool {
-        self.windows.is_some()
+        self.accumulator.is_windows()
     }
 
     fn push_windows<V: lingrep_core::token_match::TokenSequence + Sync>(
@@ -1603,10 +1881,11 @@ impl MatchSink for SummarySink<'_> {
         sentences: &[V],
         cancel: &CancellationFlag,
     ) -> Result<(Vec<SinkControl>, bool), ExecutionError> {
-        let windows = self
-            .windows
-            .as_mut()
-            .ok_or_else(|| ExecutionError::Sink("summary does not count token windows".into()))?;
+        let SummaryAccumulator::Windows(windows) = &mut self.accumulator else {
+            return Err(ExecutionError::Sink(
+                "summary does not count token windows".into(),
+            ));
+        };
         let mut controls = Vec::with_capacity(sentences.len());
         for sentence in sentences {
             if cancel.is_cancelled() {
