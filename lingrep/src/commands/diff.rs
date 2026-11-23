@@ -555,7 +555,7 @@ fn compare_pair(
                 .join(" "),
         })
     };
-    // Keyed by sentence, then the unit: iteration is corpus order.
+    // Keyed by sentence, then the unit.
     let mut counts: BTreeMap<Key, ([u64; 2], &Record)> = BTreeMap::new();
     for (side, records, label) in [(0, a, "A"), (1, b, "B")] {
         for record in records {
@@ -576,24 +576,25 @@ fn compare_pair(
         a_only: 0,
         b_only: 0,
     };
-    let mut shown = (Vec::new(), Vec::new());
+    let mut one_sided = (Vec::new(), Vec::new());
     for (key, (count, record)) in &counts {
-        let (status, records, list) = match count {
-            [0, records] => {
-                diff.b_only += 1;
-                (Side::BOnly, *records, &mut shown.1)
-            }
-            [records, 0] => {
-                diff.a_only += 1;
-                (Side::AOnly, *records, &mut shown.0)
-            }
-            _ => {
-                diff.shared += 1;
-                continue;
-            }
-        };
-        if list.len() < examples {
-            list.push(Occurrence {
+        match count {
+            [0, records] => one_sided.1.push((key, *records, *record)),
+            [records, 0] => one_sided.0.push((key, *records, *record)),
+            _ => diff.shared += 1,
+        }
+    }
+    diff.a_only = one_sided.0.len() as u64;
+    diff.b_only = one_sided.1.len() as u64;
+    let mut shown = Vec::new();
+    for (status, mut list) in [(Side::AOnly, one_sided.0), (Side::BOnly, one_sided.1)] {
+        // Corpus order: within a sentence the token span, which the unit's
+        // text does not order.
+        list.sort_by_key(|(key, _, record)| {
+            (key.0, key.1, &key.2, record.span.start, record.span.end)
+        });
+        for (key, records, record) in list.into_iter().take(examples) {
+            shown.push(Occurrence {
                 a: left.to_owned(),
                 b: right.to_owned(),
                 status,
@@ -623,9 +624,10 @@ fn compare_pair(
             });
         }
     }
-    let mut occurrences = shown.0;
-    occurrences.append(&mut shown.1);
-    Ok(Pair { diff, occurrences })
+    Ok(Pair {
+        diff,
+        occurrences: shown,
+    })
 }
 
 impl Comparison {
