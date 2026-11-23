@@ -765,12 +765,6 @@ fn crossing_topology_oracle(heads: &[usize]) -> Vec<Match> {
             }
         }
     }
-    let selected = expected.clone();
-    expected.retain(|hit| {
-        !selected.iter().any(|other| {
-            other.pattern == hit.pattern && other.start < hit.start && other.end > hit.end
-        })
-    });
     expected.sort_by(|a, b| (a.start, a.end, &a.pattern).cmp(&(b.start, b.end, &b.pattern)));
     expected
 }
@@ -1338,7 +1332,7 @@ fn every_record_of_a_span_nested_in_an_earlier_match_is_dropped() {
 }
 
 #[test]
-fn a_relation_instance_inside_a_longer_match_of_its_definition_is_dropped() {
+fn a_relation_instance_inside_a_longer_match_of_its_definition_is_published() {
     let source = "p := (?<h> [upos=VERB]) []* (?<d> [upos=NOUN]) where $h -[obj]-> $d.";
     let spans = |outer_relation: &str| {
         let sentence = format!(
@@ -1349,10 +1343,73 @@ fn a_relation_instance_inside_a_longer_match_of_its_definition_is_dropped() {
             .map(|hit| (hit.start, hit.end))
             .collect::<Vec<_>>()
     };
-    // `w -[obj]-> n` holds over 1..3 in both sentences. It is published only
-    // when the outer verb has no object after it.
-    assert_eq!(spans("obj"), [(0, 4)]);
+    // `w -[obj]-> n` holds over 1..3 in both sentences and is published in
+    // both, whether or not the outer verb has an object after it.
+    assert_eq!(spans("obj"), [(0, 4), (1, 3)]);
     assert_eq!(spans("obl"), [(1, 3)]);
+}
+
+#[test]
+fn a_measure_does_not_remove_the_nested_instances_of_a_where_definition() {
+    let source = "p := (?<h> [upos=VERB]) []* (?<d> [upos=NOUN]) where $h -[obj]-> $d \
+                  measure count(match.words[]) as $n.";
+    let sentence = "1\tv\tv\tVERB\t_\t_\t0\troot\t_\t_\n2\tw\tw\tVERB\t_\t_\t1\txcomp\t_\t_\n3\tn\tn\tNOUN\t_\t_\t2\tobj\t_\t_\n4\tm\tm\tNOUN\t_\t_\t1\tobj\t_\t_\n";
+    assert_eq!(
+        match_catalog("nested-measured-relation.lx", source, sentence)
+            .iter()
+            .map(|hit| (hit.start, hit.end))
+            .collect::<Vec<_>>(),
+        [(0, 4), (1, 3)]
+    );
+}
+
+#[test]
+fn subtree_profile_publishes_a_fork_nested_inside_a_longer_fork() {
+    // `outer` has three dependents (`inner`, `c`, `d`) and `inner` has two
+    // (`a`, `b`), so the fork of `inner` over 1..4 lies strictly inside the
+    // fork of `outer` over 0..6.
+    let node = |name, upos, head, relation| DependencyNode {
+        name,
+        lemma: name,
+        upos,
+        head,
+        relation,
+    };
+    let nodes = [
+        node("outer", "VERB", None, "root"),
+        node("inner", "VERB", Some("outer"), "xcomp"),
+        node("a", "NOUN", Some("inner"), "nsubj"),
+        node("b", "NOUN", Some("inner"), "obj"),
+        node("c", "NOUN", Some("outer"), "obl"),
+        node("d", "ADV", Some("outer"), "advmod"),
+    ];
+    assert_eq!(
+        match_catalog(
+            "ud-subtree-profile.lx",
+            include_str!("../../../patterns/ud-subtree-profile.lx"),
+            &dependency_sentence(&nodes),
+        ),
+        vec![
+            matched(
+                "dependency_chain",
+                0,
+                4,
+                &[("head", 0, 1), ("middle", 1, 2), ("leaf", 3, 4)],
+            ),
+            matched(
+                "head_left_right",
+                0,
+                6,
+                &[("head", 0, 1), ("left", 4, 5), ("right", 5, 6)],
+            ),
+            matched(
+                "head_left_right",
+                1,
+                4,
+                &[("head", 1, 2), ("left", 2, 3), ("right", 3, 4)],
+            ),
+        ],
+    );
 }
 
 #[test]

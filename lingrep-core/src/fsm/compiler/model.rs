@@ -1336,6 +1336,23 @@ impl ExecutionExpr {
     }
 }
 
+impl ExecutionExpr {
+    /// Whether the consumed body contains an `any_order` group. A lookaround
+    /// body consumes nothing and is not searched.
+    pub(crate) fn contains_any_order(&self) -> bool {
+        match self {
+            Self::AnyOrder { .. } => true,
+            Self::Sequence(children)
+            | Self::Alternation(children)
+            | Self::Intersection {
+                operands: children, ..
+            } => children.iter().any(Self::contains_any_order),
+            Self::Repeat { expr, .. } | Self::Capture { expr, .. } => expr.contains_any_order(),
+            Self::Token(_) | Self::Assertion(_) | Self::SameAs { .. } => false,
+        }
+    }
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum ExecutionCapability {
     Plain,
@@ -1445,6 +1462,26 @@ pub(crate) struct ExecutionDefinition {
     pub(crate) key: Option<ParsedKey>,
     pub(crate) source: SourceId,
     pub(crate) span: SourceSpan,
+}
+
+impl ExecutionDefinition {
+    /// Whether the definition publishes a match that lies strictly inside its
+    /// own longer match from an earlier start.
+    ///
+    /// It does when it carries a constraint that selects among its candidates
+    /// (a `where` clause of any kind, or a `within_span` or `span_dependency`
+    /// annotation, which is another spelling of a `where span(…)` clause) or
+    /// when its body contains an `any_order` group. The body is the
+    /// materialized one, so a group reached through a reference counts and a
+    /// referenced definition's own `where` clause, which materialization does
+    /// not carry over, does not. Every other definition drops such a match.
+    pub(crate) fn publishes_nested_matches(&self) -> bool {
+        !self.relations.is_empty()
+            || !self.enhanced_relations.is_empty()
+            || !self.node_constraints.is_empty()
+            || !self.span_constraints.is_empty()
+            || self.expr.contains_any_order()
+    }
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]

@@ -138,7 +138,7 @@ fn a_tree_evaluated_run_keeps_a_later_start_that_reaches_the_same_end() {
 }
 
 #[test]
-fn any_order_spans_from_one_start_survive_and_a_later_nested_span_is_dropped() {
+fn any_order_publishes_each_permutation_s_longest_span_from_every_start() {
     let capture = |name: &str, start: usize| Capture {
         name: name.into(),
         path: format!("p/{name}").into(),
@@ -155,7 +155,8 @@ fn any_order_spans_from_one_start_survive_and_a_later_nested_span_is_dropped() {
         vec![
             hit(0, 3, [capture("a", 0), capture("b", 2)]),
             hit(0, 4, [capture("b", 0), capture("a", 3)]),
-            // 1..3 lies inside 0..4 and is dropped; 2..4 ends where 0..4 does.
+            // 1..3 lies inside 0..4 and is published all the same.
+            hit(1, 3, [capture("a", 1), capture("b", 2)]),
             hit(2, 4, [capture("b", 2), capture("a", 3)]),
         ],
     );

@@ -36,8 +36,9 @@ across sentences, use an
 
 ### Which matches a definition publishes
 
-A definition's body can match many spans of one sentence. The definition
-publishes these, and the rule is the same whichever constructs the body uses:
+A definition's body can match many spans of one sentence. Two steps decide
+which of them the definition publishes, and the form of the definition decides
+whether the second step applies:
 
 1. From each start token, the longest match. An
    [`any_order`](#operators-and-precedence) group keeps the longest match of
@@ -49,9 +50,29 @@ publishes these, and the rule is the same whichever constructs the body uses:
    earlier-starting span ends is kept, and two spans from one start never drop
    each other.
 
+Step 2 does not apply to a definition of either of these forms, which
+publishes every span step 1 keeps:
+
+- A definition with a [`where` clause](#dependency-constraints) of any kind: a
+  token dependency relation, an enhanced-graph relation, an order or attribute
+  comparison between its nodes, or a
+  [`span(…)` path](#paths-between-annotated-spans). A
+  `within_span` or `span_dependency` annotation is another spelling of a span
+  path and counts as one.
+- A definition whose body contains an `any_order` group, written in the body
+  or reached through a reference to a fragment or to another definition.
+
+Step 2 applies to every other definition, whatever else it uses: captures,
+`&`, `measure`, `same_as` and interpretations do not change the published
+spans. A definition with both a `measure` and a `where` clause has a `where`
+clause, so step 2 does not apply to it. A reference expands the referenced
+definition's token expression only, so a referenced definition's `where`
+clause or annotation does not exempt the definition that refers to it.
+
 ```pattern
 paw := [text=の] | [text=猫] [text=の] [text=手].
 run := [text=a]+.
+object := (?<h> [upos=VERB]) []* (?<d> [upos=NOUN]) where $h -[obj]-> $d.
 ```
 
 On `猫 の 手`, `paw` matches all three tokens from `猫` and `の` alone from
@@ -61,24 +82,27 @@ and ends later. Appending `& []+`, a capture, or
 On `a a b`, `run` publishes `a a` and the second `a`: both end at the same
 token.
 
-The rule selects spans, not records. Every record of a kept span is published,
+`object` has a `where` clause. On a sentence `V1 V2 N2 N1` in which `N2` is
+the object of `V2` and `N1` the object of `V1`, it publishes `V1 V2 N2 N1` and
+`V2 N2`, with one observation for each relation instance.
+
+Step 2 selects spans, not records. Every record of a kept span is published,
 such as [readings with different measures](#occurrence-measurements), and every
 record of a dropped span is dropped. A match that consumes no token is never
 published.
 
-The rule applies within one definition. Matches of different definitions never
+Both steps apply within one definition. Matches of different definitions never
 drop each other at this stage; the [policy block](#policy-block) decides
-between definitions afterwards and receives only the spans this rule keeps.
-`ling matches --raw-matches` bypasses policy and not this rule. To publish a
-span that lies inside a longer match of its own definition, write it as a
-separate definition. [Lexicons](#lexicons) are exempt and publish every member
+between definitions afterwards and receives only the spans these steps keep.
+`ling matches --raw-matches` bypasses policy and not these steps. To publish a
+span that step 2 drops, write it as a separate definition.
+[Lexicons](#lexicons) are exempt from both steps and publish every member
 occurrence.
 
-Releases through 0.9.1 applied step 2 only to a definition without `&`,
-`measure`, `where`, a span annotation, `same_as` and `any_order`. Applying it
-to every definition advances
-the matcher semantics identity to `lingrep-core-matcher/v3`, so a count stored
-before it is stale.
+Releases through 0.9.1 also skipped step 2 for a definition with `&`,
+`measure` or `same_as`. Applying it to those definitions advances the matcher
+semantics identity to `lingrep-core-matcher/v3`, so a count stored before it is
+stale. A `where` or `any_order` definition publishes what it did in 0.9.1.
 
 ## Reserved names
 
@@ -704,15 +728,13 @@ The clause filters candidate matches before
 a shorter passing candidate survives a longer failing one. An assignment that
 fails the clause does not hide a passing assignment reaching the same position.
 
-Selection then applies to the passing matches. A relation instance whose span
-lies inside a longer passing match of the same definition, starting later and
-ending earlier, is not published. With
-`(?<h> [upos=VERB]) []* (?<d> [upos=NOUN]) where $h -[obj]-> $d`, a sentence
-`V1 V2 N2 N1` in which `N2` is the object of `V2` and `N1` the object of `V1`
-publishes `V1 … N1` only. To count every instance, use a body whose spans
-cannot nest, such as a one-token body that captures the head and tests the
-dependent with
-[a token test in dependent position](#a-token-test-in-dependent-position).
+Every passing match selected this way is published, including a relation
+instance whose span lies inside a longer passing match of the same definition.
+With `(?<h> [upos=VERB]) []* (?<d> [upos=NOUN]) where $h -[obj]-> $d`, a
+sentence `V1 V2 N2 N1` in which `N2` is the object of `V2` and `N1` the object
+of `V1` publishes `V1 … N1` and `V2 N2`. Selection keeps one match per start
+token, so of two instances that begin at the same token the longer one is
+published.
 
 A catalog with a basic token dependency constraint requires `dep.head` and `dep.rel` at binding, so a
 morphology-only corpus is rejected by name before matching. Only basic edges are

@@ -304,7 +304,7 @@ pub(crate) fn analyze_program(
             // Below `SpanEquality` only because that variant already routes the
             // whole definition to the evaluator that now handles both.
             ExecutionCapability::Intersection
-        } else if contains_any_order(&definition.expr) {
+        } else if definition.expr.contains_any_order() {
             ExecutionCapability::AnyOrder
         } else if !definition.measures.is_empty()
             || !definition.span_constraints.is_empty()
@@ -929,23 +929,6 @@ fn contains_intersection(expr: &ExecutionExpr) -> bool {
         } => children.iter().any(contains_intersection),
         ExecutionExpr::Repeat { expr, .. } | ExecutionExpr::Capture { expr, .. } => {
             contains_intersection(expr)
-        }
-        ExecutionExpr::Token(_) | ExecutionExpr::Assertion(_) | ExecutionExpr::SameAs { .. } => {
-            false
-        }
-    }
-}
-
-fn contains_any_order(expr: &ExecutionExpr) -> bool {
-    match expr {
-        ExecutionExpr::AnyOrder { .. } => true,
-        ExecutionExpr::Sequence(children)
-        | ExecutionExpr::Alternation(children)
-        | ExecutionExpr::Intersection {
-            operands: children, ..
-        } => children.iter().any(contains_any_order),
-        ExecutionExpr::Repeat { expr, .. } | ExecutionExpr::Capture { expr, .. } => {
-            contains_any_order(expr)
         }
         ExecutionExpr::Token(_) | ExecutionExpr::Assertion(_) | ExecutionExpr::SameAs { .. } => {
             false

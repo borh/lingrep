@@ -210,9 +210,18 @@ fn execution_oracle_with_spans<T: TokenInfoTrait>(
             });
         }
     }
-    // A span is published unless another span selected above starts earlier
-    // and ends later. The test reads spans, so the records of one span are
-    // kept or removed together.
+    // A definition with a `where` constraint, a span annotation or an
+    // any-order group publishes every span selected above.
+    let constrained = !definition.relations.is_empty()
+        || !definition.enhanced_relations.is_empty()
+        || !definition.node_constraints.is_empty()
+        || !definition.span_constraints.is_empty();
+    if constrained || execution_has_any_order(&definition.expr) {
+        return matches;
+    }
+    // Any other definition publishes a span unless another span selected
+    // above starts earlier and ends later. The test reads spans, so the
+    // records of one span are kept or removed together.
     let selected = matches
         .iter()
         .map(|matched| (matched.start, matched.end))
@@ -223,6 +232,49 @@ fn execution_oracle_with_spans<T: TokenInfoTrait>(
             .any(|&(start, end)| start < matched.start && end > matched.end)
     });
     matches
+}
+
+fn execution_has_any_order(expr: &ExecutionExpr) -> bool {
+    match expr {
+        ExecutionExpr::AnyOrder { .. } => true,
+        ExecutionExpr::Sequence(children) | ExecutionExpr::Alternation(children) => {
+            children.iter().any(execution_has_any_order)
+        }
+        ExecutionExpr::Intersection { operands, .. } => {
+            operands.iter().any(execution_has_any_order)
+        }
+        ExecutionExpr::Repeat { expr, .. } | ExecutionExpr::Capture { expr, .. } => {
+            execution_has_any_order(expr)
+        }
+        ExecutionExpr::Token(_) | ExecutionExpr::Assertion(_) | ExecutionExpr::SameAs { .. } => {
+            false
+        }
+    }
+}
+
+/// Whether a bound body contains an any-order group, following references.
+fn bound_has_any_order(program: &BoundProgram, expr: &BoundExpr) -> bool {
+    match expr {
+        BoundExpr::AnyOrder { .. } => true,
+        BoundExpr::Sequence(children) | BoundExpr::Alternation(children) => children
+            .iter()
+            .any(|child| bound_has_any_order(program, child)),
+        BoundExpr::Intersection { operands, .. } => operands
+            .iter()
+            .any(|operand| bound_has_any_order(program, operand)),
+        BoundExpr::Repeat { expr, .. } | BoundExpr::Capture { expr, .. } => {
+            bound_has_any_order(program, expr)
+        }
+        BoundExpr::Definition { id, .. } => program
+            .definitions
+            .get(id.index())
+            .and_then(|definition| definition.expr())
+            .is_some_and(|expr| bound_has_any_order(program, expr)),
+        BoundExpr::Token(_)
+        | BoundExpr::Assertion(_)
+        | BoundExpr::Lookaround(_)
+        | BoundExpr::SameAs { .. } => false,
+    }
 }
 
 fn execution_relations_hold<T: TokenInfoTrait>(
@@ -698,6 +750,11 @@ pub(crate) fn oracle_matches<T: TokenInfoTrait>(
     tokens: &[T],
 ) -> Vec<Match> {
     let mut matches = Vec::new();
+    // The definitions that publish a span inside their own longer one: those
+    // with a `where` clause, a span annotation or an any-order group. This
+    // interpreter evaluates bodies and no constraint, so it states the spans
+    // of such a definition only when the constraint removes none.
+    let mut publishes_nested = BTreeSet::new();
 
     for definition in &program.definitions {
         if !definition.is_ordinary_pattern() {
@@ -706,6 +763,17 @@ pub(crate) fn oracle_matches<T: TokenInfoTrait>(
         let expr = definition
             .expr()
             .expect("ordinary patterns have expressions");
+        if !definition.relations().is_empty()
+            || !definition.enhanced_relations().is_empty()
+            || !definition.node_constraints().is_empty()
+            || !definition.span_paths().is_empty()
+            || ["within_span", "span_dependency"]
+                .iter()
+                .any(|key| definition.metadata.contains_key(*key))
+            || bound_has_any_order(program, expr)
+        {
+            publishes_nested.insert(definition.name.clone());
+        }
         for start in 0..tokens.len() {
             for end in expression_ends(program, expr, tokens, start) {
                 if end <= start || end > tokens.len() {
@@ -746,7 +814,9 @@ pub(crate) fn oracle_matches<T: TokenInfoTrait>(
         }
         let mut longest_earlier_end: Option<usize> = None;
         for candidate in longest_by_start.into_values() {
-            if longest_earlier_end.is_none_or(|end| end <= candidate.end) {
+            if publishes_nested.contains(&candidate.pattern)
+                || longest_earlier_end.is_none_or(|end| end <= candidate.end)
+            {
                 longest_earlier_end =
                     Some(longest_earlier_end.map_or(candidate.end, |end| end.max(candidate.end)));
                 matches.push(candidate);
@@ -2252,6 +2322,186 @@ mod tests {
             expected,
             "source: {}",
             tree[0]
+        );
+    }
+
+    /// The matcher's and the execution oracle's matches of `source` over a
+    /// CoNLL-U-shaped sentence of `(upos, head, relation)` rows.
+    fn dependency_matches(source: &str, rows: &[(&str, usize, &str)]) -> (Vec<Match>, Vec<Match>) {
+        let definition = execution_definition(source);
+        let bound = compile_catalog(
+            PatternSource::named("execution-oracle.lx", source),
+            CompileLimits::default(),
+        )
+        .expect("fixture compiles")
+        .matcher
+        .bind(&crate::corpus::conllu::token_schema())
+        .expect("CoNLL-U schema binds");
+        let values = rows
+            .iter()
+            .flat_map(|(upos, head, relation)| {
+                bound
+                    .projection()
+                    .keys()
+                    .iter()
+                    .map(move |key| match key.as_str() {
+                        "upos" => Some((*upos).into()),
+                        "dep.head" => Some(head.to_string().into()),
+                        "dep.rel" => Some((*relation).into()),
+                        other => panic!("unexpected oracle projection key {other}"),
+                    })
+            })
+            .collect();
+        let sentence = crate::token_match::BoundTokenSentence::from_projected_values(
+            bound.projection(),
+            rows.len(),
+            values,
+        )
+        .expect("oracle sentence projects");
+        let tokens = (0..sentence.len())
+            .map(|index| SequenceToken::new(&sentence, index).expect("index is in range"))
+            .collect::<Vec<_>>();
+        (
+            bound.find_matches(&sentence).expect("schema matches"),
+            execution_oracle_matches(&definition, &tokens),
+        )
+    }
+
+    /// The spans of `matches` in ascending order, one per record.
+    fn spans_of(matches: &[Match]) -> Vec<(usize, usize)> {
+        let mut spans = matches
+            .iter()
+            .map(|matched| (matched.start, matched.end))
+            .collect::<Vec<_>>();
+        spans.sort_unstable();
+        spans
+    }
+
+    #[test]
+    fn a_where_or_any_order_definition_publishes_a_match_nested_in_its_earlier_match() {
+        // `w -[obj]-> n` over 1..3 lies inside `v -[obj]-> m` over 0..4.
+        let rows = [
+            ("VERB", 0, "root"),
+            ("VERB", 1, "xcomp"),
+            ("NOUN", 2, "obj"),
+            ("NOUN", 1, "obj"),
+        ];
+        for source in [
+            "pattern p := (?<h> [upos=VERB]) []* (?<d> [upos=NOUN]) where $h -[obj]-> $d.",
+            "pattern p := (?<h> [upos=VERB]) []* (?<d> [upos=NOUN]) where $h -[obj]-> $d \
+             measure count(match.words[]) as $n.",
+        ] {
+            let (actual, expected) = dependency_matches(source, &rows);
+            assert_eq!(actual, expected, "source: {source}");
+            assert_eq!(spans_of(&expected), [(0, 4), (1, 3)], "source: {source}");
+        }
+
+        // From `y` at 0 the group reaches the last `q`; `q y` over 1..3 lies
+        // inside that span.
+        let tokens = ["y", "q", "y", "q"].map(token);
+        for source in [
+            "p := any_order((?<a> [text=q]), (?<b> [text=y])).",
+            "fragment pair := any_order((?<a> [text=q]), (?<b> [text=y])).\np := @pair.",
+        ] {
+            assert_eq!(
+                spans_of(&oracle_matches(&bound_program(source), &tokens)),
+                [(0, 4), (1, 3), (2, 4)],
+                "source: {source}"
+            );
+            let actual = compile_catalog(
+                PatternSource::named("execution-oracle.lx", source),
+                CompileLimits::default(),
+            )
+            .expect("fixture compiles")
+            .matcher
+            .find_matches(&tokens);
+            assert_eq!(
+                spans_of(&actual),
+                [(0, 4), (1, 3), (2, 4)],
+                "source: {source}"
+            );
+        }
+        assert_execution_oracle("p := any_order((?<a> [text=q]), (?<b> [text=y])).", &tokens);
+    }
+
+    /// A definition with a `where` clause publishes its longest passing match
+    /// from every start, nested or not, with or without an any-order group or
+    /// a `measure`.
+    #[hegel::test(test_cases = 300, derandomize = true)]
+    fn a_where_definition_publishes_the_longest_passing_match_from_every_start(
+        tc: hegel::TestCase,
+    ) {
+        use hegel::generators;
+
+        let source = tc.draw(generators::sampled_from(vec![
+            "pattern p := (?<h> []) []* (?<d> []) where $h -[obj]-> $d.",
+            "pattern p := (?<d> []) []* (?<h> []) where $h -[obj]-> $d.",
+            "pattern p := (?<h> []) []* (?<l> []) []* (?<r> []) \
+             where $h -[*]-> $l, $h -[*]-> $r.",
+            "pattern p := any_order((?<h> []), (?<d> [])) where $h -[obj]-> $d.",
+            "pattern p := (?<h> []) []* (?<d> []) where $h -[obj]-> $d \
+             measure count(match.words[]) as $n.",
+        ]));
+        let length = tc.draw(generators::integers::<usize>().min_value(1).max_value(6));
+        let rows = (0..length)
+            .map(|_| {
+                (
+                    "X",
+                    tc.draw(
+                        generators::integers::<usize>()
+                            .min_value(0)
+                            .max_value(length),
+                    ),
+                    tc.draw(generators::sampled_from(vec!["obj", "nsubj"])),
+                )
+            })
+            .collect::<Vec<_>>();
+        let (actual, expected) = dependency_matches(source, &rows);
+        if source.contains("any_order") {
+            // The oracle lists one start's permutations in its own order.
+            assert_eq!(
+                spans_of(&actual),
+                spans_of(&expected),
+                "source: {source}; rows: {rows:?}"
+            );
+        } else {
+            assert_eq!(actual, expected, "source: {source}; rows: {rows:?}");
+        }
+    }
+
+    /// An any-order definition publishes the longest match of each
+    /// permutation from every start, nested or not.
+    #[hegel::test(test_cases = 300, derandomize = true)]
+    fn an_any_order_definition_publishes_every_start_s_permutations(tc: hegel::TestCase) {
+        use hegel::generators;
+
+        let atom = || tc.draw(generators::sampled_from(vec!["a", "b", "c", "[]"]));
+        let (first, second, third) = (atom(), atom(), atom());
+        let source = if tc.draw(generators::booleans()) {
+            format!("pattern p := any_order((?<x> {first}), (?<y> {second})).")
+        } else {
+            format!("pattern p := any_order((?<x> {first}), (?<y> {second}), (?<z> {third})).")
+        };
+        let symbols = tc
+            .draw(generators::vecs(generators::sampled_from(vec!["a", "b", "c", "z"])).max_size(7));
+        let tokens = symbols.iter().map(|value| token(value)).collect::<Vec<_>>();
+        // Spans, one per published permutation: which tokens an operand
+        // captures when several placements reach the same end is outside the
+        // publication rule.
+        let actual = compile_catalog(
+            PatternSource::named("execution-oracle.lx", &source),
+            CompileLimits::default(),
+        )
+        .expect("bounded generated source must compile")
+        .matcher
+        .find_matches(&tokens);
+        assert_eq!(
+            spans_of(&actual),
+            spans_of(&execution_oracle_matches(
+                &execution_definition(&source),
+                &tokens
+            )),
+            "source: {source}"
         );
     }
 

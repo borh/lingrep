@@ -31,6 +31,8 @@ pub(crate) struct Program {
     relations: Box<[RuntimeRelation]>,
     enhanced_relations: Box<[RuntimeEnhancedRelation]>,
     node_constraints: Box<[NodeConstraint<RuntimeEnhancedEndpoint>]>,
+    /// The negation of [`ExecutionDefinition::publishes_nested_matches`].
+    drops_nested: bool,
 }
 
 #[derive(Clone)]
@@ -359,6 +361,7 @@ impl Program {
                 .iter()
                 .map(|m| measure::compile(m, predicates))
                 .collect(),
+            drops_nested: !definition.publishes_nested_matches(),
             definition,
             runtime,
             captures: captures.into_boxed_slice(),
@@ -574,10 +577,12 @@ impl Program {
                 PREDICATE_SITE_EVALUATED_PREVIOUS_TOKEN, _, _
             >(predicates, tokens, start, assertions);
             for candidate in candidates {
-                // A candidate that a span published from an earlier start
-                // extends past is dropped whichever branch selection it
-                // belongs to, so it is skipped before its constraints run.
-                if candidate.position <= start || earlier.extends_past(candidate.position) {
+                // A definition that drops nested matches drops a candidate
+                // that a span published from an earlier start extends past,
+                // whichever branch selection it belongs to.
+                if candidate.position <= start
+                    || (self.drops_nested && earlier.extends_past(candidate.position))
+                {
                     continue;
                 }
                 let mut counts = Vec::new();

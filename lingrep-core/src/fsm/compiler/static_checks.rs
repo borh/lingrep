@@ -44,11 +44,12 @@ pub enum UnsatisfiableKind {
 
 /// Whether every span one definition publishes is also published by another.
 ///
-/// A definition publishes its longest match from each start and drops, of
-/// those, a match that its own match from an earlier start extends past. The
-/// second definition must therefore match each span the first publishes,
-/// nothing longer from the same start, and nothing from an earlier start that
-/// ends later.
+/// A compared definition publishes its longest match from each start and
+/// drops, of those, a match that its own match from an earlier start extends
+/// past. The second definition must therefore match each span the first
+/// publishes, nothing longer from the same start, and nothing from an earlier
+/// start that ends later. A definition that keeps such a match (one with a
+/// `where` clause, a span annotation or an any-order group) is not compared.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Containment {
     Contained,
@@ -621,6 +622,12 @@ impl<'p> Builder<'p> {
             || !definition.span_paths().is_empty()
         {
             return Err("a `where` clause");
+        }
+        if ["within_span", "span_dependency"]
+            .iter()
+            .any(|key| definition.metadata.contains_key(*key))
+        {
+            return Err("a span annotation");
         }
         self.expr(expr, from, depth)
     }

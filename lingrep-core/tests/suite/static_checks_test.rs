@@ -319,6 +319,34 @@ fn a_nested_match_is_compared_under_one_rule_whatever_recognizes_the_definition(
 }
 
 #[test]
+fn a_definition_that_keeps_nested_matches_is_not_compared() {
+    // These forms publish a match inside their own longer match, which the
+    // comparison does not model.
+    const SOURCE: &str = "plain := [text=a] [text=b].\n\
+        relation := (?<h> [text=a]) (?<d> [text=b]) where $h -[obj]-> $d.\n\
+        span := (?<h> [text=a]) [text=b] where span(chunk, $h).\n\
+        within_span: \"chunk\"\nannotated := [text=a] [text=b].\n\
+        unordered := any_order((?<x> [text=a]), (?<y> [text=b])).";
+    for (definition, construct) in [
+        ("relation", "a `where` clause"),
+        ("span", "a `where` clause"),
+        ("annotated", "a span annotation"),
+        ("unordered", "an any-order group"),
+    ] {
+        assert_eq!(
+            containment(SOURCE, definition, "plain"),
+            Containment::NotDecided { construct },
+            "{definition}"
+        );
+        assert_eq!(
+            containment(SOURCE, "plain", definition),
+            Containment::NotDecided { construct },
+            "{definition}"
+        );
+    }
+}
+
+#[test]
 fn a_regex_test_leaves_containment_undecided_and_a_difference_found() {
     const SOURCE: &str = "regex := [text~/^a/].\nliteral := [text=ab].\nsame := [text~/^a/].";
     assert!(matches!(
