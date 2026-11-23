@@ -80,6 +80,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- Every definition publishes by one rule: its longest match from each start,
+  less a match that its own match from an earlier start extends strictly past.
+  A definition using `&`, `measure`, `where`, a span annotation, `same_as` or
+  `any_order` did not apply the second part and now does, so it can publish
+  fewer matches than before. On `猫の手`,
+  `[text=の] | [text=猫] [text=の] [text=手]` publishes the three-token match;
+  the same body with `& []+` or `measure count(match.words[]) as $n` also
+  published `の` and now publishes the three-token match only. A `where`
+  definition no longer publishes a relation instance whose span lies inside a
+  longer match of the same definition. A match that ends where an
+  earlier-starting match ends is kept, definitions without those constructs
+  and lexicons publish what they did, and different definitions still never
+  drop each other's matches before policy. The rule is specified in the
+  [pattern reference](docs/pattern-language-reference.md#which-matches-a-definition-publishes).
+  The matcher semantics identity is `lingrep-core-matcher/v3`: a count table
+  built by an earlier release is not read as current and must be rebuilt.
+- `ling check --containment` compares every definition under that rule, so a
+  pair involving a definition with `&` or `measure` can change.
 - `patterns/sf-experimental.lx` no longer declares `resolve`, so overlapping
   definitions are all counted: a specific form and the general form that
   contains it (`であろう` and `だろう`, `ことも` and `こと`) each keep their

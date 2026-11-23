@@ -210,6 +210,18 @@ fn execution_oracle_with_spans<T: TokenInfoTrait>(
             });
         }
     }
+    // A span is published unless another span selected above starts earlier
+    // and ends later. The test reads spans, so the records of one span are
+    // kept or removed together.
+    let selected = matches
+        .iter()
+        .map(|matched| (matched.start, matched.end))
+        .collect::<BTreeSet<_>>();
+    matches.retain(|matched| {
+        !selected
+            .iter()
+            .any(|&(start, end)| start < matched.start && end > matched.end)
+    });
     matches
 }
 
@@ -2168,6 +2180,79 @@ mod tests {
             .collect::<Vec<_>>();
 
         assert_execution_oracle(&source, &tokens);
+    }
+
+    /// One body publishes the same spans whichever executor recognizes it:
+    /// alone and with a capture through the dense machine, with `& []+` or a
+    /// `measure` through the tree evaluator. Both oracles state that rule.
+    #[hegel::test(test_cases = 500, derandomize = true)]
+    fn a_body_publishes_the_same_spans_under_either_executor(tc: hegel::TestCase) {
+        use hegel::generators;
+
+        let inner = format!("({}) z", generated_expr(&tc, 3).render(0));
+        // Independent bodies seldom match inside their own longer match, so
+        // half of the cases add an alternative that surrounds the body.
+        let body = if tc.draw(generators::booleans()) {
+            let before = tc.draw(generators::sampled_from(vec!["a", "b", "c", "z"]));
+            let after = tc.draw(generators::sampled_from(vec!["a", "b", "c", "z"]));
+            format!("{inner} | {before} ({inner}) {after}")
+        } else {
+            inner
+        };
+        let symbols = tc
+            .draw(generators::vecs(generators::sampled_from(vec!["a", "b", "c", "z"])).max_size(8));
+        let tokens = symbols.iter().map(|value| token(value)).collect::<Vec<_>>();
+        let spans = |matches: &[Match], pattern: &str| {
+            matches
+                .iter()
+                .filter(|matched| matched.pattern == pattern)
+                .map(|matched| (matched.start, matched.end))
+                .collect::<Vec<_>>()
+        };
+
+        let plain = format!("p := {body}.");
+        let tree = [
+            format!("p := ({body}) & []+."),
+            format!("p := {body} measure count(match.words[]) as $n."),
+        ];
+        let expected = spans(&oracle_matches(&bound_program(&plain), &tokens), "p");
+
+        let source = format!(
+            "plain := {body}.\ncaptured := (?<c> {body}).\nmeet := ({body}) & []+.\n\
+             measured := {body} measure count(match.words[]) as $n."
+        );
+        let actual = compile_catalog(
+            PatternSource::named("generated.lx", &source),
+            CompileLimits::default(),
+        )
+        .expect("bounded generated source must compile")
+        .matcher
+        .find_matches(&tokens);
+        for definition in ["plain", "captured", "meet", "measured"] {
+            assert_eq!(
+                spans(&actual, definition),
+                expected,
+                "{definition}: {source}"
+            );
+        }
+
+        for source in &tree {
+            assert_eq!(
+                spans(
+                    &execution_oracle_matches(&execution_definition(source), &tokens),
+                    "p"
+                ),
+                expected,
+                "source: {source}"
+            );
+            assert_execution_oracle(source, &tokens);
+        }
+        assert_eq!(
+            spans(&oracle_matches(&bound_program(&tree[0]), &tokens), "p"),
+            expected,
+            "source: {}",
+            tree[0]
+        );
     }
 
     #[hegel::test(test_cases = 200, derandomize = true)]

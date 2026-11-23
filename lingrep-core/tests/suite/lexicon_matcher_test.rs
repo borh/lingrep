@@ -75,6 +75,32 @@ fn prefixes_overlaps_and_multitoken_members_all_survive() {
 }
 
 #[test]
+fn a_member_inside_a_longer_member_from_an_earlier_start_survives() {
+    // An ordinary definition with these two alternatives publishes 0..3 alone.
+    let tokens = [
+        token(Some("猫"), None),
+        token(Some("の"), None),
+        token(Some("手"), None),
+    ];
+    assert_eq!(
+        lexical_spans(r#"lexicon words by [text] := {"の", "猫の手"}."#, &tokens),
+        vec![
+            (0, 3, "猫の手".into(), vec!["text".into()]),
+            (1, 2, "の".into(), vec!["text".into()]),
+        ]
+    );
+    let ordinary = matcher("words := [text=の] | [text=猫] [text=の] [text=手].");
+    assert_eq!(
+        ordinary
+            .find_matches(&tokens)
+            .iter()
+            .map(|matched| (matched.start, matched.end))
+            .collect::<Vec<_>>(),
+        vec![(0, 3)]
+    );
+}
+
+#[test]
 fn hits_require_token_boundaries_and_missing_or_empty_values_flush_runs() {
     let source = r#"lexicon words by [text] := {"Web.config", "ab"}."#;
     assert_eq!(

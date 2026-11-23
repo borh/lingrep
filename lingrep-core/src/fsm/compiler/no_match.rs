@@ -9,8 +9,6 @@ use std::ops::Range;
 use std::rc::Rc;
 use std::sync::Arc;
 
-use compact_str::CompactString;
-
 use super::model::{
     BoundDefinition, BoundExpr, BoundProgram, DefinitionId, LookDirection, LookPolarity, SourceSpan,
 };
@@ -25,8 +23,6 @@ const STEP_LIMIT: usize = 200_000;
 #[derive(Clone, Debug)]
 pub struct NoMatchExplainer {
     program: BoundProgram,
-    /// The definitions the tree evaluator recognizes whole.
-    tree_evaluated: BTreeSet<CompactString>,
 }
 
 /// A position in pattern source.
@@ -108,15 +104,8 @@ pub struct NoMatchReport {
 }
 
 impl NoMatchExplainer {
-    pub(super) fn new(program: BoundProgram, tree_evaluated: BTreeSet<CompactString>) -> Self {
-        Self {
-            program,
-            tree_evaluated,
-        }
-    }
-
-    pub(super) fn tree_evaluated(&self, definition: &str) -> bool {
-        self.tree_evaluated.contains(definition)
+    pub(super) fn new(program: BoundProgram) -> Self {
+        Self { program }
     }
 
     /// Evaluates `definition`'s body at every start position of `tokens`.

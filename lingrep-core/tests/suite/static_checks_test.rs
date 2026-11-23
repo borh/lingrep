@@ -281,18 +281,24 @@ fn a_longer_match_from_an_earlier_start_is_a_difference() {
 }
 
 #[test]
-fn a_nested_match_is_compared_under_each_definition_s_own_rule() {
-    // `&` or `measure` moves a definition to the evaluator that publishes the
-    // longest match from every start, nested or not.
+fn a_nested_match_is_compared_under_one_rule_whatever_recognizes_the_definition() {
+    // `&` and `measure` select the tree evaluator, which drops a nested match
+    // as the dense machine does.
     const NESTING: &str = "[text=の] | [text=猫] [text=の] [text=手]";
     const MEASURE: &str = "measure count(match.words[text=の]) as $n";
     for (left, right, expected) in [
         (NESTING.to_owned(), NESTING.to_owned(), true),
-        (format!("({NESTING}) & []+"), NESTING.to_owned(), false),
+        (format!("({NESTING}) & []+"), NESTING.to_owned(), true),
         (NESTING.to_owned(), format!("({NESTING}) & []+"), true),
-        (format!("{NESTING} {MEASURE}"), NESTING.to_owned(), false),
+        (format!("{NESTING} {MEASURE}"), NESTING.to_owned(), true),
         (NESTING.to_owned(), format!("{NESTING} {MEASURE}"), true),
-        ("[text=の]".to_owned(), format!("({NESTING}) & []+"), true),
+        ("[text=の]".to_owned(), NESTING.to_owned(), false),
+        ("[text=の]".to_owned(), format!("({NESTING}) & []+"), false),
+        (
+            "[text=の]".to_owned(),
+            format!("{NESTING} {MEASURE}"),
+            false,
+        ),
     ] {
         let source = format!("left := {left}.\nright := {right}.");
         let output = compile(&source);

@@ -128,6 +128,14 @@ one, including `!` over a single atom, stays one `BoundExpr::Token`. An
 intersection-free, capture-free definition using `|` and `!` is therefore still
 recognized by the dense NFA.
 
+Both recognizers publish by
+[one rule](pattern-language-reference.md#which-matches-a-definition-publishes):
+the longest match from each start, less a span that the definition's own span
+from an earlier start extends past. `EarlierStarts` in `matcher/emit.rs` is the
+sweep both use; the dense sink applies it in `filter_and_collect_matches` and
+the tree evaluator in `Program::matches_with`, each before captures and records
+are built. The lexical recognizer does not apply it.
+
 `E1 & E2` is evaluated inside `evaluate` by intersecting its operands' candidate
 end positions from a shared start position. `oracle.rs` states the same operator
 by folding operand end-position sets, and a property test compares the two.
