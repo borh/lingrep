@@ -283,15 +283,35 @@ pub fn digest_file(path: &Path) -> Result<String, OrchestrateError> {
 /// the same records in a different key order still agree — and two runs that
 /// emit different records still differ. The explicit sort is required because
 /// workspace feature unification may enable `serde_json/preserve_order`.
+///
+/// The file is read one line at a time: a high-output catalog writes tens of
+/// gigabytes, more than `record` can hold in memory.
 pub fn output_digest(path: &Path) -> Result<String, OrchestrateError> {
-    let text = String::from_utf8_lossy(&read(path)?).into_owned();
+    use std::io::BufRead;
+
+    let unreadable = |cause: std::io::Error| OrchestrateError::Unreadable {
+        path: path.to_path_buf(),
+        cause: cause.to_string(),
+    };
+    let mut input = std::io::BufReader::new(std::fs::File::open(path).map_err(unreadable)?);
     let mut hasher = OutputHasher::new();
-    for (index, line) in text.lines().enumerate() {
+    let mut bytes = Vec::new();
+    let mut number = 0;
+    loop {
+        bytes.clear();
+        if input.read_until(b'\n', &mut bytes).map_err(unreadable)? == 0 {
+            break;
+        }
+        number += 1;
+        let text = String::from_utf8_lossy(&bytes);
+        let line = text
+            .strip_suffix('\n')
+            .map_or(&*text, |line| line.strip_suffix('\r').unwrap_or(line));
         hasher
             .line(line)
             .map_err(|line_number| OrchestrateError::NotJsonl {
                 path: path.to_path_buf(),
-                line: line_number.max(index + 1),
+                line: line_number.max(number),
             })?;
     }
     Ok(hasher.finish())

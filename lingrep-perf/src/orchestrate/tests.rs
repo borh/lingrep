@@ -874,6 +874,35 @@ fn a_streamed_digest_equals_the_digest_of_the_same_bytes_on_disk() {
     );
 }
 
+/// CRLF endings and an unterminated last line digest as their LF-terminated
+/// equivalent, and a non-JSON line is reported by its 1-based number.
+#[test]
+fn a_file_digest_splits_lines_on_lf_or_crlf_and_numbers_a_bad_line() {
+    let dir = scratch("digest-lines");
+    let records = [
+        "{\"type\":\"match\",\"data\":{\"start\":0}}",
+        "{\"type\":\"match\",\"data\":{\"start\":3}}",
+    ];
+    let lf = dir.join("lf.jsonl");
+    write(&lf, &format!("{}\n\n{}\n", records[0], records[1]));
+    let crlf = dir.join("crlf.jsonl");
+    write(&crlf, &format!("{}\r\n\r\n{}", records[0], records[1]));
+    assert_eq!(
+        output_digest(&crlf).expect("digests"),
+        output_digest(&lf).expect("digests")
+    );
+
+    let bad = dir.join("bad.jsonl");
+    write(
+        &bad,
+        &format!("{}\r\n\nnot json\n{}\n", records[0], records[1]),
+    );
+    assert!(matches!(
+        output_digest(&bad),
+        Err(OrchestrateError::NotJsonl { line: 3, .. })
+    ));
+}
+
 /// An early exit would deliver `EPIPE` to the process being measured and turn
 /// a correct run into a recorded failure, so the whole input is consumed even
 /// once the answer cannot be used.
