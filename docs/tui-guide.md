@@ -3,7 +3,7 @@
 `ling explore` provides an interactive view of pattern frequencies,
 surfaces, contexts, source definitions, and one-off sample matches. It uses the
 same matcher and bounded corpus path as the batch commands; direct roots use
-Vibrato analysis.
+Vibrato analysis, except CoNLL-U roots, which supply their own tokens.
 
 ## Start the explorer
 
@@ -31,7 +31,16 @@ ling explore \
   --corpus corpus.lingcorpus
 ```
 
-Direct `explore` sessions support the Vibrato analyzer only. A prepared artifact
+A CoNLL-U root, selected by a `.conllu` file name or `--input-format conllu`,
+is read as pretokenized input: it needs no dictionary, and patterns bind to the
+CoNLL-U token schema, including `dep.head` and `dep.rel`.
+
+```bash
+ling explore --patterns patterns/psycholinguistics.lx \
+  lingrep/tests/fixtures/psycholinguistics.conllu
+```
+
+Other direct `explore` sessions support the Vibrato analyzer only. A prepared artifact
 may contain tokens produced by another analyzer. Use `matches`, `summarize`,
 `tokenize`, `coverage`, or `corpus build` to select Sudachi or an external
 analyzer; see [Choose an analyzer](cli-usage-guide.md#choose-an-analyzer).
@@ -118,9 +127,10 @@ without scanning the corpus again.
 For example, enter `pattern verb := [upos=VERB].` as the pattern and
 `猫が走る。` as the sample.
 
-Playground samples run only in direct mode. A session opened with `--corpus`
-can browse the prepared tokens, but running a Playground sample reports that
-the artifact does not retain a tokenizer.
+Playground samples run only in direct mode over text input. A session opened
+with `--corpus` can browse the prepared tokens, but running a Playground sample
+reports that the artifact does not retain a tokenizer. A session over a CoNLL-U
+root reports that pretokenized input supplies no tokenizer.
 
 ## Cancel work, dismiss errors, or exit
 
@@ -131,7 +141,7 @@ the artifact does not retain a tokenizer.
 | Editing | `Ctrl+Q` | Exit |
 | Playground | `Ctrl+Q` | Exit |
 | Error dialog | `Enter` or `Esc` | Dismiss the error and return to Frequencies |
-| Error dialog | `Ctrl+Q` | Exit |
+| Error dialog | `q` or `Ctrl+Q` | Exit |
 
 The mouse wheel scrolls the current view. Mouse clicks do not select tabs or
 rows.

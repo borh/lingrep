@@ -11,7 +11,8 @@ use std::sync::{
 
 use lingrep_core::analysis::{AnalyzerLanes, VibratoPlan};
 use lingrep_core::corpus::{
-    AdmittedCorpus, CorpusReadConfig, resolve_input_format, stream_input_events,
+    AdmittedCorpus, CorpusFormat, CorpusReadConfig, conllu, resolve_input_format,
+    stream_input_events,
 };
 use lingrep_core::dictionary::create_tokenizer_from_path;
 #[cfg(test)]
@@ -22,9 +23,11 @@ use lingrep_core::execution::{
     AnalysisBinding, CancellationFlag, ExecutionProgress, MatchSink, PolicySelection, RunOutcome,
     SentenceAdmission, execute_analyzed,
 };
-use lingrep_core::fsm::CompiledCatalog;
+use lingrep_core::fsm::{BoundCatalog, CompiledCatalog};
 use lingrep_core::spill::TempBudget;
-use lingrep_core::token_match::TokenInfo;
+use lingrep_core::token_match::{
+    BoundProjection, TokenInfo, TokenSchema, display_surface_attributes,
+};
 use lingrep_corpus::CorpusArtifact;
 
 use crate::cli::{ExecutionCliConfig, QueryInputArgs};
@@ -36,17 +39,29 @@ use crate::direct_source::{
 };
 use crate::error::CliError;
 
+/// The format of a direct root, with stdin (`-`) treated as no path.
+fn direct_format(args: &QueryInputArgs) -> CorpusFormat {
+    let root = args.root.as_deref().filter(|path| *path != Path::new("-"));
+    resolve_input_format(root, args.input_format)
+}
+
 enum InputSpec {
     Direct {
         root: Option<PathBuf>,
-        /// Built once, so every execution and sample shares one
-        /// protected-surface table.
-        plan: Arc<VibratoPlan>,
+        analysis: DirectAnalysis,
         reader_config: CorpusReadConfig,
     },
     Prepared {
         artifact: PathBuf,
     },
+}
+
+enum DirectAnalysis {
+    /// Built once, so every execution and sample shares one
+    /// protected-surface table.
+    Vibrato(Arc<VibratoPlan>),
+    /// The source supplies its own tokens in this schema, as CoNLL-U does.
+    Pretokenized(TokenSchema),
 }
 
 /// Reopenable execution inputs and immutable resource bounds for TUI and
@@ -72,6 +87,13 @@ impl InteractiveExecution {
             ));
         }
 
+        if direct_format(args) == CorpusFormat::Conllu {
+            return Self::direct(
+                args,
+                config,
+                DirectAnalysis::Pretokenized(conllu::token_schema()),
+            );
+        }
         let dict_path = args.direct_dictionary_path()?;
         let dictionary_path = dict_path
             .to_str()
@@ -80,13 +102,13 @@ impl InteractiveExecution {
             .map_err(|error| CliError::Dictionary(error.to_string()))?;
         let plan = VibratoPlan::new(tokenizer, &dict_path)
             .map_err(|error| CliError::Dictionary(format!("{error}: {}", error.source)))?;
-        Self::direct_with_plan(args, config, Arc::new(plan))
+        Self::direct(args, config, DirectAnalysis::Vibrato(Arc::new(plan)))
     }
 
-    fn direct_with_plan(
+    fn direct(
         args: &QueryInputArgs,
         config: &ExecutionCliConfig,
-        plan: Arc<VibratoPlan>,
+        analysis: DirectAnalysis,
     ) -> Result<Self, CliError> {
         let declared_stdin = args
             .root
@@ -97,9 +119,8 @@ impl InteractiveExecution {
             .as_ref()
             .filter(|path| path.as_path() != Path::new("-"))
             .cloned();
-        let format = resolve_input_format(root.as_deref(), args.input_format);
         let (reader_config, _) = build_direct_reader_config(
-            format,
+            direct_format(args),
             root.as_deref(),
             declared_stdin,
             &args.markdown,
@@ -108,7 +129,7 @@ impl InteractiveExecution {
         Ok(Self::from_input(
             InputSpec::Direct {
                 root,
-                plan,
+                analysis,
                 reader_config,
             },
             config,
@@ -141,13 +162,30 @@ impl InteractiveExecution {
                 "interactive execution requires a reopenable source".into(),
             ));
         }
-        let _validated_source = self.open_source(Vec::new(), None)?;
+        match &self.input {
+            InputSpec::Prepared { artifact } => {
+                self.open_prepared(artifact, Vec::new(), None)?;
+            }
+            InputSpec::Direct { .. } => {
+                self.open_direct(Vec::new(), None)?;
+            }
+        }
         Ok(())
     }
 
     pub(crate) fn tokenize_sample(&self, text: &str) -> Result<Vec<TokenInfo>, CliError> {
         match &self.input {
-            InputSpec::Direct { plan, .. } => Ok(plan.tokenize(text)),
+            InputSpec::Direct {
+                analysis: DirectAnalysis::Vibrato(plan),
+                ..
+            } => Ok(plan.tokenize(text)),
+            InputSpec::Direct {
+                analysis: DirectAnalysis::Pretokenized(_),
+                ..
+            } => Err(CliError::InvalidArgs(
+                "playground sample execution is unavailable: CoNLL-U input is pretokenized and supplies no tokenizer"
+                    .into(),
+            )),
             InputSpec::Prepared { .. } => Err(CliError::InvalidArgs(
                 "playground sample execution is unavailable: prepared artifacts do not retain a tokenizer"
                     .into(),
@@ -166,33 +204,48 @@ impl InteractiveExecution {
         S: MatchSink,
     {
         let pool = build_worker_pool(self.config.workers)?;
-        let (source, plan, stored_schema) =
-            self.open_source(matcher.lookaround_division_kinds(), Some(Arc::clone(&pool)))?;
+        let division_kinds = matcher.lookaround_division_kinds();
+        // A prepared artifact is opened first because the display attributes
+        // depend on its stored schema: one written before `surface` existed
+        // does not carry it. A direct source is opened second because its
+        // pretokenized rows are projected through the bound catalog.
+        let (source, schema, bound, plan) = match &self.input {
+            InputSpec::Prepared { artifact } => {
+                let (source, stored_schema) =
+                    self.open_prepared(artifact, division_kinds, Some(Arc::clone(&pool)))?;
+                // Stored tokens are bound as UniDic morphology whichever
+                // analyzer wrote the artifact.
+                let schema = TokenSchema::unidic_morphology();
+                let bound = bind(matcher, &schema, &stored_schema, "vibrato morphology")?;
+                (source, schema, bound, None)
+            }
+            InputSpec::Direct { analysis, .. } => {
+                let (schema, name, plan) = match analysis {
+                    DirectAnalysis::Vibrato(plan) => (
+                        TokenSchema::unidic_morphology(),
+                        "vibrato morphology".to_owned(),
+                        Some(plan.as_ref()),
+                    ),
+                    DirectAnalysis::Pretokenized(schema) => (
+                        schema.clone(),
+                        crate::attribute_binding::analyzer_name(
+                            &lingrep_corpus::AnalyzerRecord::from_descriptor(
+                                &conllu::analyzer_descriptor(),
+                            ),
+                        ),
+                        None,
+                    ),
+                };
+                let bound = bind(matcher, &schema, &schema, &name)?;
+                let source = self.open_direct(division_kinds, Some(bound.projection().clone()))?;
+                (source, schema, bound, plan)
+            }
+        };
         let limits = self.config.limits;
-        // Named once and used twice: it binds the catalog, and — when there is
-        // no tokenizer, which is how this surface says "prepared" — it is also
-        // the schema the executor must project those stored tokens through.
-        // The interactive surfaces analyze only with Vibrato over a packaged
-        // UniDic dictionary, so one schema is a constant here and binds both
-        // the catalog and prepared-token projection.
-        let schema = lingrep_core::token_match::TokenSchema::unidic_morphology();
-        // The rendered surfaces read `surface` only where the tokens carry it:
-        // a prepared artifact written before it existed does not.
-        let display = lingrep_core::token_match::display_surface_attributes(
-            stored_schema.as_ref().unwrap_or(&schema),
-        );
-        let bound = matcher
-            .bind_with_projection(
-                &schema,
-                matcher.execution_attributes().into_iter().chain(display),
-            )
-            .map_err(|error| {
-                crate::attribute_binding::bind_refusal(&error, "vibrato morphology")
-            })?;
         // Lanes rather than one session, for the same reason `matches` uses
         // them: this pool is idle while tokenization runs, and an interactive
         // surface is the one that feels it.
-        let binding = plan.as_deref().map_or_else(
+        let binding = plan.map_or_else(
             || AnalysisBinding::Prepared(schema),
             |plan| AnalysisBinding::Session(AnalyzerLanes::new(plan, self.config.workers, &pool)),
         );
@@ -213,94 +266,142 @@ impl InteractiveExecution {
         .map_err(CliError::from)
     }
 
-    fn open_source(
+    fn open_prepared(
         &self,
+        artifact: &Path,
         division_kinds: Vec<compact_str::CompactString>,
         decode_pool: Option<Arc<rayon::ThreadPool>>,
-    ) -> Result<
-        (
-            BoxSentenceSource,
-            Option<Arc<VibratoPlan>>,
-            Option<lingrep_core::token_match::TokenSchema>,
-        ),
-        CliError,
-    > {
-        match &self.input {
-            InputSpec::Prepared { artifact } => {
-                let artifact = CorpusArtifact::open(artifact)?;
-                let stored_schema = artifact.token_schema()?;
-                let source = artifact.sentence_source()?;
-                let source = match decode_pool {
-                    Some(pool) => source.with_decode_pool(pool),
-                    None => source,
-                };
-                let source = if division_kinds.is_empty() {
-                    source
-                } else {
-                    artifact.with_lookaround_divisions(
-                        source,
-                        division_kinds,
-                        artifact.provenance_reader()?,
-                    )?
-                };
-                Ok((Box::new(source), None, Some(stored_schema)))
-            }
-            InputSpec::Direct {
-                root: Some(root),
-                plan,
-                reader_config,
-            } => {
-                let (events, _, _) = FilesystemCorpusEvents::new(
-                    root,
-                    reader_config.clone(),
-                    self.config.traversal.clone(),
-                    self.config.limits.max_input_record_bytes,
-                )?;
-                Ok((
-                    Box::new(
-                        source_from_events(admitted_filesystem_events(events))
-                            .with_normalization(self.config.normalization)
-                            .with_lookaround_divisions(division_kinds),
-                    ),
-                    Some(Arc::clone(plan)),
-                    None,
-                ))
-            }
-            InputSpec::Direct {
-                root: None,
-                plan,
-                reader_config,
-            } => {
-                if self.stdin_opened.swap(true, Ordering::AcqRel) {
-                    return Err(CliError::InvalidArgs(
-                        "stdin cannot be reopened for another interactive scan".into(),
-                    ));
-                }
-                let (reader, _) = BoundedRecordReader::new(
-                    BufReader::new(io::stdin()),
-                    self.config.limits.max_input_record_bytes,
-                    "<stdin>",
-                );
-                let events: Box<
-                    dyn Iterator<Item = io::Result<lingrep_core::corpus::CorpusEvent>> + Send,
-                > = Box::new(stream_input_events(
-                    crate::direct_source::input_format(reader_config),
-                    reader,
-                    "<stdin>".into(),
-                    None,
-                ));
-                Ok((
-                    Box::new(
-                        source_from_events(AdmittedCorpus::new(events))
-                            .with_normalization(self.config.normalization)
-                            .with_lookaround_divisions(division_kinds),
-                    ),
-                    Some(Arc::clone(plan)),
-                    None,
-                ))
-            }
-        }
+    ) -> Result<(BoxSentenceSource, TokenSchema), CliError> {
+        let artifact = CorpusArtifact::open(artifact)?;
+        let stored_schema = artifact.token_schema()?;
+        let source = artifact.sentence_source()?;
+        let source = match decode_pool {
+            Some(pool) => source.with_decode_pool(pool),
+            None => source,
+        };
+        let source = if division_kinds.is_empty() {
+            source
+        } else {
+            artifact.with_lookaround_divisions(
+                source,
+                division_kinds,
+                artifact.provenance_reader()?,
+            )?
+        };
+        Ok((Box::new(source), stored_schema))
     }
+
+    /// Opens the direct source. `projection` selects the attributes kept from
+    /// pretokenized rows; reading such a row without one is an error.
+    fn open_direct(
+        &self,
+        division_kinds: Vec<compact_str::CompactString>,
+        projection: Option<BoundProjection>,
+    ) -> Result<BoxSentenceSource, CliError> {
+        let InputSpec::Direct {
+            root,
+            reader_config,
+            ..
+        } = &self.input
+        else {
+            return Err(CliError::InvalidArgs(
+                "a prepared corpus has no direct source".into(),
+            ));
+        };
+        let Some(root) = root else {
+            if self.stdin_opened.swap(true, Ordering::AcqRel) {
+                return Err(CliError::InvalidArgs(
+                    "stdin cannot be reopened for another interactive scan".into(),
+                ));
+            }
+            let (reader, _) = BoundedRecordReader::new(
+                BufReader::new(io::stdin()),
+                self.config.limits.max_input_record_bytes,
+                "<stdin>",
+            );
+            let events: Box<
+                dyn Iterator<Item = io::Result<lingrep_core::corpus::CorpusEvent>> + Send,
+            > = Box::new(stream_input_events(
+                crate::direct_source::input_format(reader_config),
+                reader,
+                "<stdin>".into(),
+                None,
+            ));
+            let source = source_from_events(AdmittedCorpus::new(events))
+                .with_normalization(self.config.normalization)
+                .with_lookaround_divisions(division_kinds);
+            return Ok(match projection {
+                Some(projection) => Box::new(source.with_projection(projection)),
+                None => Box::new(source),
+            });
+        };
+        let (events, _, _) = FilesystemCorpusEvents::new(
+            root,
+            reader_config.clone(),
+            self.config.traversal.clone(),
+            self.config.limits.max_input_record_bytes,
+        )?;
+        let source = source_from_events(admitted_filesystem_events(events))
+            .with_normalization(self.config.normalization)
+            .with_lookaround_divisions(division_kinds);
+        Ok(match projection {
+            Some(projection) => Box::new(source.with_projection(projection)),
+            None => Box::new(source),
+        })
+    }
+}
+
+/// Binds `matcher` to `schema`, projecting the attributes it executes on and
+/// the surface attributes `display_schema` carries for the rendered views.
+fn bind(
+    matcher: &CompiledCatalog,
+    schema: &TokenSchema,
+    display_schema: &TokenSchema,
+    schema_name: &str,
+) -> Result<BoundCatalog, CliError> {
+    matcher
+        .bind_with_projection(
+            schema,
+            matcher
+                .execution_attributes()
+                .into_iter()
+                .chain(display_surface_attributes(display_schema)),
+        )
+        .map_err(|error| crate::attribute_binding::bind_refusal(&error, schema_name))
+}
+
+#[cfg(test)]
+fn test_config() -> ExecutionCliConfig {
+    ExecutionCliConfig {
+        traversal: Default::default(),
+        normalization: lingrep_core::analysis::NormalizationPolicy::Nfc,
+        analyzer: crate::cli::AnalyzerCliConfig::Vibrato,
+        profile: lingrep_core::analysis::ExtractionProfile::Morphology,
+        segmentation: lingrep_core::analysis::SegmentationMode::Input,
+        limits: ExecutionLimits::default(),
+        max_temp_bytes: 1024 * 1024,
+        workers: 1,
+        progress: crate::cli::ProgressMode::Never,
+        diagnostic_format: crate::cli::DiagnosticFormat::Human,
+        stderr: crate::terminal::RunStderr::new(std::io::stderr()),
+    }
+}
+
+/// An execution over the tracked CoNLL-U fixture, opened the way `explore`
+/// opens a root named on the command line.
+#[cfg(test)]
+pub(crate) fn conllu_test_execution() -> Arc<InteractiveExecution> {
+    let input = QueryInputArgs {
+        dict_path: None,
+        corpus: None,
+        root: Some(PathBuf::from(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/tests/fixtures/psycholinguistics.conllu"
+        ))),
+        markdown: lingrep_cli_common::MarkdownReaderArgs::default(),
+        input_format: None,
+    };
+    Arc::new(InteractiveExecution::new(&input, &test_config()).expect("open the CoNLL-U fixture"))
 }
 
 #[cfg(test)]
@@ -314,19 +415,7 @@ pub(crate) fn direct_test_execution(text: &str) -> (tempfile::TempDir, Arc<Inter
         markdown: lingrep_cli_common::MarkdownReaderArgs::default(),
         input_format: None,
     };
-    let config = ExecutionCliConfig {
-        traversal: Default::default(),
-        normalization: lingrep_core::analysis::NormalizationPolicy::Nfc,
-        analyzer: crate::cli::AnalyzerCliConfig::Vibrato,
-        profile: lingrep_core::analysis::ExtractionProfile::Morphology,
-        segmentation: lingrep_core::analysis::SegmentationMode::Input,
-        limits: ExecutionLimits::default(),
-        max_temp_bytes: 1024 * 1024,
-        workers: 1,
-        progress: crate::cli::ProgressMode::Never,
-        diagnostic_format: crate::cli::DiagnosticFormat::Human,
-        stderr: crate::terminal::RunStderr::new(std::io::stderr()),
-    };
+    let config = test_config();
     static PLAN: OnceLock<Arc<VibratoPlan>> = OnceLock::new();
     let plan = Arc::clone(PLAN.get_or_init(|| {
         let mini = lingrep_core::testing::MiniDictionary::new();
@@ -344,7 +433,8 @@ pub(crate) fn direct_test_execution(text: &str) -> (tempfile::TempDir, Arc<Inter
             .expect("the miniature dictionary lexicon enumerates"),
         )
     }));
-    let execution = InteractiveExecution::direct_with_plan(&input, &config, plan).unwrap();
+    let execution =
+        InteractiveExecution::direct(&input, &config, DirectAnalysis::Vibrato(plan)).unwrap();
     (directory, Arc::new(execution))
 }
 
@@ -358,13 +448,15 @@ mod tests {
         let (_second_directory, second) = direct_test_execution("犬。\n");
 
         let InputSpec::Direct {
-            plan: first_plan, ..
+            analysis: DirectAnalysis::Vibrato(first_plan),
+            ..
         } = &first.input
         else {
             panic!("direct fixture must retain a plan");
         };
         let InputSpec::Direct {
-            plan: second_plan, ..
+            analysis: DirectAnalysis::Vibrato(second_plan),
+            ..
         } = &second.input
         else {
             panic!("direct fixture must retain a plan");
@@ -452,6 +544,16 @@ mod tests {
             error
                 .to_string()
                 .contains("prepared artifacts do not retain a tokenizer"),
+            "{error}"
+        );
+    }
+    #[test]
+    fn playground_samples_reject_pretokenized_input_by_name() {
+        let error = conllu_test_execution()
+            .tokenize_sample("猫。")
+            .expect_err("CoNLL-U input supplies no tokenizer");
+        assert!(
+            error.to_string().contains("CoNLL-U input is pretokenized"),
             "{error}"
         );
     }
