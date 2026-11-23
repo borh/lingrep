@@ -354,7 +354,7 @@ async fn question_page(
         let scope_supported = params
             .search_scope
             .as_ref()
-            .is_none_or(|scope| scope.included_sections.is_none() && scope.include_unlabelled);
+            .is_none_or(crate::search_scope::SearchScope::selects_every_section);
         if !params.run_options.document_reach
             || params.run_options.compound_category != CompoundCategory::Compound
             || params.run_options.overlaps != Overlaps::Catalog
@@ -389,7 +389,7 @@ async fn question_page(
     }
     let mut seed = serde_json::json!({
         "source":landing.seed_pattern,"corpus":slot.name.as_str(),
-        "raw":landing.search_scope.as_ref().and_then(|scope|scope.clause.as_deref()).unwrap_or(""),
+        "raw":landing.search_scope.as_ref().and_then(|scope|scope.clause()).unwrap_or(""),
         "run":if landing.auto_run||landing.run_when_ready{"1"}else{"0"},
     });
     if let Target::Link(params) = &target

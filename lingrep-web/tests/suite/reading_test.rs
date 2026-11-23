@@ -584,7 +584,10 @@ async fn search_scope_includes_before_matching_and_keeps_revision_totals_consist
             );
         }
         assert_eq!(
-            snapshot.search_scope.included_sections,
+            snapshot
+                .search_scope
+                .included_sections()
+                .map(<[String]>::to_vec),
             serde_json::from_value::<Option<Vec<String>>>(scope["included_sections"].clone())
                 .unwrap()
         );
@@ -609,7 +612,7 @@ async fn search_scope_includes_before_matching_and_keeps_revision_totals_consist
                 .to_vec(),
         )
         .unwrap();
-        if let Some(selected) = &snapshot.search_scope.included_sections {
+        if let Some(selected) = snapshot.search_scope.included_sections() {
             for label in ["abstract", "introduction"] {
                 assert_eq!(
                     detail.contains(&format!("data-search-value=\"{label}\"")),

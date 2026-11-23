@@ -491,7 +491,7 @@ pub(super) async fn prepare_scan(
         }
     };
 
-    if let Some(selected) = &scope.included_sections {
+    if let Some(selected) = scope.included_sections() {
         let selected = selected.iter().map(String::as_str).collect::<HashSet<_>>();
         vocabulary.retain(|section| selected.contains(section.label.as_str()));
     }

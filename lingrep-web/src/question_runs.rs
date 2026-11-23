@@ -299,11 +299,15 @@ async fn project_run_with_cache(
     let mut contract_run = None;
     let mut counters = None;
     let current_ready = runtime.ready().await;
-    let mut condition = attempt.search_scope.clause.clone().unwrap_or_default();
+    let mut condition = attempt.search_scope.clause().unwrap_or_default().to_owned();
     let completed = attempt.phase == AttemptPhase::Completed;
     let mut undisplayable: Option<String> = None;
     if let Some(snapshot) = snapshot.filter(|snapshot| snapshot.revision == attempt.revision) {
-        condition = snapshot.search_scope.clause.clone().unwrap_or_default();
+        condition = snapshot
+            .search_scope
+            .clause()
+            .unwrap_or_default()
+            .to_owned();
         for pattern in &snapshot.patterns {
             definitions.push(pattern.name.clone());
             counts.insert(pattern.name.clone(), pattern.exact_total);

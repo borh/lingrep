@@ -420,12 +420,11 @@ mod tests {
             .filter(|_| tc.draw(g::booleans()))
             .cloned()
             .collect::<Vec<_>>();
-        let scope = SearchScope {
-            included_sections: tc.draw(g::booleans()).then_some(selected),
-            include_unlabelled: tc.draw(g::booleans()),
-            clause: None,
-            document: None,
-        };
+        let scope = SearchScope::filter(
+            tc.draw(g::booleans()).then_some(selected),
+            tc.draw(g::booleans()),
+            None,
+        );
         let clause = scope
             .where_clause(&all)
             .unwrap()
@@ -438,11 +437,10 @@ mod tests {
                 .map(|(_, label)| label.clone())
                 .collect::<Vec<_>>();
             let expected = if active.is_empty() {
-                scope.include_unlabelled
+                scope.include_unlabelled()
             } else {
                 scope
-                    .included_sections
-                    .as_ref()
+                    .included_sections()
                     .is_none_or(|selected| active.iter().any(|label| selected.contains(label)))
             };
             let actual = clause.as_ref().is_none_or(|clause| {
