@@ -15,6 +15,8 @@ const SENTENCE_BYTES: usize = 64 * 1024;
 struct DiscardSink;
 
 impl MatchSink for DiscardSink {
+    type Error = ExecutionError;
+
     fn push(
         &mut self,
         _location: &SentenceLocation,

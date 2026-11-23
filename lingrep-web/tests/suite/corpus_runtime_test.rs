@@ -117,6 +117,8 @@ fn direct_analysis_inputs(config: &CorpusReadConfig, dictionary: &[u8]) -> Analy
 struct MatchLog(Vec<(u64, Vec<(usize, usize, String)>)>);
 
 impl MatchSink for MatchLog {
+    type Error = ExecutionError;
+
     fn push(
         &mut self,
         location: &SentenceLocation,

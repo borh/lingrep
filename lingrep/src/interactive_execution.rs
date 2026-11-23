@@ -469,6 +469,8 @@ mod tests {
     struct Recorded(Vec<(String, u64)>);
 
     impl MatchSink for Recorded {
+        type Error = lingrep_core::execution::ExecutionError;
+
         fn push(
             &mut self,
             location: &lingrep_core::execution::SentenceLocation,

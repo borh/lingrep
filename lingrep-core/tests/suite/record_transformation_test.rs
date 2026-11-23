@@ -294,6 +294,8 @@ struct Collecting {
 }
 
 impl MatchSink for Collecting {
+    type Error = ExecutionError;
+
     fn push(
         &mut self,
         _location: &SentenceLocation,

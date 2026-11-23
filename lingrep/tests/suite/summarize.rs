@@ -1889,6 +1889,8 @@ impl SentenceBatchSource for OneBatchSource {
 struct RequiredSurfaceSink;
 
 impl MatchSink for RequiredSurfaceSink {
+    type Error = ExecutionError;
+
     fn push(
         &mut self,
         location: &SentenceLocation,

@@ -28,6 +28,8 @@ struct CountSink {
 }
 
 impl MatchSink for CountSink {
+    type Error = ExecutionError;
+
     fn push(
         &mut self,
         _location: &SentenceLocation,

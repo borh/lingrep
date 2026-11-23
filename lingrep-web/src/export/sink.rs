@@ -98,6 +98,8 @@ impl ExportSink {
 }
 
 impl MatchSink for ExportSink {
+    type Error = ExecutionError;
+
     fn push(
         &mut self,
         location: &SentenceLocation,

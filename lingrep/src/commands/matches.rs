@@ -1476,6 +1476,8 @@ impl<W: Write> DirectMatchSink<'_, W> {
 }
 
 impl<W: Write> MatchSink for DirectMatchSink<'_, W> {
+    type Error = ExecutionError;
+
     fn push(
         &mut self,
         location: &lingrep_core::execution::SentenceLocation,

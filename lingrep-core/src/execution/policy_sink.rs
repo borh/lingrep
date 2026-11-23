@@ -250,6 +250,8 @@ impl<'a, S: MatchSink> PolicySink<'a, S> {
 }
 
 impl<S: MatchSink> MatchSink for PolicySink<'_, S> {
+    type Error = ExecutionError;
+
     fn counts_token_windows(&self) -> bool {
         self.mode == PolicyMode::Apply && self.trace.is_none() && self.inner.counts_token_windows()
     }
@@ -290,7 +292,12 @@ impl<S: MatchSink> MatchSink for PolicySink<'_, S> {
         let published = match self.mode {
             // No copy at all: a policy-free catalog must not pay for the
             // engine's existence.
-            PolicyMode::Passthrough => return self.inner.push(location, sentence, matches),
+            PolicyMode::Passthrough => {
+                return self
+                    .inner
+                    .push(location, sentence, matches)
+                    .map_err(Into::into);
+            }
             PolicyMode::Raw => strip_hidden(&self.policy, matches),
             // The only mode with derived fields to offer, and so the only one
             // that takes the record-carrying entry point. Its default projects
@@ -324,10 +331,15 @@ impl<S: MatchSink> MatchSink for PolicySink<'_, S> {
                     self.trace.as_mut(),
                 )
                 .map_err(ExecutionError::PolicyAnchor)?;
-                return self.inner.push_records(location, sentence, records);
+                return self
+                    .inner
+                    .push_records(location, sentence, records)
+                    .map_err(Into::into);
             }
         };
-        self.inner.push(location, sentence, &published)
+        self.inner
+            .push(location, sentence, &published)
+            .map_err(Into::into)
     }
 
     fn push_partition<V: TokenSequence + Sync>(
@@ -427,13 +439,16 @@ impl<S: MatchSink> MatchSink for PolicySink<'_, S> {
             .map(|sentence| std::mem::take(&mut sentence.records))
             .collect();
         let prefix_len = successful.len();
-        let (controls, cancelled) = self.inner.push_records_partition(
-            pool,
-            &locations[..prefix_len],
-            &sentences[..prefix_len],
-            records,
-            cancel,
-        )?;
+        let (controls, cancelled) = self
+            .inner
+            .push_records_partition(
+                pool,
+                &locations[..prefix_len],
+                &sentences[..prefix_len],
+                records,
+                cancel,
+            )
+            .map_err(Into::<ExecutionError>::into)?;
         for sentence in successful.into_iter().take(controls.len()) {
             self.stats.merge_from(sentence.stats);
             self.program_stats.merge_from(sentence.program_stats);
@@ -452,6 +467,6 @@ impl<S: MatchSink> MatchSink for PolicySink<'_, S> {
     }
 
     fn finish_batch(&mut self) -> Result<(), ExecutionError> {
-        self.inner.finish_batch()
+        self.inner.finish_batch().map_err(Into::into)
     }
 }

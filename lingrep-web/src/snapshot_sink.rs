@@ -1279,6 +1279,8 @@ impl SnapshotSink {
 }
 
 impl MatchSink for SnapshotSink {
+    type Error = ExecutionError;
+
     fn push(
         &mut self,
         location: &SentenceLocation,

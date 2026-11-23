@@ -98,6 +98,8 @@ struct PatternSink {
 }
 
 impl MatchSink for PatternSink {
+    type Error = ExecutionError;
+
     fn push(
         &mut self,
         _location: &SentenceLocation,

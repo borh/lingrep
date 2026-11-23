@@ -101,6 +101,8 @@ struct RecordingSink {
 }
 
 impl MatchSink for RecordingSink {
+    type Error = ExecutionError;
+
     fn push(
         &mut self,
         _location: &SentenceLocation,
@@ -118,6 +120,8 @@ impl MatchSink for RecordingSink {
 struct SurfaceSink;
 
 impl MatchSink for SurfaceSink {
+    type Error = ExecutionError;
+
     fn push(
         &mut self,
         location: &SentenceLocation,

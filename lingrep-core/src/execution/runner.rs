@@ -231,6 +231,9 @@ pub const PARTITION_PUBLICATION_WIDTH: usize = 8;
 
 /// Receives complete canonical matches for one ordered sentence.
 pub trait MatchSink {
+    /// Failure returned by this sink before the execution boundary.
+    type Error: Into<ExecutionError>;
+
     /// Whether this sink has a partition implementation worth preparing in
     /// parallel at the publication seam.
     ///
@@ -254,6 +257,8 @@ pub trait MatchSink {
     ///
     /// Each control's `records_emitted` is the sentence's window count over
     /// every definition, the number of records matching would have published.
+    /// The default reports an execution contract error if a sink opts into
+    /// token windows without implementing their publication.
     fn push_windows<V: TokenSequence + Sync>(
         &mut self,
         _pool: &rayon::ThreadPool,
@@ -272,7 +277,7 @@ pub trait MatchSink {
         location: &SentenceLocation,
         sentence: &dyn TokenSequence,
         matches: &[Match],
-    ) -> Result<SinkControl, ExecutionError>;
+    ) -> Result<SinkControl, Self::Error>;
 
     /// Publishes one sentence's records together with its derived unit, key,
     /// and tags.
@@ -291,7 +296,7 @@ pub trait MatchSink {
         location: &SentenceLocation,
         sentence: &dyn TokenSequence,
         records: Vec<PublishedRecord>,
-    ) -> Result<SinkControl, ExecutionError> {
+    ) -> Result<SinkControl, Self::Error> {
         let matches: Vec<Match> = records
             .into_iter()
             .map(PublishedRecord::into_match)
@@ -314,7 +319,7 @@ pub trait MatchSink {
         sentences: &[V],
         found: &[Vec<Match>],
         cancel: &CancellationFlag,
-    ) -> Result<(Vec<SinkControl>, bool), ExecutionError> {
+    ) -> Result<(Vec<SinkControl>, bool), Self::Error> {
         let mut controls = Vec::with_capacity(found.len());
         for ((location, sentence), matches) in locations.iter().zip(sentences).zip(found) {
             if cancel.is_cancelled() {
@@ -345,7 +350,7 @@ pub trait MatchSink {
         sentences: &[V],
         records: Vec<Vec<PublishedRecord>>,
         cancel: &CancellationFlag,
-    ) -> Result<(Vec<SinkControl>, bool), ExecutionError> {
+    ) -> Result<(Vec<SinkControl>, bool), Self::Error> {
         let mut controls = Vec::with_capacity(records.len());
         for ((location, sentence), records) in locations.iter().zip(sentences).zip(records) {
             if cancel.is_cancelled() {
@@ -364,12 +369,14 @@ pub trait MatchSink {
     }
 
     /// Finalizes one complete logical publication batch.
-    fn finish_batch(&mut self) -> Result<(), ExecutionError> {
+    fn finish_batch(&mut self) -> Result<(), Self::Error> {
         Ok(())
     }
 }
 
 impl<T: MatchSink + ?Sized> MatchSink for &mut T {
+    type Error = T::Error;
+
     fn wants_parallel_records_partition(&self) -> bool {
         (**self).wants_parallel_records_partition()
     }
@@ -393,7 +400,7 @@ impl<T: MatchSink + ?Sized> MatchSink for &mut T {
         location: &SentenceLocation,
         sentence: &dyn TokenSequence,
         matches: &[Match],
-    ) -> Result<SinkControl, ExecutionError> {
+    ) -> Result<SinkControl, Self::Error> {
         (**self).push(location, sentence, matches)
     }
 
@@ -404,7 +411,7 @@ impl<T: MatchSink + ?Sized> MatchSink for &mut T {
         location: &SentenceLocation,
         sentence: &dyn TokenSequence,
         records: Vec<PublishedRecord>,
-    ) -> Result<SinkControl, ExecutionError> {
+    ) -> Result<SinkControl, Self::Error> {
         (**self).push_records(location, sentence, records)
     }
 
@@ -415,7 +422,7 @@ impl<T: MatchSink + ?Sized> MatchSink for &mut T {
         sentences: &[V],
         found: &[Vec<Match>],
         cancel: &CancellationFlag,
-    ) -> Result<(Vec<SinkControl>, bool), ExecutionError> {
+    ) -> Result<(Vec<SinkControl>, bool), Self::Error> {
         (**self).push_partition(pool, locations, sentences, found, cancel)
     }
 
@@ -426,11 +433,11 @@ impl<T: MatchSink + ?Sized> MatchSink for &mut T {
         sentences: &[V],
         records: Vec<Vec<PublishedRecord>>,
         cancel: &CancellationFlag,
-    ) -> Result<(Vec<SinkControl>, bool), ExecutionError> {
+    ) -> Result<(Vec<SinkControl>, bool), Self::Error> {
         (**self).push_records_partition(pool, locations, sentences, records, cancel)
     }
 
-    fn finish_batch(&mut self) -> Result<(), ExecutionError> {
+    fn finish_batch(&mut self) -> Result<(), Self::Error> {
         (**self).finish_batch()
     }
 }
@@ -964,7 +971,7 @@ impl PublicationState {
         K: MatchSink,
         P: ProgressSink<K>,
     {
-        sink.finish_batch()?;
+        sink.finish_batch().map_err(Into::<ExecutionError>::into)?;
         progress.update(self.current.progress(), &*sink);
         self.logical_pending = 0;
         Ok(())
@@ -1232,10 +1239,10 @@ where
             return Ok(BatchControl::Cancelled);
         }
         let (controls, cancelled) = match found {
-            Found::Matches(found) => {
-                self.sink
-                    .push_partition(self.pool, locations, sentences, found, self.cancel)?
-            }
+            Found::Matches(found) => self
+                .sink
+                .push_partition(self.pool, locations, sentences, found, self.cancel)
+                .map_err(Into::<ExecutionError>::into)?,
             Found::Windows(_) => {
                 self.sink
                     .push_windows(self.pool, locations, sentences, self.cancel)?
@@ -1638,6 +1645,8 @@ mod tests {
                 mode: &'a str,
             }
             impl MatchSink for RecordingSink<'_> {
+                type Error = ExecutionError;
+
                 fn push(
                     &mut self,
                     location: &SentenceLocation,
@@ -1975,6 +1984,8 @@ mod tests {
     }
 
     impl MatchSink for Sink {
+        type Error = ExecutionError;
+
         fn push(
             &mut self,
             _location: &SentenceLocation,
@@ -1999,6 +2010,8 @@ mod tests {
         struct OrderedSink(Vec<u64>);
 
         impl MatchSink for OrderedSink {
+            type Error = ExecutionError;
+
             fn push(
                 &mut self,
                 location: &SentenceLocation,
@@ -2133,6 +2146,8 @@ mod tests {
         }
         struct ProbeSink(bool);
         impl MatchSink for ProbeSink {
+            type Error = ExecutionError;
+
             fn push(
                 &mut self,
                 _: &SentenceLocation,

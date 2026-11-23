@@ -472,6 +472,8 @@ impl EntrySink<'_> {
 }
 
 impl MatchSink for EntrySink<'_> {
+    type Error = ExecutionError;
+
     fn push(
         &mut self,
         location: &SentenceLocation,

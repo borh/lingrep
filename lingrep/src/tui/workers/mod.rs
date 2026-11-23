@@ -1,10 +1,13 @@
+use std::io;
 use std::path::PathBuf;
 use std::sync::Arc;
 use std::thread::JoinHandle;
 use std::time::{Duration, Instant};
 
 use crossbeam_channel::Sender;
-use lingrep_core::execution::CancellationFlag;
+use lingrep_core::execution::{CancellationFlag, ExecutionError};
+
+use crate::direct_source::MissingRequiredAttribute;
 
 use crate::tui::cache::{KwicLine, SurfaceEntry};
 use crate::tui::message::ExplorerMessage;
@@ -19,6 +22,20 @@ mod surface;
 pub(crate) use kwic::KwicWorker;
 pub(crate) use pattern::PatternWorker;
 pub(crate) use surface::SurfaceWorker;
+
+enum RenderSinkError {
+    Display(MissingRequiredAttribute),
+    Storage(io::Error),
+}
+
+impl From<RenderSinkError> for ExecutionError {
+    fn from(error: RenderSinkError) -> Self {
+        match error {
+            RenderSinkError::Display(error) => error.into(),
+            RenderSinkError::Storage(error) => Self::SinkIo(error),
+        }
+    }
+}
 
 pub(crate) struct TaskHandle {
     pub request_id: RequestId,

@@ -26,6 +26,8 @@ struct RecordingMatchSink {
 }
 
 impl MatchSink for RecordingMatchSink {
+    type Error = ExecutionError;
+
     fn push(
         &mut self,
         _location: &SentenceLocation,
@@ -94,6 +96,8 @@ struct CancellingCaptureSink {
 }
 
 impl MatchSink for CancellingCaptureSink {
+    type Error = ExecutionError;
+
     fn push(
         &mut self,
         _location: &SentenceLocation,

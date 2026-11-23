@@ -33,6 +33,8 @@ struct Recording {
 }
 
 impl MatchSink for Recording {
+    type Error = ExecutionError;
+
     fn push(
         &mut self,
         _location: &SentenceLocation,
@@ -213,6 +215,8 @@ struct PartitionReadingRecords {
 }
 
 impl MatchSink for PartitionReadingRecords {
+    type Error = ExecutionError;
+
     fn wants_parallel_records_partition(&self) -> bool {
         true
     }
@@ -261,6 +265,8 @@ impl MatchSink for PartitionReadingRecords {
 }
 
 impl MatchSink for ReadingRecords {
+    type Error = ExecutionError;
+
     fn push(
         &mut self,
         _location: &SentenceLocation,

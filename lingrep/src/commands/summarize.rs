@@ -1845,6 +1845,8 @@ impl SummarySink<'_> {
 }
 
 impl MatchSink for SummarySink<'_> {
+    type Error = ExecutionError;
+
     fn wants_parallel_records_partition(&self) -> bool {
         true
     }

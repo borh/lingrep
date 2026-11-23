@@ -9,7 +9,7 @@ use lingrep_core::execution::{
 };
 use lingrep_core::fsm::Match;
 
-use super::TaskHandle;
+use super::{RenderSinkError, TaskHandle};
 use crate::direct_source::displayed_text;
 use crate::interactive_execution::InteractiveExecution;
 use crate::tui::message::ExplorerMessage;
@@ -117,12 +117,14 @@ struct KwicSink {
 }
 
 impl MatchSink for KwicSink {
+    type Error = RenderSinkError;
+
     fn push(
         &mut self,
         location: &SentenceLocation,
         sentence: &dyn lingrep_core::token_match::TokenSequence,
         matches: &[Match],
-    ) -> Result<SinkControl, ExecutionError> {
+    ) -> Result<SinkControl, RenderSinkError> {
         // Scoped to one pattern, so matches of every other pattern in the
         // catalog are discarded rather than published.
         let mut records_emitted = 0usize;
@@ -133,14 +135,16 @@ impl MatchSink for KwicSink {
             let before = matched.start.saturating_sub(KWIC_CONTEXT_SIZE)..matched.start;
             let after = matched.end..(matched.end + KWIC_CONTEXT_SIZE).min(sentence.len());
             let line = KwicLine {
-                pre: displayed_text(sentence, before, location).map_err(ExecutionError::from)?,
+                pre: displayed_text(sentence, before, location)
+                    .map_err(RenderSinkError::Display)?,
                 key: displayed_text(sentence, matched.start..matched.end, location)
-                    .map_err(ExecutionError::from)?,
-                post: displayed_text(sentence, after, location).map_err(ExecutionError::from)?,
+                    .map_err(RenderSinkError::Display)?,
+                post: displayed_text(sentence, after, location)
+                    .map_err(RenderSinkError::Display)?,
                 match_start: matched.start,
                 match_end: matched.end,
             };
-            self.writer.push(&line).map_err(ExecutionError::SinkIo)?;
+            self.writer.push(&line).map_err(RenderSinkError::Storage)?;
             records_emitted += 1;
         }
         Ok(SinkControl::Continue { records_emitted })

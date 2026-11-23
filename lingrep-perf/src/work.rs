@@ -291,6 +291,8 @@ impl CountingSink {
 }
 
 impl MatchSink for CountingSink {
+    type Error = ExecutionError;
+
     fn push(
         &mut self,
         _location: &SentenceLocation,

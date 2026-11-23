@@ -217,6 +217,8 @@ impl<W: Write> WindowSink<W> {
 }
 
 impl<W: Write> MatchSink for WindowSink<W> {
+    type Error = ExecutionError;
+
     fn push(
         &mut self,
         location: &SentenceLocation,

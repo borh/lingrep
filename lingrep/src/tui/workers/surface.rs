@@ -11,7 +11,7 @@ use lingrep_core::fsm::Match;
 use lingrep_core::spill::{SortedRunCounts, SpillPolicy};
 use serde::{Deserialize, Serialize};
 
-use super::TaskHandle;
+use super::{RenderSinkError, TaskHandle};
 use crate::direct_source::matched_surface;
 use crate::interactive_execution::InteractiveExecution;
 use crate::tui::cache::{PagedResult, SurfaceEntry};
@@ -228,12 +228,14 @@ fn send_failure(
 }
 
 impl MatchSink for SurfaceSink {
+    type Error = RenderSinkError;
+
     fn push(
         &mut self,
         location: &SentenceLocation,
         sentence: &dyn lingrep_core::token_match::TokenSequence,
         matches: &[Match],
-    ) -> Result<SinkControl, ExecutionError> {
+    ) -> Result<SinkControl, RenderSinkError> {
         // Scoped to one pattern; the rest of the catalog's matches are
         // discarded. A match contributes one record however many token forms
         // it tallies — the unit is the match, not the token.
@@ -244,8 +246,8 @@ impl MatchSink for SurfaceSink {
         {
             for token_index in matched.start..matched.end {
                 let text = matched_surface(sentence, token_index..token_index + 1, location)
-                    .map_err(ExecutionError::from)?;
-                self.counts.add(text, 1).map_err(ExecutionError::SinkIo)?;
+                    .map_err(RenderSinkError::Display)?;
+                self.counts.add(text, 1).map_err(RenderSinkError::Storage)?;
             }
             records_emitted += 1;
         }

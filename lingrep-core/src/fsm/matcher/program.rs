@@ -2926,6 +2926,8 @@ mod tests {
             ordinal: u64,
         }
         impl MatchSink for Sink {
+            type Error = ExecutionError;
+
             fn push(
                 &mut self,
                 location: &SentenceLocation,
@@ -3036,6 +3038,8 @@ mod tests {
         #[derive(Default)]
         struct Sink(usize);
         impl MatchSink for Sink {
+            type Error = ExecutionError;
+
             fn push(
                 &mut self,
                 _: &SentenceLocation,

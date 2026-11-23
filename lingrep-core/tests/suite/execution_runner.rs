@@ -154,6 +154,8 @@ impl ProtocolRecordingSink {
 }
 
 impl MatchSink for ProtocolRecordingSink {
+    type Error = ExecutionError;
+
     fn push(
         &mut self,
         location: &SentenceLocation,
@@ -582,6 +584,8 @@ struct CountReportingSink {
 }
 
 impl MatchSink for CountReportingSink {
+    type Error = ExecutionError;
+
     fn push(
         &mut self,
         _location: &SentenceLocation,
@@ -1095,16 +1099,26 @@ struct ProtocolFailingSink {
     calls: usize,
 }
 
+struct PlannedSinkError;
+
+impl From<PlannedSinkError> for ExecutionError {
+    fn from(_: PlannedSinkError) -> Self {
+        Self::Sink("planned sink failure".to_owned())
+    }
+}
+
 impl MatchSink for ProtocolFailingSink {
+    type Error = PlannedSinkError;
+
     fn push(
         &mut self,
         _location: &SentenceLocation,
         _sentence: &dyn TokenSequence,
         matches: &[Match],
-    ) -> Result<SinkControl, ExecutionError> {
+    ) -> Result<SinkControl, PlannedSinkError> {
         self.calls += 1;
         if self.calls == 2 {
-            Err(ExecutionError::Sink("planned sink failure".to_owned()))
+            Err(PlannedSinkError)
         } else {
             Ok(SinkControl::Continue {
                 records_emitted: matches.len(),
@@ -1380,6 +1394,8 @@ struct RecordingSink {
 }
 
 impl MatchSink for RecordingSink {
+    type Error = ExecutionError;
+
     fn push(
         &mut self,
         location: &SentenceLocation,
@@ -1419,6 +1435,8 @@ impl TokenizedBatchObserver for TimelineObserver {
 struct TimelineSink(Arc<Mutex<Vec<String>>>);
 
 impl MatchSink for TimelineSink {
+    type Error = ExecutionError;
+
     fn push(
         &mut self,
         location: &SentenceLocation,
@@ -1548,6 +1566,8 @@ impl SpillSink {
 }
 
 impl MatchSink for SpillSink {
+    type Error = ExecutionError;
+
     fn push(
         &mut self,
         _location: &SentenceLocation,
@@ -1767,6 +1787,8 @@ struct CancellingSink {
 }
 
 impl MatchSink for CancellingSink {
+    type Error = ExecutionError;
+
     fn push(
         &mut self,
         location: &SentenceLocation,
@@ -2089,6 +2111,8 @@ fn raw_stage_is_partitioned_by_tokenized_residency_without_reordering() {
 fn single_sentence_stages_publish_before_analyzing_the_next_stage() {
     struct TimelineResidencySink(Arc<Mutex<Vec<String>>>);
     impl MatchSink for TimelineResidencySink {
+        type Error = ExecutionError;
+
         fn push(
             &mut self,
             _location: &SentenceLocation,
@@ -2560,6 +2584,8 @@ fn scoped_batch(count: u64) -> ExecutionBatch {
 struct OrdinalRecorder(Vec<u64>);
 
 impl MatchSink for OrdinalRecorder {
+    type Error = ExecutionError;
+
     fn push(
         &mut self,
         location: &SentenceLocation,
@@ -3268,6 +3294,8 @@ struct WindowSink {
 }
 
 impl MatchSink for WindowSink {
+    type Error = ExecutionError;
+
     fn counts_token_windows(&self) -> bool {
         self.counts_windows
     }
