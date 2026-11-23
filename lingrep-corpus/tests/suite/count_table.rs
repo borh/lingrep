@@ -1420,6 +1420,127 @@ fn contrast_g2_and_ratio_follow_the_exact_rate_comparison(tc: hegel::TestCase) {
 }
 
 #[test]
+fn contrast_top_is_the_head_of_the_full_ranking_when_most_entries_are_rare() {
+    // 6,000 entries whose table totals fall from 6,001 to 2: few entries can
+    // reach a high score, so a ranking that stops early has rows to skip.
+    let documents = (0..8u64)
+        .map(|document| DocumentTotals {
+            document_id: document,
+            sentences: 1,
+            tokens: 50_000 + 9_000 * document,
+        })
+        .collect::<Vec<_>>();
+    let entries = (0..6_000u32)
+        .map(|entry| {
+            let total = 6_000 / (u64::from(entry) + 1) + 1;
+            let home = entry % 8;
+            let away = (entry / 8 + home + 1) % 8;
+            if entry % 3 == 0 || away == home || total < 2 {
+                vec![(home, total)]
+            } else {
+                let mut pairs = vec![(home, total - total / 3), (away, total / 3)];
+                pairs.retain(|(_, count)| *count > 0);
+                pairs.sort_unstable();
+                pairs
+            }
+        })
+        .collect::<Vec<_>>();
+    let directory = tempfile::tempdir().expect("tempdir");
+    let table = write_table(
+        &directory.path().join("t.lingtable"),
+        &documents,
+        &vec![entries],
+    );
+    assert_contrast_top_is_the_head_of_the_full_ranking(
+        &table,
+        &[
+            (&[0, 1, 2], &[3, 4, 5]),
+            (&[0, 1, 2, 3], &[2, 3, 4]),
+            (&[0], &[0, 1, 2, 3, 4, 5, 6, 7]),
+            (&[6], &[7]),
+        ],
+        &[0, 1, 10, 100, 3_000, 7_000],
+    );
+}
+
+#[test]
+fn contrast_top_keeps_a_rare_entry_that_outscores_every_common_one() {
+    // 3,072 common entries lean 3:1 towards the first document; the rarer
+    // entries after them occur only there, and score higher than any common
+    // entry although each occurs a fifth as often.
+    let documents = (0..2u64)
+        .map(|document| DocumentTotals {
+            document_id: document,
+            sentences: 1,
+            tokens: 100_000_000,
+        })
+        .collect::<Vec<_>>();
+    let entries = (0..3_100u64)
+        .map(|entry| {
+            if entry < 3_072 {
+                let total = 5_000 - entry;
+                vec![(0, total - total / 4), (1, total / 4)]
+            } else {
+                vec![(0, 1_000 - (entry - 3_072))]
+            }
+        })
+        .collect::<Vec<_>>();
+    let directory = tempfile::tempdir().expect("tempdir");
+    let table = write_table(
+        &directory.path().join("t.lingtable"),
+        &documents,
+        &vec![entries],
+    );
+    let top = table
+        .contrast_top(
+            0,
+            &table
+                .scopes([&table.mask(|id| id == 0), &table.mask(|id| id == 1)])
+                .expect("scopes"),
+            10,
+            &CancellationFlag::new(),
+        )
+        .expect("top");
+    assert_eq!(
+        top.rows.iter().map(|row| row.entry).collect::<Vec<_>>(),
+        (3_072..3_082).collect::<Vec<_>>()
+    );
+    assert_contrast_top_is_the_head_of_the_full_ranking(&table, &[(&[0], &[1])], &[10, 40]);
+}
+
+fn assert_contrast_top_is_the_head_of_the_full_ranking(
+    table: &CountTable,
+    scopes: &[(&[u64], &[u64])],
+    limits: &[usize],
+) {
+    for (first, second) in scopes {
+        let (first, second) = (
+            table.mask(|id| first.contains(&id)),
+            table.mask(|id| second.contains(&id)),
+        );
+        let scopes = table.scopes([&first, &second]).expect("scopes");
+        let ranked = table
+            .ranked_contrast_rows(
+                0,
+                &scopes,
+                spill_policy(1 << 20),
+                Arc::new(TempBudget::new(u64::MAX)),
+                &CancellationFlag::new(),
+            )
+            .expect("ranked rows");
+        let entries = ranked.entries;
+        let full = ranked.collect::<Result<Vec<_>, _>>().expect("rows");
+        for limit in limits {
+            let top = table
+                .contrast_top(0, &scopes, *limit, &CancellationFlag::new())
+                .expect("top");
+            assert_eq!(top.entries, entries);
+            assert_eq!(top.rows, full[..(*limit).min(full.len())], "limit {limit}");
+        }
+    }
+}
+
+#[test]
 fn masks_and_scopes_of_another_table_are_rejected() {
     let documents = (0..3u64)
         .map(|document| DocumentTotals {

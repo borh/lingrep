@@ -196,6 +196,11 @@ impl ContrastOrder {
         }
     }
 
+    /// The G² this order was built from; 0 when it is undefined.
+    fn score(&self) -> f64 {
+        f64::from_bits(u64::MAX - self.inverted_score)
+    }
+
     fn row(self, tokens: [u64; 2]) -> ContrastRow {
         row(self.entry, self.scopes, self.shared, tokens)
     }
@@ -208,6 +213,19 @@ fn row(entry: u32, scopes: [ScopeCount; 2], shared: ScopeCount, tokens: [u64; 2]
         shared,
         contrast: Contrast::of(scopes.map(|scope| scope.count), tokens),
     }
+}
+
+/// A value no smaller than the G² of any entry that occurs at most `total`
+/// times in each scope, for scopes that both admit tokens.
+///
+/// G² is convex in the two counts, so over `0..=total` in each it is largest
+/// at a corner. With `N = N1 + N2`, the corners score `2 total ln(N / N1)`,
+/// `2 total ln(N / N2)` and `2 total ln(N² / (4 N1 N2))`, and the last never
+/// exceeds both of the others. The margin covers rounding in [`Contrast::of`].
+fn score_bound(total: u64, tokens: [u64; 2]) -> f64 {
+    let all = tokens[0] as f64 + tokens[1] as f64;
+    let smaller = tokens[0].min(tokens[1]) as f64;
+    2.0 * total as f64 * (all / smaller).ln() * (1.0 + 1e-9)
 }
 
 impl CountTable {
@@ -342,6 +360,70 @@ impl CountTable {
         limit: usize,
         cancellation: &CancellationFlag,
     ) -> Result<RankedContrast, CountTableError> {
+        let tokens = scopes.tokens();
+        if tokens.contains(&0) {
+            // No score is defined, so the order is by occurrences and no
+            // score bound applies.
+            return self.contrast_top_of_every_entry(pattern, scopes, limit, cancellation);
+        }
+        if scopes.table != self.instance {
+            return Err(corrupt("scopes were built for a different table"));
+        }
+        let std::ops::Range { start, end } = self.pattern_range(pattern)?;
+        let order = self
+            .u32s(&self.ranked_entries)?
+            .get(start..end)
+            .ok_or_else(|| corrupt("ranked entries out of range"))?;
+        let totals = self
+            .u64s(&self.ranked_totals)?
+            .get(start..end)
+            .ok_or_else(|| corrupt("ranked totals out of range"))?;
+        let mut best: Vec<ContrastOrder> = Vec::new();
+        let mut at = 0usize;
+        let mut block = 1024usize;
+        while limit > 0 && at < order.len() {
+            check_cancellation(cancellation)?;
+            if let Some(last) = best.get(limit - 1)
+                && score_bound(totals[at], tokens) < last.score()
+            {
+                break;
+            }
+            let stop = at.saturating_add(block).min(order.len());
+            let found = crate::in_pool(self.pool.as_deref(), || {
+                order[at..stop]
+                    .par_iter()
+                    .with_min_len(1024)
+                    .filter_map(|entry| match self.contrasted(*entry, &scopes.bits) {
+                        Ok((counts, _)) if counts.iter().all(|counted| counted.count == 0) => None,
+                        Ok((counts, shared)) => {
+                            Some(Ok(ContrastOrder::of(&row(*entry, counts, shared, tokens))))
+                        }
+                        Err(error) => Some(Err(error)),
+                    })
+                    .collect::<Result<Vec<_>, _>>()
+            })?;
+            best.extend(found);
+            if best.len() >= limit {
+                best.select_nth_unstable(limit - 1);
+                best.truncate(limit);
+            }
+            at = stop;
+            block = block.saturating_mul(2).min(CANCELLATION_INTERVAL);
+        }
+        best.sort_unstable();
+        Ok(RankedContrast {
+            entries: self.entries_in_either_scope(start..end, &scopes.bits, cancellation)?,
+            rows: best.into_iter().map(|order| order.row(tokens)).collect(),
+        })
+    }
+
+    fn contrast_top_of_every_entry(
+        &self,
+        pattern: usize,
+        scopes: &Scopes,
+        limit: usize,
+        cancellation: &CancellationFlag,
+    ) -> Result<RankedContrast, CountTableError> {
         let mut best: Vec<ContrastOrder> = Vec::new();
         let entries = self.contrast_blocks(pattern, scopes, cancellation, |block| {
             best.extend(block);
@@ -357,6 +439,52 @@ impl CountTable {
             entries,
             rows: best.into_iter().map(|order| order.row(tokens)).collect(),
         })
+    }
+
+    /// How many of `entries` occur in a document either scope admits.
+    fn entries_in_either_scope(
+        &self,
+        entries: std::ops::Range<usize>,
+        bits: &[u8],
+        cancellation: &CancellationFlag,
+    ) -> Result<u64, CountTableError> {
+        if bits.iter().all(|admitted| *admitted != 0) {
+            // Every entry occurs in at least one document.
+            return Ok(entries.len() as u64);
+        }
+        let offsets = self.u64s(&self.entry_pair_offsets)?;
+        let documents = self.u32s(&self.pair_documents)?;
+        let mut found = 0u64;
+        let mut at = entries.start;
+        while at < entries.end {
+            check_cancellation(cancellation)?;
+            let stop = at.saturating_add(CANCELLATION_INTERVAL).min(entries.end);
+            found += crate::in_pool(self.pool.as_deref(), || {
+                (at..stop)
+                    .into_par_iter()
+                    .with_min_len(4096)
+                    .map(|entry| {
+                        let holding = offsets
+                            .get(entry..=entry + 1)
+                            .and_then(|pair| documents.get(pair[0] as usize..pair[1] as usize))
+                            .ok_or_else(|| corrupt("entry pair offsets out of range"))?;
+                        let mut occurs = false;
+                        for document in holding {
+                            let admitted = bits
+                                .get(*document as usize)
+                                .ok_or_else(|| corrupt("pair document out of range"))?;
+                            if *admitted != 0 {
+                                occurs = true;
+                                break;
+                            }
+                        }
+                        Ok::<u64, CountTableError>(u64::from(occurs))
+                    })
+                    .try_reduce(|| 0u64, |left, right| Ok(left + right))
+            })?;
+            at = stop;
+        }
+        Ok(found)
     }
 
     /// Every entry of `pattern` occurring in either scope in
