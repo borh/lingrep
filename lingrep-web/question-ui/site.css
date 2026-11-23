@@ -1,12 +1,12 @@
 /* Colour tokens, the light/dark choice and the header, shared by every page. */
 :root[data-theme=light]{color-scheme:light}:root[data-theme=dark]{color-scheme:dark}
 :root{color-scheme:light dark;--ground:light-dark(#fdfcf9, #15171b);--ink:light-dark(#232824, #e7e5df);--soft:light-dark(#62685f, #b0ada5);--rule:light-dark(#dedfd7, #363b45);--green:light-dark(#1f6a4a, #8fc9d9);--wash:light-dark(#e5efe9, #213441);--nav:light-dark(#f3f5ef, #1a1d23);--match-wash:light-dark(#edf3ef, #1d3035);--match-rule:light-dark(#91afa0, #648d96);--error:light-dark(#991b1b, #fca5a5);--error-wash:light-dark(#fef2f2, #36191c);--font:system-ui,-apple-system,"Hiragino Kaku Gothic ProN","Yu Gothic","Noto Sans CJK JP",sans-serif;--mono:ui-monospace,SFMono-Regular,Consolas,"Noto Sans Mono CJK JP",monospace}
-.site{font:14px/1.5 var(--font);min-height:48px;flex-wrap:wrap;row-gap:0;padding:0 max(18px,calc((100vw - 1270px)/2));display:flex;align-items:center;justify-content:space-between;gap:20px;background:var(--ground)}.brand{color:var(--ink);font-weight:700;font-size:19px;text-decoration:none;display:flex;gap:15px;align-items:baseline}.site nav{display:flex;gap:12px;align-items:center}
+.site{font:14px/1.5 var(--font);min-height:48px;flex-wrap:wrap;row-gap:0;padding:0 30px;display:flex;align-items:center;justify-content:space-between;gap:20px;background:var(--ground)}.brand{color:var(--ink);font-weight:700;font-size:19px;text-decoration:none;display:flex;gap:15px;align-items:baseline}.site nav{display:flex;gap:12px;align-items:center}
 .site .routes{gap:2px;flex-wrap:wrap}.routes .brand{margin-right:12px}.routes a:not(.brand){color:var(--soft);font-size:14px;text-decoration:none;padding:3px 8px;border-radius:3px}.routes a:not(.brand):hover{color:var(--ink);background:var(--wash)}.routes a[aria-current=page]{color:var(--green);background:var(--wash);font-weight:600}
 .site-tools{display:flex;align-items:center;gap:2px;margin-left:auto}
 .site .theme-toggle{display:inline-flex;align-items:center;justify-content:center;color:var(--soft);background:transparent;border:0;border-radius:3px;padding:3px 7px;min-height:30px;cursor:pointer}
 .site .theme-toggle:hover{color:var(--ink);background:var(--wash)}
-.site-wide{padding-inline:2rem}
+
 .site .locale-toggle{margin-left:auto;font:inherit;font-size:14px;color:var(--ink);background:transparent;border:0;border-radius:3px;padding:3px 9px;min-height:30px;cursor:pointer}
 .site .locale-toggle:hover{background:var(--wash)}
 .site a:focus-visible,.site button:focus-visible{outline:2px solid var(--green);outline-offset:3px}

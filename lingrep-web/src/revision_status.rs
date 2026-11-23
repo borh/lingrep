@@ -211,7 +211,12 @@ pub fn project_revision_status(view: Option<&CoordinatorView>) -> RevisionStatus
             Some(AttemptPhase::Failed(failure)) => (
                 match failure.category {
                     ErrorCategory::Compile => {
-                        diagnostic = Some(failure.message.clone());
+                        // The page has one pattern box, so its internal
+                        // source name tells the reader nothing.
+                        diagnostic = Some(failure.message.replace(
+                            &format!("{}:", crate::patterns::WEB_PATTERN_SOURCE_NAME),
+                            "",
+                        ));
                         (
                             "The pattern did not compile:".into(),
                             Some("status.failed_compile"),

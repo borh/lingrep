@@ -1,5 +1,5 @@
 {% extends "layout.html" %}
-{% block title %}Analysis tools · lingrep{% endblock %}
+{% block title %}<title data-i18n="title.tools">Analysis tools · lingrep</title>{% endblock %}
 {% block head %}{% include "partials/pattern_editor_assets.html" %}{% endblock %}
 {% block content %}
 <h1 class="visually-hidden" data-i18n="nav.workbench">Analysis tools</h1>
@@ -61,9 +61,7 @@
         <button type="button" class="btn btn-secondary" data-scope-preset="main" data-i18n="scope.main">IMRAD + related</button>
       </div>
       <fieldset><legend data-i18n="scope.include">Include sections</legend>
-        <div class="scope-options" data-search-scope-options>
-          {% for section in corpus_context.sections() %}<label class="section-scope-option"><input type="checkbox" data-scope-include value="{{ section.label }}"><span>{{ section.label }}</span></label>{% endfor %}
-        </div>
+        <div class="scope-options" data-search-scope-options>{% for section in corpus_context.sections() %}<label class="section-scope-option"><input type="checkbox" data-scope-include value="{{ section.label }}"><span>{{ section.label }}</span></label>{% endfor %}</div>
       </fieldset>
       <label class="section-scope-option"><input type="checkbox" data-scope-unlabelled checked><span data-i18n="scope.unlabelled">Include unlabelled text</span></label>
       <label class="scope-clause"><span data-i18n="scope.clause">Only where</span> <input type="text" data-scope-clause spellcheck="false" autocomplete="off" placeholder="@document.year >= 2010"></label>
@@ -72,7 +70,7 @@
       <button type="submit" class="btn btn-primary" data-i18n="scope.apply">Apply &amp; rerun</button>
     </details>
     <div class="permalink-controls">
-        <button type="submit" class="btn btn-primary"><span data-i18n="editor.search">Search Corpus</span></button>
+        <button type="submit" class="btn btn-primary"><span data-i18n="editor.search">Search corpus</span></button>
         <button type="button" class="btn btn-secondary sample-drawer-toggle"
                 data-sample-drawer-toggle aria-expanded="false"
                 aria-controls="inline-sample-drawer"><span data-i18n="editor.test_sample">Test on sample</span></button>

@@ -13,7 +13,7 @@ const count = (value) => Number(value ?? 0).toLocaleString(locale === 'ja' ? 'ja
 let locale = storedLocale(globalThis.localStorage, navigator.language);
 const en = Object.fromEntries([...document.querySelectorAll('[data-t]')].map(element => [element.dataset.t, element.textContent]));
 const ja = {
-    readingOptions: '表示の設定', questionActions: '問いの操作', questionNav: '問い', sampleNav: 'サンプルデバッガー', neighborsNav: '類似語', remix: '問いを複製', saveQuestion: '問いを保存', openQuestion: '開く', searchFor: '', among: 'の', update: '検索する', done: '完了', exclude: '選んだ値を除外', previousValues: '前の値', nextValues: '次の値', clearConditions: '条件を消去', textClause: '条件式を直接編集', kwicLines: 'KWIC の表示行数', contextLabel: '前後の文脈', contextTokens: 'トークンずつ', closeAnalysis: '用例を閉じる', tokenHelp: 'トークンを選ぶと、属性を確認できます。', remixTest: '条件を追加', showLatest: '新しい結果を表示', prototypeOptions: '検索の設定', searchNav: '検索', incumbentNav: '分析ツール', frequencyNav: '頻度', compareNav: '比較', helpNav: 'ヘルプ', stopReplay: '再生を停止', find: '', in: '', patternSource: 'パターンのソース', toSearch: 'で検索', draft: 'Alt+Enter または「検索する」で検索します。', formatSource: 'パターンを整形', run: '検索する', where: '文書の条件', edited: '編集済み · 検索して適用', ready: '検索できます。', stop: '検索を停止', retry: 'もう一度検索', during: '新しい検索の実行中は', keep: '完了した結果を表示', live: '途中の結果を表示', compare: '前回と今回を並べる', replay: '検索の経過を再生', replayNote: '検索の経過を再生しています。', boundary: '検索結果について', boundaryBody: '選択したコーパスとコンパイル済みのパターンに基づく検索結果です。用例はページごとに表示します。検索中の件数は途中経過です。原文は検索条件で絞り込まずに表示します。', return: '用例に戻る', paragraph: '段落を読む', document: '文書を読む',
+    readingOptions: '表示の設定', questionActions: '問いの操作', questionNav: '問い', sampleNav: 'サンプルデバッガー', neighborsNav: '類似語', remix: '問いを複製', saveQuestion: '問いを保存', openQuestion: '開く', searchFor: '', among: 'の', update: '検索する', done: '完了', exclude: '選んだ値を除外', previousValues: '前の値', nextValues: '次の値', clearConditions: '条件を消去', textClause: '条件式を直接編集', kwicLines: 'KWIC の表示行数', contextLabel: '前後の文脈', contextTokens: 'トークンずつ', closeAnalysis: '用例を閉じる', tokenHelp: 'トークンを選ぶと、属性を確認できます。', remixTest: '条件を追加', showLatest: '新しい結果を表示', prototypeOptions: '検索の設定', searchNav: '検索', incumbentNav: '分析ツール', frequencyNav: '頻度', compareNav: '比較', helpNav: 'ヘルプ', stopReplay: '再生を停止', find: '', in: '', patternSource: 'パターンのソース', toSearch: 'で検索', draft: 'Ctrl+Enter または「検索する」で検索します。', formatSource: 'パターンを整形', run: '検索する', where: '文書の条件', edited: '編集済み · 検索して適用', ready: '検索できます。', stop: '検索を停止', retry: 'もう一度検索', during: '新しい検索の実行中は', keep: '完了した結果を表示', live: '途中の結果を表示', compare: '前回と今回を並べる', replay: '検索の経過を再生', replayNote: '検索の経過を再生しています。', boundary: '検索結果について', boundaryBody: '選択したコーパスとコンパイル済みのパターンに基づく検索結果です。用例はページごとに表示します。検索中の件数は途中経過です。原文は検索条件で絞り込まずに表示します。', return: '用例に戻る', paragraph: '段落を読む', document: '文書を読む',
     current: '今回の結果', previous: '前回の完了した結果', completed: '検索完了', partial: '検索中 · 件数は途中経過', cancelled: '停止済み · 件数は途中経過', failed: '検索に失敗', retained: '表示中の用例', noLines: 'このパターンの用例はまだありません。', download: 'JSONL で保存', source: '検索時のパターン', copy: 'CLI コマンドをコピー', copied: 'コピーしました', savedQuery: '検索時の query.lx を保存', runNumber: '検索', scope: '文書の条件', all: 'すべての文書', soFar: '件が見つかりました', running: '検索しています', notTotal: '検索中の件数は途中経過です。', stopped: '検索を停止しました。途中の件数はコーパス全体の件数ではありません。', failedKeep: '検索に失敗しました。前回の検索結果を表示しています。', errorRetry: 'パターンや条件を確認して、もう一度検索してください。', draftRunning: '新しいパターンを編集中です。実行中の検索には影響しません。', keeping: '新しい検索の間、前回の完了した結果を表示しています。', loadingRead: '原文を読み込んでいます…', readError: '原文を読み込めませんでした。もう一度開いてください。', tokenContext: 'トークンによる前後の文脈', real: '検索', replayed: '記録した検索の再生', unknownProgress: '進捗の割合は不明', dependencies: '係り受け', viewBunsetsu: '文節', viewWords: '語', viewVertical: '全文（縦）', evidenceCaption: 'この用例が結び付ける語', evidenceWord: '語番号', evidenceRoles: '役割', evidenceText: '表層形', evidenceLemma: '辞書形', evidencePos: '品詞', evidenceHead: '係り先', evidenceRel: '関係', root: '文の中心', frequencyReturn: '頻度に戻る', occurrenceMissing: '頻度表の用例をこの検索で開けませんでした。',
 };
 const extra = { readingOptions: 'Reading options', questionActions: 'Question actions', stopReplay: 'Stop replay', current: 'Current results', previous: 'Previous results', completed: 'Complete', partial: 'Searching · counts are partial', cancelled: 'Stopped · counts are partial', failed: 'Search failed', retained: 'Displayed examples', noLines: 'No lines for this pattern yet.', download: 'Download JSONL', source: 'Pattern used for this search', copy: 'Copy CLI command', copied: 'Copied', savedQuery: 'Download this query.lx', runNumber: 'Search', scope: 'Document condition', all: 'All documents', soFar: 'matches found', running: 'Searching', notTotal: 'Counts are partial until the search finishes.', stopped: 'Search stopped. Counts are partial.', failedKeep: 'Search failed. Previous results are retained.', errorRetry: 'Check the pattern or condition and run the search again.', draftRunning: 'Editing the next pattern. The running search is unchanged.', keeping: 'Showing previous results while searching.', loadingRead: 'Loading the original text…', readError: 'Could not load the original text. Open it again to retry.', tokenContext: 'Token context', real: 'Live search', replayed: 'Recorded search replay', unknownProgress: 'Scan percentage unavailable', occurrenceMissing: 'Could not open the frequency table occurrence in this search.' };
@@ -296,6 +296,8 @@ let searchLimit = null;
 const runLimits = new Map();
 const documentTitles = new Map();
 let preferredPattern = '';
+// Runs whose shown definition the page chose, so it may move to one that has matches.
+const autoChosen = new Set();
 function activeLimit() { const source = $('#source').value; return searchLimit && (searchLimit.source === source || !!searchLimit.pattern && definitionOffset(source, searchLimit.pattern) >= 0) && (searchLimit.pattern || searchLimit.document != null) ? searchLimit : null; }
 const documentName = (dataset, document) => documentTitles.get(`${dataset}:${document}`) ?? (locale === 'ja' ? `文書${document}` : `document ${document}`);
 let revealedFailure = null;
@@ -903,25 +905,38 @@ function render(force = false) {
         }
         const definitionNames = run.definitions.length ? run.definitions : Object.keys(run.counts);
         let chosen = selection.get(run.id) ?? '';
-        if (!definitionNames.includes(chosen))
-            chosen = definitionNames.includes(preferredPattern) ? preferredPattern : definitionNames[0] ?? '';
+        if (!definitionNames.includes(chosen)) {
+            if (definitionNames.includes(preferredPattern))
+                chosen = preferredPattern;
+            else {
+                chosen = definitionNames[0] ?? '';
+                autoChosen.add(run.id);
+            }
+        }
+        const matched = definitionNames.filter(name => (run.counts[name] ?? 0) > 0);
+        if (autoChosen.has(run.id) && !matched.includes(chosen) && matched.length)
+            chosen = matched.reduce((best, name) => run.counts[name] > run.counts[best] ? name : best);
         selection.set(run.id, chosen);
         const rail = $('.pattern-list', panel);
         const picker = $('.pattern-picker', panel);
         picker.hidden = definitionNames.length < 2;
         const summary = $('summary', picker), total = run.counts[chosen];
-        setConcordanceText(summary, chosen + (total == null ? '' : ` · ${count(total)}${run.phase === 'complete' ? '' : '+'}`));
-        if (renderSignatures.get(rail) !== JSON.stringify(definitionNames)) {
-            rail.innerHTML = definitionNames.map(name => `<button class="pattern-button" type="button" data-pattern="${escape(name)}"><span>${escape(name)}</span><span class="count"></span></button>`).join('');
-            renderSignatures.set(rail, JSON.stringify(definitionNames));
+        const reach = run.phase === 'complete' ? (locale === 'ja' ? `（${definitionNames.length} 定義中 ${matched.length} 定義に用例）` : ` (${matched.length} of ${definitionNames.length} definitions have matches)`) : '';
+        setConcordanceText(summary, chosen + (total == null ? '' : ` · ${count(total)}${run.phase === 'complete' ? '' : '+'}`) + reach);
+        // Once the counts are final, definitions with matches come first.
+        const ordered = run.phase === 'complete' ? [...definitionNames].sort((a, b) => (run.counts[b] ?? 0) - (run.counts[a] ?? 0)) : definitionNames;
+        if (renderSignatures.get(rail) !== JSON.stringify(ordered)) {
+            rail.innerHTML = ordered.map(name => `<button class="pattern-button" type="button" data-pattern="${escape(name)}"><span>${escape(name)}</span><span class="count"></span></button>`).join('');
+            renderSignatures.set(rail, JSON.stringify(ordered));
             for (const button of rail.querySelectorAll('button'))
-                button.addEventListener('click', () => { preferredPattern = button.dataset.pattern ?? ''; selection.set(run.id, preferredPattern); picker.open = false; summary.focus({ preventScroll: true }); void navigateView(hrefFor(run, { ...defaultView(), layout: resultLayout(run), pattern: preferredPattern }), true); });
+                button.addEventListener('click', () => { autoChosen.delete(run.id); preferredPattern = button.dataset.pattern ?? ''; selection.set(run.id, preferredPattern); picker.open = false; summary.focus({ preventScroll: true }); void navigateView(hrefFor(run, { ...defaultView(), layout: resultLayout(run), pattern: preferredPattern }), true); });
         }
         for (const button of rail.querySelectorAll('button')) {
             button.setAttribute('aria-pressed', String(button.dataset.pattern === chosen));
             const total = run.counts[button.dataset.pattern], partial = run.phase !== 'complete';
             $('.count', button).textContent = total == null ? '–' : count(total) + (partial ? '+' : '');
             button.classList.toggle('partial', partial);
+            button.classList.toggle('empty', !partial && total === 0);
             button.setAttribute('aria-label', `${button.dataset.pattern} ${total == null ? '' : count(total)}${partial ? ' · ' + t('partialCount') : ''}`);
             button.title = partial ? t('partialCount') : '';
         }

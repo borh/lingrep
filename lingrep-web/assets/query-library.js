@@ -1,5 +1,5 @@
 import { focusEditor, patternDefinitions } from "./editor/pattern-editor.js";
-import { t, onLocaleChange } from "./i18n.js";
+import { t, onLocaleChange, currentLocale } from "./i18n.js";
 
 export const RECENT_LIMIT = 20;
 export const SAVED_PAGE_SIZE = 50;
@@ -549,7 +549,7 @@ function button(label, action, id = null) {
 
 function relativeTime(timestamp) {
   const seconds = Math.round((Date.parse(timestamp) - Date.now()) / 1000);
-  const formatter = new Intl.RelativeTimeFormat(undefined, { numeric: "auto" });
+  const formatter = new Intl.RelativeTimeFormat(currentLocale(), { numeric: "auto" });
   if (Math.abs(seconds) < 60) return formatter.format(seconds, "second");
   const minutes = Math.round(seconds / 60);
   if (Math.abs(minutes) < 60) return formatter.format(minutes, "minute");
