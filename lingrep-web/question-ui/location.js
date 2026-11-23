@@ -3,7 +3,7 @@ export const defaultView = () => ({ kind: 'concordance', scopeDocument: null, re
 const record = (value) => typeof value === 'object' && value !== null && !Array.isArray(value);
 const ordinal = (value) => typeof value === 'number' && Number.isSafeInteger(value) && value >= 0;
 function concordance(value) {
-    return record(value) && value.kind === 'concordance' && (value.layout === undefined || value.layout === 'works' || value.layout === 'kwic') && typeof value.pattern === 'string' && (value.document === null || ordinal(value.document)) && typeof value.after === 'number' && Number.isSafeInteger(value.after) && value.after >= -1 && typeof value.filter === 'string' && (value.scopeDocument == null || ordinal(value.scopeDocument)) && (value.returnAfter == null || typeof value.returnAfter === 'number' && Number.isSafeInteger(value.returnAfter) && value.returnAfter >= -1);
+    return record(value) && value.kind === 'concordance' && (value.layout === undefined || value.layout === 'works' || value.layout === 'kwic') && (value.workOverview === undefined || typeof value.workOverview === 'boolean') && (value.workContext === undefined || ordinal(value.workContext) && value.workContext <= 24) && typeof value.pattern === 'string' && (value.document === null || ordinal(value.document)) && typeof value.after === 'number' && Number.isSafeInteger(value.after) && value.after >= -1 && typeof value.filter === 'string' && (value.scopeDocument == null || ordinal(value.scopeDocument)) && (value.returnAfter == null || typeof value.returnAfter === 'number' && Number.isSafeInteger(value.returnAfter) && value.returnAfter >= -1);
 }
 export function parseView(text) {
     if (!text)

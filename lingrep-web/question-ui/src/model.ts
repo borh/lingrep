@@ -19,9 +19,11 @@ export interface MatchRecord {
   readonly span: { readonly start: number; readonly end: number };
   readonly corpus_sentence_ordinal: number;
   readonly document_ordinal: number;
+  readonly document_sentence_ordinal?: number;
   readonly source_name: string;
   readonly source_metadata?: { readonly document?: { readonly title?: string; readonly author?: string } };
   readonly preview_omitted?: boolean;
+  readonly work_location?: {readonly chapter?:string;readonly paragraph_start?:number;readonly sentence:number};
   readonly surface: string;
   readonly sentence_text?: readonly [string,string,string];
   readonly captures?: readonly { readonly name: string; readonly span: { readonly start: number; readonly end: number } }[];
@@ -29,6 +31,46 @@ export interface MatchRecord {
   readonly tokens: readonly Token[];
   readonly left_context?: readonly Token[];
   readonly right_context?: readonly Token[];
+}
+
+export function workExcerpts(rows:readonly MatchRecord[],context:number) {
+  const windows:{rows:MatchRecord[];tokens:Map<number,Token>;end:number}[]=[];
+  for(const row of rows){
+    const left=context?row.left_context?.slice(-context)??[]:[];
+    const tokens=row.preview_omitted?[]:[...left,...row.tokens,...(row.right_context??[]).slice(0,context)];
+    const first=tokens[0]?.index, end=tokens.at(-1)?.index;
+    let window=windows.at(-1);
+    if(!window||first===undefined||window.end<0||first>window.end+1
+      ||window.rows[0].corpus_sentence_ordinal!==row.corpus_sentence_ordinal){
+      window={rows:[],tokens:new Map(),end:-1};
+      windows.push(window);
+    }
+    window.rows.push(row);
+    for(const token of tokens)window.tokens.set(token.index,token);
+    window.end=Math.max(window.end,end??-1);
+  }
+
+  return windows.map(({rows,tokens})=>{
+    const ordered=[...tokens.values()].sort((a,b)=>a.index-b.index);
+    const start=ordered[0]?.index??rows[0].span.start;
+    const text=(from:number,to:number)=>textOf(ordered.slice(from-start,to-start));
+    const space=(at:number)=>at>start&&ordered[at-start]?.space_before?' ':'';
+    let written=start;
+    const hits=rows.map(row=>{
+      const from=Math.max(written,row.span.start);
+      const before=written<from?space(written)+text(written,from):'';
+      const match=from<row.span.end?text(from,row.span.end):'';
+      written=Math.max(written,row.span.end);
+      return {row,before:before+(match?space(from):''),text:match};
+    });
+    const end=start+ordered.length;
+    return {
+      hits,
+      after:space(written)+text(written,end),
+      cutBefore:ordered.length>0&&start>0,
+      cutAfter:ordered.length>0&&rows.some(row=>(row.right_context?.at(-1)?.index??-1)>=end),
+    };
+  });
 }
 export interface Diagnostic { readonly schema: "lingrep.diagnostic/v1"; readonly type: "diagnostic"; readonly data: { readonly stage: string; readonly severity: string; readonly message: string; readonly location?: { readonly line?: number; readonly column?: number; readonly source_span?: {readonly start:number;readonly end:number} } | null; readonly related_locations?: readonly { readonly message: string }[]; readonly [key:string]:unknown }; }
 export interface SnapshotFields extends Question {
@@ -72,8 +114,9 @@ export interface MetadataResult { fields: Field[]; documents: number; values: { 
 export interface SentenceSpan { kind:string; start:number; end:number; head:number|null; label:string|null; governor:number|null; }
 export interface StoredSentence { spans?:readonly SentenceSpan[]; analysis_identity: string; sentence: number; tokens: readonly Token[]; }
 export interface DocumentSummary { ordinal: number; title: string; author: string; matches: number; }
-export interface WorkSample { document: DocumentSummary; edition: string; rows: MatchRecord[]; next: number | null; }
-export interface WorkSamplesPage { groups: WorkSample[]; total: number | null; next: number | null; }
+export interface WorkGroup { document: Omit<DocumentSummary,'matches'> & {matches:number|null}; edition: string; rows: MatchRecord[]; }
+export interface WorkSamplesPage { groups: WorkGroup[]; total: number | null; next: number | null; }
+export interface WorkResultsPage { groups: WorkGroup[]; total: number; start: number; next: number | null; previous: number | null; }
 export interface DocumentPage { landmarks: DocumentSummary[]; after: number; start: number; matches_total: number; previous: number | null; documents_total: number; documents_offset: number; selected: DocumentSummary | null; position: number | null; previous_document: number | null; next_document: number | null; documents: DocumentSummary[]; rows: MatchRecord[]; next: number | null; document: number | null; }
 export interface DocumentView { request: {document:number|null;after:number;documentsOffset:number|null;scopeDocument:number|null;limit:number}|null; scopeDocument: number | null; returnAfter: number; landmarks: DocumentSummary[]; start: number; matchesTotal: number; query: string; documentsTotal: number; documentsOffset: number; selectedDoc: DocumentSummary | null; position: number | null; previousDoc: number | null; nextDoc: number | null; documents: DocumentSummary[] | null; document: number | null; rows: MatchRecord[]; after: number; next: number | null; previousAfter: number | null; loading: boolean; error: string | null; epoch: number; limit: number; }
 export interface SavedQuestion { format: 'lingrep.question/v1' | 'lingrep.question-probe/v1'; question: string; source: string; corpus: string; analysis: string; where: string; [key: string]: string | number; }

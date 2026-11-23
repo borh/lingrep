@@ -5,6 +5,45 @@ export const textOf = (tokens) => tokens.map((token, at) => (at && token.space_b
 /** A sentence's text before, inside and after the tokens `start..end`. The three concatenate to `textOf(tokens)`: a space at either edge of the span belongs to the text outside it. */
 export const textAround = (tokens, start, end) => [textOf(tokens.slice(0, start)) + (start > 0 && start < end && tokens[start]?.space_before ? ' ' : ''), textOf(tokens.slice(start, end)), (end > start && tokens[end]?.space_before ? ' ' : '') + textOf(tokens.slice(end))];
 export const attributeMembers = (value) => value === undefined ? [] : typeof value === 'string' ? [value] : value;
+export function workExcerpts(rows, context) {
+    const windows = [];
+    for (const row of rows) {
+        const left = context ? row.left_context?.slice(-context) ?? [] : [];
+        const tokens = row.preview_omitted ? [] : [...left, ...row.tokens, ...(row.right_context ?? []).slice(0, context)];
+        const first = tokens[0]?.index, end = tokens.at(-1)?.index;
+        let window = windows.at(-1);
+        if (!window || first === undefined || window.end < 0 || first > window.end + 1
+            || window.rows[0].corpus_sentence_ordinal !== row.corpus_sentence_ordinal) {
+            window = { rows: [], tokens: new Map(), end: -1 };
+            windows.push(window);
+        }
+        window.rows.push(row);
+        for (const token of tokens)
+            window.tokens.set(token.index, token);
+        window.end = Math.max(window.end, end ?? -1);
+    }
+    return windows.map(({ rows, tokens }) => {
+        const ordered = [...tokens.values()].sort((a, b) => a.index - b.index);
+        const start = ordered[0]?.index ?? rows[0].span.start;
+        const text = (from, to) => textOf(ordered.slice(from - start, to - start));
+        const space = (at) => at > start && ordered[at - start]?.space_before ? ' ' : '';
+        let written = start;
+        const hits = rows.map(row => {
+            const from = Math.max(written, row.span.start);
+            const before = written < from ? space(written) + text(written, from) : '';
+            const match = from < row.span.end ? text(from, row.span.end) : '';
+            written = Math.max(written, row.span.end);
+            return { row, before: before + (match ? space(from) : ''), text: match };
+        });
+        const end = start + ordered.length;
+        return {
+            hits,
+            after: space(written) + text(written, end),
+            cutBefore: ordered.length > 0 && start > 0,
+            cutAfter: ordered.length > 0 && rows.some(row => (row.right_context?.at(-1)?.index ?? -1) >= end),
+        };
+    });
+}
 /** A run's failure text, translated when the server reports a known failure code. */
 export const runError = (run, t) => run.error_code === 'analysis_changed' ? t('analysisChanged') : run.error_code === 'result_limit' ? t('resultLimit') : run.error;
 export const errorMessage = (error) => error instanceof Error ? error.message : String(error);

@@ -10,8 +10,8 @@ import { initQuestion, questionSettings } from './document.js';
 import {boundOutside,dependencyView,evidenceWords,hasDependencies,annotatedBunsetsu,bunsetsuStarts,dependencyUnits,focusLayout,verticalArcs,headLabel,valueName,tokenDetails as detailsOf} from './dependency.js';
 import type {Arc,DependencyView,EvidenceWord,DetailRow} from './dependency.js';
 
-import { element as $, definitionOffset, errorMessage, runError, runningSnapshot, parseUpdate, parseSnapshot, parseStoredSentence, surfaceOf, textOf, textAround, attributeMembers, sourceSelection, documentTitle, storedLocale, LOCALE_KEY, overflowingDefinitions, cliCommand, diagnosticText } from './model.js';
-import type { SearchLimit, Behavior, Locale, Configuration, CatalogDefinition, QuestionControls, RunSnapshot, CompletedSnapshot, SearchState, StoredSentence, MatchRecord, Token, DocumentPage, WorkSample, WorkSamplesPage, DocumentView, SavedQuestion, Question } from './model.js';
+import { element as $, definitionOffset, errorMessage, runError, runningSnapshot, parseUpdate, parseSnapshot, parseStoredSentence, surfaceOf, textOf, textAround, workExcerpts, attributeMembers, sourceSelection, documentTitle, storedLocale, LOCALE_KEY, overflowingDefinitions, cliCommand, diagnosticText } from './model.js';
+import type { SearchLimit, Behavior, Locale, Configuration, CatalogDefinition, QuestionControls, RunSnapshot, CompletedSnapshot, SearchState, StoredSentence, MatchRecord, Token, DocumentPage, WorkGroup, WorkSamplesPage, WorkResultsPage, DocumentView, SavedQuestion, Question } from './model.js';
 const escape = (value: unknown) => String(value ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]??c));
 const words = (tokens: readonly Token[] | undefined) => textOf(tokens ?? []);
 const lineText = (row: MatchRecord) => textOf([...(row.left_context ?? []), ...row.tokens, ...(row.right_context ?? [])]);
@@ -159,14 +159,18 @@ $('#restore-searches').addEventListener('click',async()=>{
 
 const documentViews=new Map<string,DocumentView>();
 const resultLayouts=new Map<string,ResultLayout>();
-let preferredLayout:ResultLayout='works',preferredZoom=0;
+const DEFAULT_WORK_CONTEXT=4;
+let preferredLayout:ResultLayout='works',preferredWorkContext=DEFAULT_WORK_CONTEXT;
 const resultLayout=(run:RunSnapshot):ResultLayout=>resultLayouts.get(run.id)??preferredLayout;
 interface WorkView {
-  groups: WorkSample[];
-  expanded: Map<number,boolean>;
+  groups: WorkGroup[];
   total: number | null;
+  after: number;
+  overview: boolean;
+  start: number;
   next: number | null;
-  loading: boolean;
+  previous: number | null;
+  loading: Promise<void> | null;
   error: string | null;
   pinned: MatchRecord | null;
 }
@@ -175,15 +179,12 @@ const workRows=new WeakMap<HTMLElement,MatchRecord[]>();
 function workView(page:DocumentView):WorkView {
   let view=workViews.get(page);
   if(!view){
-    view={groups:[],expanded:new Map(),total:null,next:null,loading:false,error:null,pinned:null};
+    view={groups:[],total:null,after:-1,overview:false,start:0,next:null,previous:null,loading:null,error:null,pinned:null};
     workViews.set(page,view);
   }
   return view;
 }
 const byWork=(run:RunSnapshot)=>!isReplay&&run.phase==='complete'&&resultLayout(run)==='works';
-const zoomLabels=()=>locale==='ja'?['各作品1件','用例を増やす','全文']:['One per work','More matches','Full sentences'];
-const zoomLevel=(panel:HTMLElement)=>Number($<HTMLInputElement>('[data-work-zoom]',panel).value);
-const workExpanded=(view:WorkView,ordinal:number,zoom:number)=>view.expanded.get(ordinal)??(zoom>0);
 
 let isReplay = false;
 let viewLocation: ViewLocation=defaultView();
@@ -537,7 +538,7 @@ function render(force=false) {
     if(preparing){
       visibleRuns=[state.previous];
       $('#status').textContent=locale==='ja'?'検索完了 · 新しい用例を準備しています…':'Search complete · preparing the new examples…';
-      if(grouped){if(!work.loading)void loadWorkSamples(null,current,pattern,work);}
+      if(grouped){if(!work.loading)void loadWorkPage(null,current,pattern,work);}
       else if(!page.loading)void loadDocumentPage(null,current,pattern);
     }
   }
@@ -549,6 +550,9 @@ function render(force=false) {
   }
   const shown=[...new Map([...documentSections.values()].map(section=>section.run).concat(visibleRuns.filter((run):run is RunSnapshot=>run!=null&&!(run.phase==='failed'&&!Object.keys(run.counts).length))).map(run=>[run.id,run])).values()];
   const lineRuns=shown.filter(run=>!byWork(run)&&!entryShown(run));
+  const readingByWork=shown.some(run=>byWork(run)&&!entryShown(run))&&!lineRuns.length;
+  document.body.classList.toggle('reading-by-work',readingByWork);
+  $<HTMLInputElement>('#context-size').disabled=readingByWork;
   controls.setLineLimit(lineRuns.length>0,lineRuns.some(run=>run.phase!=='complete'||(run.counts[selection.get(run.id)??run.definitions[0]??'']??0)>0));
   $('#result-panels').className=compared?'comparing':'';
   const ids=shown.map(run=>run.id);
@@ -562,7 +566,7 @@ function render(force=false) {
     if (!panel) {
       panel=document.createElement('article');
       panel.className='result-panel';panel.dataset.run=run.id;
-      panel.innerHTML='<p class="result-scope"></p><ul class="result-notices" hidden></ul><div class="panel-body"><details class="pattern-picker"><summary></summary><div class="pattern-list"></div></details><div class="lines-area"><div class="result-modes" hidden><div class="result-layout" role="group"><button type="button" data-layout="works"></button><button type="button" data-layout="kwic"></button></div><label class="kwic-sort"><span></span><select><option value="original"></option><option value="left"></option><option value="match"></option><option value="right"></option></select></label></div><div class="work-zoom" hidden><span class="work-zoom-name"></span><div class="work-zoom-scale"><input type="range" min="0" max="2" step="1" value="0" data-work-zoom><div class="work-zoom-stops" aria-hidden="true"><span></span><span></span><span></span></div></div></div><div class="result-reading"><span class="evidence-sentence"></span> <span class="document-scope" hidden></span> <span class="line-controls"><span></span> <input type="search"></span> <details class="document-nav" aria-label="Documents" hidden><summary class="document-jump"></summary><div class="document-finder" hidden></div><div class="document-choice"></div></details> <span class="result-header"></span> <span class="line-note" role="status" hidden></span></div><div class="kwic-list"></div><nav class="document-pages" aria-label="Example pages" hidden></nav><button type="button" class="more-works" hidden></button></div></div><details class="query-tools-detail"><summary></summary><pre></pre><div class="query-tools"><button type="button" data-copy></button><button type="button" data-source></button></div></details>';
+      panel.innerHTML='<p class="result-scope"></p><ul class="result-notices" hidden></ul><div class="panel-body"><details class="pattern-picker"><summary></summary><div class="pattern-list"></div></details><div class="lines-area"><div class="result-modes" hidden><div class="result-layout" role="group"><button type="button" data-layout="works"></button><button type="button" data-layout="kwic"></button></div><label class="kwic-sort"><span></span><select><option value="original"></option><option value="left"></option><option value="match"></option><option value="right"></option></select></label><div class="work-controls" hidden><label><span class="work-context-label"></span> <input type="number" data-work-context min="0" max="24" step="1" required></label><label><input type="checkbox" data-work-overview> <span class="work-overview-label"></span></label></div></div><div class="result-reading"><span class="evidence-sentence"></span> <span class="document-scope" hidden></span> <span class="line-controls"><span></span> <input type="search"></span> <details class="document-nav" aria-label="Documents" hidden><summary class="document-jump"></summary><div class="document-finder" hidden></div><div class="document-choice"></div></details> <span class="result-header"></span> <span class="line-note" role="status" hidden></span></div><div class="kwic-list"></div><nav class="document-pages" aria-label="Example pages" hidden></nav><nav class="work-pages" hidden><a data-view data-work-page="previous"></a><a data-view data-work-page="next"></a><button type="button" data-work-retry hidden></button></nav></div></div><details class="query-tools-detail"><summary></summary><pre></pre><div class="query-tools"><button type="button" data-copy></button><button type="button" data-source></button></div></details>';
       $<HTMLDetailsElement>('.document-nav',panel).open=false;
       bindResultModes(panel,run.id);
       $('.kwic-list',panel).addEventListener('click',event=>{const row=(event.target as Element).closest<HTMLElement>('[data-entry-line]');if(row)void openEntryLine(runFor(run.id),Number(row.dataset.entryLine));});
@@ -643,36 +647,40 @@ function documentView(run: RunSnapshot,pattern: string): DocumentView {
   if(!documentViews.has(key))documentViews.set(key,{request:null,scopeDocument:null,returnAfter:-1,landmarks:[],start:0,matchesTotal:0,query:"",documentsTotal:0,documentsOffset:0,selectedDoc:null,position:null,previousDoc:null,nextDoc:null,documents:null,document:null,rows:[],after:-1,next:null,previousAfter:null,loading:false,error:null,epoch:0,limit:0});
   return documentViews.get(key)!;
 }
-async function loadWorkSamples(panel:HTMLElement|null, run:RunSnapshot, pattern:string, view:WorkView, group?:WorkSample) {
-  if(view.loading)return;
-  view.loading=true;view.error=null;
-  if(panel)renderLines(panel,run);
+function loadWorkPage(
+  panel:HTMLElement|null,run:RunSnapshot,pattern:string,view:WorkView,after=view.after,overview=view.overview,
+):Promise<void> {
+  if(view.loading&&view.after===after&&view.overview===overview)return view.loading;
+  if(view.after!==after||view.overview!==overview){
+    Object.assign(view,{after,overview,groups:[],total:null,next:null,previous:null,pinned:null});
+  }
+  view.error=null;
   const params=new URLSearchParams({pattern});
-  if(group){
-    params.set('document',String(group.document.ordinal));
-    params.set('after',String(group.next));
-  }else if(view.next!=null)params.set('offset',String(view.next));
-  try{
-    const page=await request<WorkSamplesPage>(`api/questions/runs/${run.id}/work-samples?${params}`);
-    if(group){
-      const additional=page.groups[0];
-      group.rows.push(...(additional?.rows??[]));
-      group.next=additional?.next??null;
-    }else{
-      view.groups.push(...page.groups);
+  if(overview)params.set('offset',String(Math.max(0,after)));
+  else params.set('after',String(after));
+  const route=overview?'work-samples':'work-results';
+  const task=request<WorkSamplesPage|WorkResultsPage>(`api/questions/runs/${run.id}/${route}?${params}`)
+    .then(page=>{
+      if(view.loading!==task)return;
+      view.groups=overview?page.groups.map(group=>({...group,rows:group.rows.slice(0,1)})):page.groups;
       view.total=page.total;
       view.next=page.next;
-    }
-  }catch(error){view.error=errorMessage(error);}
-  finally{
-    view.loading=false;
-    if(panel?.isConnected)renderLines(panel,runFor(run.id));
-    else if(!panel)render();
-  }
+      view.start='start' in page?page.start:Math.max(0,after);
+      view.previous='previous' in page?page.previous:after>0?Math.max(0,after-5):null;
+    })
+    .catch(error=>{if(view.loading===task)view.error=errorMessage(error);})
+    .finally(()=>{
+      if(view.loading!==task)return;
+      view.loading=null;
+      if(panel?.isConnected)renderLines(panel,runFor(run.id));
+      else if(!panel)render();
+    });
+  view.loading=task;
+  if(panel)renderLines(panel,run);
+  return task;
 }
 
 function bindResultModes(panel:HTMLElement,id:string){
-  $<HTMLInputElement>('[data-work-zoom]',panel).value=String(preferredZoom);
   for(const button of panel.querySelectorAll<HTMLButtonElement>('[data-layout]'))button.addEventListener('click',()=>{
     const run=runFor(id),layout=button.dataset.layout as ResultLayout;
     const previous=resultLayout(run);
@@ -680,7 +688,9 @@ function bindResultModes(panel:HTMLElement,id:string){
     resultLayouts.set(id,previous);preferredLayout=layout;
     const active=inspecting?.run.id===id&&!tokenLab.hidden?inspecting.row:null;
     const top=active?tokenLab.getBoundingClientRect().top:null;
-    const parent={...concordanceFor(run),layout,document:null,scopeDocument:null,after:-1};
+    const parent={...concordanceFor(run),layout,document:null,scopeDocument:null,after:-1,
+      ...(layout==='works'?{workContext:preferredWorkContext}:{}),
+    };
     const location=active?{...hitLocation(run,active,'example'),returnTo:parent}:parent;
     void navigateView(hrefFor(run,location),true).then(()=>{
       if(top!=null&&top>=0&&top<innerHeight&&inspecting?.run.id===id&&!tokenLab.hidden){
@@ -689,38 +699,28 @@ function bindResultModes(panel:HTMLElement,id:string){
     });
   });
   $('.kwic-sort select',panel).addEventListener('change',()=>renderLines(panel,runFor(id)));
-  $('[data-work-zoom]',panel).addEventListener('input',()=>{
-    preferredZoom=zoomLevel(panel);
-    const anchor=inspecting?.run.id===id&&!tokenLab.hidden?tokenLab:null;
-    const top=anchor?.getBoundingClientRect().top;
-    renderLines(panel,runFor(id));
-    if(anchor&&top!=null&&top>=0&&top<innerHeight)window.scrollBy(0,anchor.getBoundingClientRect().top-top);
-  });
-  $('.more-works',panel).addEventListener('click',async()=>{
-    const run=runFor(id),pattern=selection.get(id)??'',view=workView(documentView(run,pattern));
-    const firstNew=view.groups.length,focused=document.activeElement===$('.more-works',panel);
-    await loadWorkSamples(panel,run,pattern,view);
-    if(focused&&document.activeElement===document.body&&panel.classList.contains('work-results')){
-      const ordinal=view.groups[firstNew]?.document.ordinal;
-      const first=panel.querySelector<HTMLElement>(`[data-work-heading="${ordinal}"] button, [data-work-heading="${ordinal}"] + .kwic-row`);
-      first?.focus();
+  $<HTMLInputElement>('[data-work-context]',panel).addEventListener('change',event=>{
+    const input=event.currentTarget as HTMLInputElement;
+    if(!input.checkValidity()){input.value=String(preferredWorkContext);return;}
+    preferredWorkContext=input.valueAsNumber;
+    const run=runFor(id);
+    if(displayedEvidence()?.id===id){
+      viewLocation=inspecting?.run.id===id&&!tokenLab.hidden
+        ?hitLocation(run,inspecting.row,viewLocation.kind==='reader'?'reader':'example')
+        :concordanceFor(run);
+      updateDraft();
     }
+    render(true);
   });
-  $('.kwic-list',panel).addEventListener('click',event=>{
-    const button=(event.target as Element).closest<HTMLButtonElement>('[data-work-more],[data-work-toggle]');
-    if(!button)return;
-    const run=runFor(id),pattern=selection.get(id)??'',view=workView(documentView(run,pattern));
-    const ordinal=Number(button.dataset.workMore??button.dataset.workToggle);
-    const group=view.groups.find(group=>group.document.ordinal===ordinal);
-    if(!group)return;
-    if(button.hasAttribute('data-work-toggle')){
-      const zoom=zoomLevel(panel);
-      const expanded=!workExpanded(view,ordinal,zoom);
-      if(expanded===(zoom>0))view.expanded.delete(ordinal);
-      else view.expanded.set(ordinal,expanded);
-      renderLines(panel,run);
-    }else if(group.next!=null)void loadWorkSamples(panel,run,pattern,view,group);
+  $<HTMLInputElement>('[data-work-overview]',panel).addEventListener('change',event=>{
+    const run=runFor(id),workOverview=(event.currentTarget as HTMLInputElement).checked;
+    void navigateView(hrefFor(run,{...concordanceFor(run),workOverview,after:-1}),true);
   });
+  $('[data-work-retry]',panel).addEventListener('click',()=>{
+    const run=runFor(id),pattern=selection.get(id)??'';
+    void loadWorkPage(panel,run,pattern,workView(documentView(run,pattern)));
+  });
+
 }
 
 function renderResultModes(panel:HTMLElement,run:RunSnapshot,grouped:boolean){
@@ -732,16 +732,15 @@ function renderResultModes(panel:HTMLElement,run:RunSnapshot,grouped:boolean){
     setConcordanceText(button,works?(locale==='ja'?'作品別':'By work'):'KWIC');
     button.setAttribute('aria-pressed',String(works===grouped));
   }
-  const zoom=$('.work-zoom',panel);
-  zoom.hidden=!grouped;
-  const name=locale==='ja'?'ズーム':'Zoom',level=zoomLevel(panel),labels=zoomLabels();
-  setConcordanceText($('.work-zoom-name',zoom),name);
-  zoom.querySelectorAll<HTMLElement>('.work-zoom-stops span').forEach((stop,index)=>{
-    setConcordanceText(stop,labels[index]);
-    stop.classList.toggle('selected',index===level);
-  });
-  $('[data-work-zoom]',zoom).setAttribute('aria-label',name);
-  $('[data-work-zoom]',zoom).setAttribute('aria-valuetext',labels[level]);
+  $('.work-controls',panel).hidden=!grouped;
+  if(grouped){
+    const work=workView(documentView(run,selection.get(run.id)??''));
+    const input=$<HTMLInputElement>('[data-work-context]',panel);
+    if(document.activeElement!==input)input.value=String(preferredWorkContext);
+    setConcordanceText($('.work-context-label',panel),locale==='ja'?'前後のトークン数':'Context tokens per side');
+    $<HTMLInputElement>('[data-work-overview]',panel).checked=work.overview;
+    setConcordanceText($('.work-overview-label',panel),locale==='ja'?'各作品1件':'One per work');
+  }
   const sort=$('.kwic-sort',modes);
   sort.hidden=grouped;
   setConcordanceText($('span',sort),locale==='ja'?'表示中の用例を並べ替え':'Sort shown lines');
@@ -874,42 +873,241 @@ function setContext(element:HTMLElement,tokens:readonly Token[],bound:ReadonlyMa
   if(!tokens.some(token=>bound.has(token.index))){setConcordanceText(element,words(tokens));return;}
   element.replaceChildren(...tokens.flatMap((token,at)=>{const space=at&&token.space_before?[document.createTextNode(' ')]:[],roles=bound.get(token.index);if(!roles)return [...space,document.createTextNode(surfaceOf(token))];const mark=document.createElement('mark');mark.className='bound-word';mark.title=roles.join(', ');mark.textContent=surfaceOf(token);return [...space,mark];}));
 }
+
+function mountResultNodes(parent:HTMLElement,children:readonly HTMLElement[]){
+  const desired=new Set(children);
+  for(const child of [...parent.children])if(!desired.has(child as HTMLElement)){
+    if(child===tokenLab||child===readerPanel)document.body.append(child);else child.remove();
+  }
+  children.forEach((child,index)=>{if(parent.children[index]!==child)parent.insertBefore(child,parent.children[index]??null);});
+}
+
+function workPosition(row:MatchRecord){
+  const location=row.work_location;
+  const sentence=location?.sentence??(row.document_sentence_ordinal===undefined?undefined:row.document_sentence_ordinal+1);
+  const paragraph=location?.paragraph_start;
+  const short=paragraph!==undefined?(locale==='ja'?`段落\u00a0文${count(paragraph)}`:`¶\u00a0s.\u00a0${count(paragraph)}`)
+    :sentence===undefined?'':locale==='ja'?`文${count(sentence)}`:`s.\u00a0${count(sentence)}`;
+  const long=paragraph!==undefined?(locale==='ja'?`文${count(paragraph)}から始まる段落`:`Paragraph starting at sentence ${count(paragraph)}`)
+    :sentence===undefined?'':locale==='ja'?`文${count(sentence)}`:`Sentence ${count(sentence)}`;
+  return {chapter:location?.chapter,short,long:[location?.chapter,long].filter(Boolean).join(', ')};
+}
+
+function renderWorkLines(panel:HTMLElement,run:RunSnapshot,list:HTMLElement,pattern:string,work:WorkView){
+  $('.line-controls',panel).hidden=true;
+  $('.document-nav',panel).hidden=true;
+  $('.document-pages',panel).hidden=true;
+  $('.document-scope',panel).hidden=true;
+
+  const total=run.counts[pattern]??0;
+  const pageCount=work.groups.reduce((size,group)=>size+group.rows.length,0);
+  const works=work.groups.length;
+  const range=pageCount===1?count(work.start+1):`${count(work.start+1)}–${count(work.start+pageCount)}`;
+  const workTotal=work.total??works;
+  const worksShown=locale==='ja'?`${count(workTotal)} 作品中 ${count(works)} 作品`
+    :`${count(works)} of ${count(workTotal)} ${workTotal===1?'work':'works'}`;
+  let summary=locale==='ja'?`全 ${count(total)} 件`:`${count(total)} ${total===1?'match':'matches'}`;
+  if(pageCount){
+    if(work.overview)summary+=` · ${worksShown}`;
+    else summary=locale==='ja'?`${range} / ${count(total)} 件 · ${worksShown}`
+      :`${range} of ${count(total)} ${total===1?'match':'matches'} · ${worksShown}`;
+  }
+  setConcordanceText($('.evidence-sentence',panel),summary);
+  const note=$('.line-note',panel);
+  setConcordanceText(note,work.error??(work.loading?(locale==='ja'?'用例を読み込んでいます…':'Loading examples…'):''));
+  note.hidden=!note.textContent;
+  list.setAttribute('aria-busy',String(!!work.loading));
+
+  const pages=$('.work-pages',panel);
+  pages.hidden=work.previous==null&&work.next==null&&!work.error;
+  pages.setAttribute('aria-label',locale==='ja'?'用例のページ':'Example pages');
+  for(const link of pages.querySelectorAll<HTMLAnchorElement>('[data-work-page]')){
+    const forward=link.dataset.workPage==='next',after=forward?work.next:work.previous;
+    link.hidden=after==null;
+    if(after!=null)link.href=hrefFor(run,{...concordanceFor(run),after});
+    setConcordanceText(link,locale==='ja'?(forward?'次へ':'前へ'):(forward?'Next':'Previous'));
+  }
+  const retry=$<HTMLButtonElement>('[data-work-retry]',pages);
+  retry.hidden=!work.error;
+  setConcordanceText(retry,locale==='ja'?'もう一度読み込む':'Retry loading examples');
+
+  let nodes=concordanceNodes.get(list);
+  if(!nodes){nodes=new Map();concordanceNodes.set(list,nodes);}
+  const used=new Set<string>();
+  function node<K extends keyof HTMLElementTagNameMap>(key:string,tag:K,className:string):HTMLElementTagNameMap[K]{
+    used.add(key);
+    let element=nodes!.get(key);
+    if(!element){element=document.createElement(tag);element.className=className;nodes!.set(key,element);}
+    return element as HTMLElementTagNameMap[K];
+  }
+  const desired:HTMLElement[]=[],visible:MatchRecord[]=[];
+  const groups=[...work.groups];
+  const active=inspecting?.run.id===run.id&&!tokenLab.hidden?inspecting.row:work.pinned;
+  if(active&&!groups.some(group=>group.rows.some(row=>row.sequence===active.sequence))){
+    const at=groups.findIndex(group=>group.document.ordinal===active.document_ordinal);
+    if(at<0)groups.push({
+      document:{ordinal:active.document_ordinal,title:documentTitle(active),author:active.source_metadata?.document?.author??'',matches:null},
+      edition:'',rows:[active],
+    });
+    else groups[at]={...groups[at],rows:[...groups[at].rows,active].sort((a,b)=>a.sequence-b.sequence)};
+  }
+  for(const group of groups){
+    const {ordinal,title,author,matches}=group.document;
+    const heading=node(`work:${ordinal}`,'div','document-heading');
+    heading.dataset.workHeading=String(ordinal);
+    const workTitle=node(`work-title:${ordinal}`,'strong','work-heading-title');
+    const source=node(`work-source:${ordinal}`,'span','work-source');
+    const workCount=node(`work-count:${ordinal}`,'span','document-match-count');
+    setConcordanceText(workTitle,title||documentTitle(group.rows[0]));
+    setConcordanceText(source,[author,group.edition].filter(Boolean).join(' · '));
+    source.hidden=!source.textContent;
+    setConcordanceText(workCount,matches==null?'':locale==='ja'?`${count(matches)} 件`:`${count(matches)} ${matches===1?'match':'matches'}`);
+    workCount.hidden=matches==null;
+    mountResultNodes(heading,[workTitle,source,workCount]);
+    desired.push(heading);
+    const flow=node(`work-excerpts:${ordinal}`,'div','work-excerpts');
+    const excerpts:HTMLElement[]=[];
+    let previousPosition='';
+    const passages=workExcerpts(group.rows,preferredWorkContext);
+    for(const [index,{hits,after,cutBefore,cutAfter}] of passages.entries()){
+      const first=hits[0].row;
+      if(index){
+        const gap=node(`work-gap:${first.sequence}`,'span','work-gap');
+        setConcordanceText(gap,' … ');
+        gap.setAttribute('aria-hidden','true');
+        excerpts.push(gap);
+      }
+      const position=workPosition(first);
+      const positionText=[position.chapter,position.short].filter(Boolean).join(' · ');
+      if(positionText&&positionText!==previousPosition){
+        const label=node(`work-position:${first.sequence}`,'span','work-position');
+        const chapter=node(`work-chapter:${first.sequence}`,'span','');
+        const location=node(`work-location:${first.sequence}`,'span','work-location');
+        label.lang=locale;
+        setConcordanceText(chapter,position.chapter?(position.short?`${position.chapter} · `:position.chapter):'');
+        setConcordanceText(location,position.short);
+        mountResultNodes(label,[chapter,location]);
+        label.setAttribute('aria-hidden','true');
+        excerpts.push(label);
+      }
+      previousPosition=positionText;
+      if(!index&&cutBefore){
+        const gap=node(`work-start:${first.sequence}`,'span','work-gap');
+        setConcordanceText(gap,'… ');
+        gap.setAttribute('aria-hidden','true');
+        excerpts.push(gap);
+      }
+      for(const {row,before,text} of hits){
+        const sequence=row.sequence;
+        const context=node(`work-before:${sequence}`,'span','work-context');
+        context.lang='ja';
+        setConcordanceText(context,before);
+        excerpts.push(context);
+        const link=node(`work-hit:${sequence}`,'a','kwic-row');
+        const mark=node(`work-mark:${sequence}`,'mark','');
+        const omitted=row.preview_omitted===true;
+        const omittedText=locale==='ja'?'用例の全文は JSONL で確認できます':'Full example in JSONL download';
+        mark.lang=omitted?locale:'ja';
+        setConcordanceText(mark,omitted?omittedText:text||'+');
+        mountResultNodes(link,[mark]);
+        link.dataset.sequence=String(sequence);
+        link.toggleAttribute('data-view',!omitted);
+        link.classList.toggle('work-overlap',!omitted&&!text);
+        if(omitted){link.removeAttribute('href');link.setAttribute('aria-disabled','true');}
+        else{
+          const href=hrefFor(run,hitLocation(run,row,'example'));
+          if(link.getAttribute('href')!==href)link.setAttribute('href',href);
+          link.removeAttribute('aria-disabled');
+        }
+        const overlap=locale==='ja'?'重なる用例':'Overlapping match';
+        const label=[title||documentTitle(row),workPosition(row).long,omitted?omittedText:row.surface,
+          !text&&!omitted?overlap:'',
+        ].filter(Boolean).join(', ');
+        if(link.getAttribute('aria-label')!==label)link.setAttribute('aria-label',label);
+        const expanded=String(inspecting?.run.id===run.id&&inspecting.row.sequence===sequence&&!tokenLab.hidden);
+        if(link.getAttribute('aria-expanded')!==expanded)link.setAttribute('aria-expanded',expanded);
+        excerpts.push(link);
+        visible.push(row);
+      }
+      const tail=node(`work-after:${first.sequence}`,'span','work-context');
+      tail.lang='ja';
+      setConcordanceText(tail,after);
+      excerpts.push(tail);
+      if(index===passages.length-1&&cutAfter){
+        const gap=node(`work-end:${first.sequence}`,'span','work-gap');
+        setConcordanceText(gap,' …');
+        gap.setAttribute('aria-hidden','true');
+        excerpts.push(gap);
+      }
+      if(inspecting?.run.id===run.id&&!tokenLab.hidden
+        &&hits.some(({row})=>row.sequence===inspecting?.row.sequence)){
+        excerpts.push(tokenLab);
+        if(readerPanel.open)excerpts.push(readerPanel);
+      }
+    }
+    mountResultNodes(flow,excerpts);
+    desired.push(flow);
+    if(inspectionFailure?.runId===run.id){
+      const failed=group.rows.find(row=>row.sequence===inspectionFailure?.sequence);
+      if(failed){
+        const link=node(`work-hit:${failed.sequence}`,'a','kwic-row');
+        desired.push(analysisError(node(`error:${failed.sequence}`,'p','line-note analysis-error'),run,failed,link,inspectionFailure.message));
+      }
+    }
+  }
+  if(work.total!==null&&!visible.length&&!work.error){
+    const empty=node('work-empty','p','line-note');
+    setConcordanceText(empty,t('noMatches'));
+    desired.push(empty);
+  }
+  workRows.set(panel,visible);
+  mountResultNodes(list,desired);
+  roveList(list);
+  if(inspecting?.run.id===run.id&&!tokenLab.hidden)renderExampleSteps();
+  for(const key of nodes.keys())if(!used.has(key))nodes.delete(key);
+}
+
+function analysisError(notice:HTMLElement,run:RunSnapshot,row:MatchRecord,link:HTMLElement,message:string){
+  notice.setAttribute('role','alert');
+  const signature=locale+message;
+  if(renderSignatures.get(notice)!==signature){
+    const retry=document.createElement('button');
+    retry.type='button';
+    retry.textContent=locale==='ja'?'分析を再読み込み':'Retry analysis';
+    retry.addEventListener('click',()=>void inspect(run,row,link));
+    notice.replaceChildren(document.createTextNode((locale==='ja'?'分析を読み込めませんでした。':'Could not load analysis. ')+message+' '),retry);
+    renderSignatures.set(notice,signature);
+  }
+  return notice;
+}
 function renderLines(panel: HTMLElement,run: RunSnapshot | undefined,_force=false) {
   if (!run) return;
   panel.classList.toggle('listing-entry',entryShown(run));
   const grouped=byWork(run)&&!entryShown(run);
-  const list=$('.kwic-list',panel),more=$<HTMLButtonElement>('.more-works',panel);
+  const list=$('.kwic-list',panel);
   panel.classList.toggle('work-results',grouped);
   list.classList.toggle('work-sample-list',grouped);
-  more.hidden=true;
+  $('.work-pages',panel).hidden=true;
   renderResultModes(panel,run,grouped);
   if(entryShown(run)){renderEntryList(panel,run);return;}
   const pattern=selection.get(run.id)??'',view=documentView(run,pattern);
-  const work=workView(view),zoom=zoomLevel(panel);
-  if(grouped&&pattern&&work.total===null&&!work.loading&&!work.error){
-    void loadWorkSamples(panel,run,pattern,work);return;
+  if(grouped){
+    const work=workView(view);
+    if(pattern&&work.total===null&&!work.loading&&!work.error)void loadWorkPage(panel,run,pattern,work);
+    else renderWorkLines(panel,run,list,pattern,work);
+    return;
   }
-  if(!grouped&&!isReplay&&run.phase==='complete'&&!view.loading&&(!view.error&&(view.documents===null||view.limit!==controls.state.lines)||view.error&&view.request?.limit!==controls.state.lines)){void loadDocumentPage(panel,run,pattern,view.document,view.after);return;}
-  $('.line-controls',panel).hidden=grouped;
-  if(grouped){$('.document-nav',panel).hidden=true;$('.document-pages',panel).hidden=true;}
-  else renderDocumentNavigation(panel,run,pattern,view);
+  if(!isReplay&&run.phase==='complete'&&!view.loading&&(!view.error&&(view.documents===null||view.limit!==controls.state.lines)||view.error&&view.request?.limit!==controls.state.lines)){void loadDocumentPage(panel,run,pattern,view.document,view.after);return;}
+  $('.line-controls',panel).hidden=false;
+  renderDocumentNavigation(panel,run,pattern,view);
   const pageReady=!isReplay&&run.phase==='complete'&&view.documents!==null;
   const prefixVisible=!view.request||view.request.after===-1&&view.request.document==null&&view.request.scopeDocument==null;
   const allRows=pageReady?view.rows:prefixVisible?(run.rows[pattern]??[]):[];
   const filter=filters.get(run.id)??'',limit=controls.state.lines,context=controls.state.context;
-  const works=new Map(work.groups.map(group=>[group.document.ordinal,group]));
-  const landmarks=new Map((grouped?work.groups.map(group=>group.document):view.landmarks).map(document=>[document.ordinal,document]));
-  const pinned=inspecting?.run.id===run.id&&!tokenLab.hidden?inspecting.row:work.pinned;
-  const visibleWorkRows=grouped?work.groups.flatMap(group=>{
-    const rows=workExpanded(work,group.document.ordinal,zoom)?[...group.rows]:group.rows.slice(0,1);
-    if(pinned?.document_ordinal===group.document.ordinal&&!rows.some(row=>row.sequence===pinned.sequence))rows.push(pinned);
-    return rows;
-  }):[];
-  if(grouped&&pinned&&!visibleWorkRows.some(row=>row.sequence===pinned.sequence))visibleWorkRows.push(pinned);
-  workRows.set(panel,visibleWorkRows);
-  const rows=grouped?visibleWorkRows:allRows.filter(row=>lineText(row).includes(filter)).slice(0,limit);
+  const landmarks=new Map(view.landmarks.map(document=>[document.ordinal,document]));
+  const rows=allRows.filter(row=>lineText(row).includes(filter)).slice(0,limit);
   const sort=$<HTMLSelectElement>('.kwic-sort select',panel).value;
-  if(!grouped&&run.phase==='complete'&&sort!=='original'){
+  if(run.phase==='complete'&&sort!=='original'){
     const collator=new Intl.Collator('ja');
     const sortKey=(row:MatchRecord)=>sort==='left'?words([...(row.left_context??[])].reverse()):sort==='right'?words(row.right_context):row.surface;
     const keys=new Map(rows.map(row=>[row,sortKey(row)]));
@@ -917,8 +1115,8 @@ function renderLines(panel: HTMLElement,run: RunSnapshot | undefined,_force=fals
   }
   const shownCounts=new Map<number,number>();
   for(const row of rows)shownCounts.set(row.document_ordinal,(shownCounts.get(row.document_ordinal)??0)+1);
-  const total=!grouped&&pageReady?view.matchesTotal:run.counts[pattern]??0,shownLines=Math.min(allRows.length,limit);
-  if(!grouped){
+  const total=pageReady?view.matchesTotal:run.counts[pattern]??0,shownLines=Math.min(allRows.length,limit);
+  {
     const input=$<HTMLInputElement>('.line-controls input',panel),hint=locale==='ja'?`表示中の${count(shownLines)}件から絞り込む`:`Filter the ${count(shownLines)} lines shown`;
     input.placeholder=hint;input.setAttribute('aria-label',hint);
     $('.line-controls span',panel).textContent=run.phase==='complete'&&!isReplay
@@ -927,45 +1125,33 @@ function renderLines(panel: HTMLElement,run: RunSnapshot | undefined,_force=fals
       : locale==='ja'?`${count(total)} 件が見つかりました · ${count(rows.length)} 件を表示`:`${count(rows.length)} shown · ${count(total)} found`;
     if(view.loading&&!rows.length)$('.line-controls span',panel).textContent=locale==='ja'?`全 ${count(total)} 件`:`${count(total)} total matches`;
   }
-  const matchingDocuments=grouped?work.total:pageReady?(view.scopeDocument!=null?(total?1:0):view.query?null:view.documentsTotal):null;
+  const matchingDocuments=pageReady?(view.scopeDocument!=null?(total?1:0):view.query?null:view.documentsTotal):null;
   setConcordanceText($('.evidence-sentence',panel),run.phase!=='complete'&&!isReplay?(locale==='ja'?`途中までに ${count(total)} 件。`:`${count(total)} ${total===1?'match':'matches'} so far.`):locale==='ja'?`${count(total)} 件${matchingDocuments==null?'':` · ${count(matchingDocuments)} 文書`}。`:`${count(total)} ${total===1?'match':'matches'}${matchingDocuments==null?'':` in ${count(matchingDocuments)} ${matchingDocuments===1?'document':'documents'}`}.`);
   const scope=$('.document-scope',panel);
-  scope.hidden=grouped||view.scopeDocument==null;
+  scope.hidden=view.scopeDocument==null;
   if(!scope.hidden){
     const markup=`<a data-view href="${escape(hrefFor(run,{...concordanceFor(run),scopeDocument:null,document:null,after:view.returnAfter}))}">${locale==='ja'?'すべての文書に戻る':'Return to all documents'}</a>`;
     if(renderSignatures.get(scope)!==markup){scope.innerHTML=markup;renderSignatures.set(scope,markup);}
   }
   const note=$('.line-note',panel);note.setAttribute('role','status');
   note.textContent=view.loading&&(!rows.length||view.documents!==null)?(locale==='ja'?'用例を読み込んでいます…':'Loading examples…'):view.loading?'':view.error?(locale==='ja'?`用例を読み込めませんでした。${view.error}`:`Examples could not be loaded. ${view.error}`):run.phase==='running'?t('notTotal'):'';
-  if(grouped){
-    const shown=count(work.groups.length);
-    const first=zoom===0&&!work.groups.some(group=>workExpanded(work,group.document.ordinal,zoom))&&!pinned;
-    const summary=locale==='ja'?(first?`${shown} 作品から最初の用例`:`${shown} 作品を表示`):(first?`First match from each of ${shown} ${work.groups.length===1?'work':'works'}`:`Showing ${shown} ${work.groups.length===1?'work':'works'}`);
-    note.textContent=work.error??(work.loading?(locale==='ja'?'用例を読み込んでいます…':'Loading examples…'):work.groups.length?summary:'');
-    more.hidden=work.next==null&&!(work.total==null&&work.error);
-    more.disabled=work.loading;
-    setConcordanceText(more,work.total==null?(locale==='ja'?'もう一度読み込む':'Retry loading works'):(locale==='ja'?'さらに作品を表示':'Show more works'));
-  }
   note.hidden=!note.textContent;
-  list.setAttribute('aria-busy',String(grouped?work.loading:view.loading));
+  list.setAttribute('aria-busy',String(view.loading));
   let nodes=concordanceNodes.get(list);if(!nodes){nodes=new Map();concordanceNodes.set(list,nodes);}
   const desired:HTMLElement[]=[],used=new Set<string>();
   const node=(key:string,tag:'div'|'a'|'p'|'button',className:string)=>{used.add(key);let value=nodes!.get(key);if(!value){value=document.createElement(tag);value.className=className;nodes!.set(key,value);}return value;};
   const hrefScope=hrefFor(run,concordanceFor(run));
   let previousDocument:number|undefined;
-  for(const [index,row] of rows.entries()){
+  for(const row of rows){
     if(previousDocument!==row.document_ordinal){
-      const ordinal=row.document_ordinal,group=grouped?works.get(ordinal):undefined;
-      const titleTag=grouped?(group&&group.document.matches>1?'button':'strong'):'a';
-      const heading=node(`document:${ordinal}:${titleTag}:${sort==='original'||grouped?'':row.sequence}`,'div','document-heading');
-      if(grouped)heading.dataset.workHeading=String(ordinal);
+      const ordinal=row.document_ordinal;
+      const heading=node(`document:${ordinal}:${sort==='original'?'':row.sequence}`,'div','document-heading');
       const landmark=landmarks.get(ordinal);
       const shown=shownCounts.get(ordinal)??0;
       let content=concordanceHeadings.get(heading);
       if(!content){
-        const title=document.createElement(titleTag);
-        if(title instanceof HTMLButtonElement){title.type='button';title.dataset.workToggle=String(ordinal);}
-        if(title instanceof HTMLAnchorElement)title.dataset.view='';
+        const title=document.createElement('a');
+        title.dataset.view='';
         const author=document.createElement('span'),count=document.createElement('span');
         count.className='document-match-count';
         heading.append(title,author,count);
@@ -976,11 +1162,8 @@ function renderLines(panel: HTMLElement,run: RunSnapshot | undefined,_force=fals
         const href=hrefFor(run,{...concordanceFor(run),layout:'kwic',scopeDocument:ordinal,returnAfter:view.scopeDocument==null?view.after:view.returnAfter,document:ordinal,after:-1});
         if(content.title.getAttribute('href')!==href)content.title.setAttribute('href',href);
       }
-      if(content.title instanceof HTMLButtonElement)content.title.setAttribute('aria-expanded',String(workExpanded(work,ordinal,zoom)));
       setConcordanceText(content.title,landmark?.title||documentTitle(row));
-      const author=landmark?.author||row.source_metadata?.document?.author||'';
-      const edition=grouped?works.get(row.document_ordinal)?.edition:'';
-      const source=[author,edition].filter(Boolean).join(' · ');
+      const source=landmark?.author||row.source_metadata?.document?.author||'';
       content.author.hidden=!source;
       setConcordanceText(content.author,source);
       setConcordanceText(content.count,landmark?count(landmark.matches)+(locale==='ja'?' 件':landmark.matches===1?' match':' matches'):count(shown)+(locale==='ja'?' 件を表示':' shown'));
@@ -992,7 +1175,7 @@ function renderLines(panel: HTMLElement,run: RunSnapshot | undefined,_force=fals
     link.toggleAttribute('data-view',!omitted);
     if(omitted)link.setAttribute('aria-disabled','true');else link.removeAttribute('aria-disabled');
     const matchText=omitted?(locale==='ja'?'用例の全文は JSONL で確認できます':'Full example in JSONL download'):row.surface;
-    const ordinal=grouped?index+1:view.start+allRows.indexOf(row)+1;
+    const ordinal=view.start+allRows.indexOf(row)+1;
     const expanded=String(inspecting?.run.id===run.id&&inspecting.row.sequence===row.sequence&&!tokenLab.hidden);if(link.getAttribute('aria-expanded')!==expanded)link.setAttribute('aria-expanded',expanded);
     let content=concordanceContent.get(link);
     if(!content){
@@ -1010,54 +1193,26 @@ function renderLines(panel: HTMLElement,run: RunSnapshot | undefined,_force=fals
       setConcordanceText(content.number,String(ordinal));
       content.ordinal=ordinal;
     }
-    const sentence=grouped&&zoom===2?row.sentence_text:null;
-    const contextKey=grouped?(sentence?-1:-(context+2)):context;
-    if(rowChanged||content.context!==contextKey||omitted){
-      link.classList.toggle('has-sentence',!!sentence);
+    if(rowChanged||content.context!==context||omitted){
       const bound=boundOutside(row,row.span.end+(row.right_context?.length??0));
       setConcordanceText(content.hit,matchText);
       const left=context?(row.left_context??[]).slice(-context):[],right=(row.right_context??[]).slice(0,context);
-      if(sentence){
-        const [before,match,after]=sentence;
-        setConcordanceText(content.left,before);setConcordanceText(content.hit,match);setConcordanceText(content.right,after);
-      }else{
-        setContext(content.left,left,bound);setContext(content.right,right,bound);
-        if(grouped&&left.length&&row.tokens[0]?.space_before)content.left.append(' ');
-        if(grouped&&right[0]?.space_before)content.right.prepend(' ');
-      }
-      content.row=row;content.context=contextKey;
+      setContext(content.left,left,bound);setContext(content.right,right,bound);
+      content.row=row;content.context=context;
     }
     desired.push(link);
-    if(inspectionFailure?.runId===run.id&&inspectionFailure.sequence===row.sequence){
-      const notice=node(`error:${row.sequence}`,'p','line-note analysis-error');notice.setAttribute('role','alert');
-      const signature=locale+inspectionFailure.message;
-      if(renderSignatures.get(notice)!==signature){notice.replaceChildren(document.createTextNode((locale==='ja'?'分析を読み込めませんでした。':'Could not load analysis. ')+inspectionFailure.message+' '));const retry=document.createElement('button');retry.type='button';retry.textContent=locale==='ja'?'分析を再読み込み':'Retry analysis';retry.addEventListener('click',()=>void inspect(run,row,link));notice.append(retry);renderSignatures.set(notice,signature);}
-      desired.push(notice);
-    }
+    if(inspectionFailure?.runId===run.id&&inspectionFailure.sequence===row.sequence)
+      desired.push(analysisError(node(`error:${row.sequence}`,'p','line-note analysis-error'),run,row,link,inspectionFailure.message));
     if(inspecting?.run.id===run.id&&inspecting.row.sequence===row.sequence&&!tokenLab.hidden){desired.push(tokenLab);if(readerPanel.open)desired.push(readerPanel);}
-    if(grouped&&rows[index+1]?.document_ordinal!==row.document_ordinal){
-      const group=works.get(row.document_ordinal);
-      if(group&&group.next!=null&&workExpanded(work,row.document_ordinal,zoom)){
-        const action=node(`work-more:${row.document_ordinal}`,'button','work-more') as HTMLButtonElement;
-        action.type='button';action.dataset.workMore=String(row.document_ordinal);action.disabled=work.loading;
-        setConcordanceText(action,locale==='ja'?'さらに用例を表示':'Show more matches');
-        desired.push(action);
-      }
-    }
   }
-  if(!rows.length&&(!grouped||!work.loading&&!work.error)){const empty=node('empty','p','line-note');if(filter)filterEmpty(empty,run,pattern,filter,shownLines);else{renderSignatures.delete(empty);empty.textContent=t(run.phase==='complete'?'noMatches':'noLines');}desired.push(empty);}
-  const desiredNodes=new Set(desired);
-  for(const child of [...list.children])if(!desiredNodes.has(child as HTMLElement)){
-    if(child===tokenLab||child===readerPanel)document.body.append(child);else child.remove();
-  }
-  desired.forEach((child,index)=>{if(list.children[index]!==child)list.insertBefore(child,list.children[index]??null);});
+  if(!rows.length){const empty=node('empty','p','line-note');if(filter)filterEmpty(empty,run,pattern,filter,shownLines);else{renderSignatures.delete(empty);empty.textContent=t(run.phase==='complete'?'noMatches':'noLines');}desired.push(empty);}
+  mountResultNodes(list,desired);
   roveList(list);
-  if(grouped&&inspecting?.run.id===run.id&&!tokenLab.hidden)renderExampleSteps();
   for(const key of nodes.keys())if(!used.has(key))nodes.delete(key);
 }
 
 const listStops=new WeakMap<Element,HTMLElement>();
-const listItems=(list:Element)=>[...list.querySelectorAll<HTMLElement>(':scope>.kwic-row,:scope>.document-heading>a,:scope>.document-heading>button[data-work-toggle]')];
+const listItems=(list:Element)=>[...list.querySelectorAll<HTMLElement>(':scope>.kwic-row,:scope>.work-excerpts>.kwic-row,:scope>.document-heading>a')];
 function roveList(list:Element){
   const items=listItems(list),remembered=listStops.get(list);
   const stop=remembered&&items.includes(remembered)?remembered:items.find(item=>item.matches('.kwic-row[aria-expanded=true]'))??items[0];
@@ -1179,7 +1334,9 @@ async function inspect(run: RunSnapshot,row: MatchRecord,button: HTMLElement) {
     attributeKey=keys.includes('lemma')?'lemma':keys[0]??'text';attributeMember=undefined;
     for(const token of $('#token-ribbon').querySelectorAll<HTMLButtonElement>('button'))token.addEventListener('click',()=>{selectToken(Number(token.dataset.token));$<HTMLDetailsElement>('#token-attributes>details').open=true;});
     selectToken(tokenIndex);
-    tokenLab.hidden=false;button.after(tokenLab);button.setAttribute('aria-expanded','true');renderExampleSteps();
+    tokenLab.hidden=false;
+    if(!byWork(run)||entryShown(run))button.after(tokenLab);
+    button.setAttribute('aria-expanded','true');renderExampleSteps();
     renderDependencies();
     $<HTMLAnchorElement>('#document').setAttribute('href',hrefFor(run,hitLocation(run,row,'reader')));
     $<HTMLAnchorElement>('#close-token').setAttribute('href',hrefFor(run,concordanceFor(run)));
@@ -1208,7 +1365,7 @@ function renderExampleSteps(){
   const panel=panels.get(run.id),samples=panel&&byWork(run)?workRows.get(panel):undefined;
   if(samples){
     previous.disabled=!adjacentExample(samples,row.sequence,-1);next.disabled=!adjacentExample(samples,row.sequence,1);
-    $('#token-origin').textContent=documentTitle(row);
+    $('#token-origin').textContent=[documentTitle(row),workPosition(row).long].filter(Boolean).join(' · ');
     return;
   }
   const page=documentView(run,row.pattern),position=page.rows.findIndex(value=>value.sequence===row.sequence);
@@ -1563,7 +1720,14 @@ function displayedEvidence(): RunSnapshot | null {
 function concordanceFor(run:RunSnapshot):ConcordanceLocation {
   const pattern=selection.get(run.id)??run.definitions[0]??'',page=documentView(run,pattern);
   const layout=resultLayout(run);
-  return {kind:'concordance',layout,pattern,scopeDocument:layout==='works'?null:page.scopeDocument,returnAfter:page.returnAfter,document:null,after:layout==='works'?-1:page.after,filter:filters.get(run.id)??''};
+  const work=workView(page);
+  return {
+    kind:'concordance',layout,pattern,scopeDocument:layout==='works'?null:page.scopeDocument,
+    returnAfter:page.returnAfter,document:null,after:layout==='works'?work.after:page.after,
+    filter:filters.get(run.id)??'',
+    ...(layout==='works'&&work.overview?{workOverview:true}:{}),
+    ...(layout==='works'&&preferredWorkContext!==DEFAULT_WORK_CONTEXT?{workContext:preferredWorkContext}:{}),
+  };
 }
 function hitLocation(run:RunSnapshot,row:MatchRecord,kind:'example'|'reader'):HitLocation {
   const example={kind:'example' as const,pattern:row.pattern,document:row.document_ordinal,sequence:row.sequence,returnTo:concordanceFor(run)};
@@ -1589,6 +1753,13 @@ function questionParams(url:URL,run:RunSnapshot):URLSearchParams {
   if(!params.has('metadata')&&!params.has('raw')){params.set('metadata','{}');params.set('raw',run.where);}
   return params;
 }
+async function readLocatedMatch(run:RunSnapshot,pattern:string,target:HitLocation):Promise<MatchRecord|undefined>{
+  const params=new URLSearchParams({pattern,document:String(target.document),after:String(target.sequence==null?-1:target.sequence-1),limit:'1'});
+  const row=byWork(run)&&!entryShown(run)
+    ?(await request<WorkResultsPage>(`api/questions/runs/${run.id}/work-results?${params}`)).groups[0]?.rows[0]
+    :(await request<DocumentPage>(`api/questions/runs/${run.id}/documents?${params}`)).rows[0];
+  return target.sequence===null||row?.sequence===target.sequence?row:undefined;
+}
 async function applyView(run:RunSnapshot,target:ViewLocation,pin=true,epoch=++navigationEpoch):Promise<void> {
   if(run.phase==='complete'&&target.pattern&&!run.definitions.includes(target.pattern)&&!Object.hasOwn(run.counts,target.pattern))throw new Error('This pattern is not part of the saved search.');
   viewEvidence=pin?run:null;viewLocation=target;
@@ -1597,14 +1768,15 @@ async function applyView(run:RunSnapshot,target:ViewLocation,pin=true,epoch=++na
   const layout=context.scopeDocument!=null?'kwic':context.layout??(target.kind!=='concordance'||context.after>=0||context.document!=null||context.filter?'kwic':resultLayout(run));
   const changedLayout=layout!==resultLayout(run);
   resultLayouts.set(run.id,layout);
+  if(layout==='works')preferredWorkContext=context.workContext??DEFAULT_WORK_CONTEXT;
   if(target.kind!=='reader'&&$<HTMLDialogElement>('#inspector').open)$<HTMLDialogElement>('#inspector').close();
   if(target.kind==='reader'&&target.returnTo.kind==='example'){
     const origin=target.returnTo;
     if(!inspecting||inspecting.run.id!==run.id||inspecting.row.sequence!==origin.sequence){
       await applyView(run,origin,pin,epoch);if(epoch!==navigationEpoch)return;viewLocation=target;
     }
-    let row=target.sequence!=null?(documentView(run,target.pattern).rows.find(row=>row.sequence===target.sequence)??run.rows[target.pattern]?.find(row=>row.sequence===target.sequence)):undefined;
-    if(!row){const page=await request<DocumentPage>(`api/questions/runs/${run.id}/documents?${new URLSearchParams({pattern:target.pattern,document:String(target.document),after:String(target.sequence==null?-1:target.sequence-1),limit:'1'})}`);row=page.rows[0];}
+    const row=inspecting?.run.id===run.id&&inspecting.row.sequence===target.sequence
+      ?inspecting.row:await readLocatedMatch(run,target.pattern,target);
     if(epoch!==navigationEpoch)return;
     if(!row)throw new Error('This saved location has no matching example. Choose another document.');
     readerTarget={run,row};viewLocation={...target,sequence:row.sequence,returnTo:origin.sequence==null&&inspecting?{...origin,sequence:inspecting.row.sequence}:origin};
@@ -1622,29 +1794,31 @@ async function applyView(run:RunSnapshot,target:ViewLocation,pin=true,epoch=++na
   const pattern=target.pattern||run.definitions[0]||'';
   selection.set(run.id,pattern);filters.set(run.id,context.filter);
   const page=documentView(run,pattern),scope=context.scopeDocument??null;
+  const work=workView(page),grouped=byWork(run)&&!entryShown(run);
+  if(grouped&&pattern&&(work.after!==context.after||work.overview!==!!context.workOverview)){
+    void loadWorkPage(null,run,pattern,work,context.after,!!context.workOverview);
+  }
+  if(grouped&&target.kind==='concordance'&&returnFocus===null)work.pinned=null;
   if(page.loading){++page.epoch;page.loading=false;page.request=null;}
   const needsPage=!byWork(run)&&run.phase==='complete'&&(page.documents===null||page.scopeDocument!==scope||page.after!==context.after||context.document!=null&&context.document!==page.document);
   page.returnAfter=context.returnAfter??-1;
   render();
   const panel=panels.get(run.id);if(!panel)return;
   if(needsPage)await loadDocumentPage(panel,run,pattern,context.document,context.after,null,scope);
+  else if(grouped&&work.loading)await work.loading;
   if(epoch!==navigationEpoch)return;
   if(returnFocus!=null&&document.activeElement===document.body)(panel.querySelector<HTMLElement>(`[data-sequence="${returnFocus}"]`)??$('#results')).focus({preventScroll:true});
   if(target.kind!=='concordance') {
     const matchesTarget=(row:MatchRecord)=>target.sequence!=null&&row.sequence===target.sequence;
-    const work=workView(page);
-    let row=work.groups.flatMap(group=>group.rows).find(matchesTarget)??page.rows.find(matchesTarget)??run.rows[pattern]?.find(matchesTarget);
-    if(!row&&inspecting?.run.id===run.id&&matchesTarget(inspecting.row))row=inspecting.row;
+    let row=grouped?work.groups.flatMap(group=>group.rows).find(matchesTarget):page.rows.find(matchesTarget)??run.rows[pattern]?.find(matchesTarget);
+    if(!row&&inspecting?.run.id===run.id&&matchesTarget(inspecting.row)&&(!grouped||inspecting.row.work_location))row=inspecting.row;
     if(!row&&run.phase!=='complete'){pendingView=target;return;}
-    if(!row){
-      const page=await request<DocumentPage>(`api/questions/runs/${run.id}/documents?${new URLSearchParams({pattern,document:String(target.document),after:String(target.sequence==null?-1:target.sequence-1),limit:'1'})}`);
-      row=page.rows[0];
-    }
+    if(!row)row=await readLocatedMatch(run,pattern,target);
     if(epoch!==navigationEpoch)return;
     if(!row)throw new Error('This saved location has no matching example. Choose another document.');
     const entryRow=entryShown(run)&&entryLines!.lines[entryLines!.at].sentence===row.corpus_sentence_ordinal?panel.querySelector<HTMLElement>(`[data-entry-line="${entryLines!.at}"]`):null;
     let link=entryRow??panel.querySelector<HTMLElement>(`[data-sequence="${row.sequence}"]`);
-    if(!link&&byWork(run)){
+    if(!link&&grouped){
       work.pinned=row;renderLines(panel,run);
       link=panel.querySelector<HTMLElement>(`[data-sequence="${row.sequence}"]`);
     }else if(!link){
@@ -1683,6 +1857,11 @@ document.addEventListener('click',event=>{
   if(url.origin!==location.origin||url.pathname!==location.pathname)return;
   event.preventDefault();const pending=navigateView(link.href,true),navigation=navigationEpoch;void pending.then(()=>{
     if(navigation===navigationEpoch&&link.hasAttribute('data-section-origin')&&inspecting){const panel=panels.get(inspecting.run.id);const row=panel?.querySelector<HTMLElement>(`[data-sequence="${inspecting.row.sequence}"]`);row?.scrollIntoView({block:'center'});row?.focus({preventScroll:true});}
+    if(navigation===navigationEpoch&&link.hasAttribute('data-work-page')){
+      const panel=link.closest('.result-panel'),first=panel?.querySelector<HTMLElement>('.work-excerpts a[href]');
+      panel?.querySelector('.result-modes')?.scrollIntoView({block:'start'});
+      first?.focus({preventScroll:true});
+    }
   });
 });
 window.addEventListener('popstate',()=>void navigateView(location.href,false,'none'));
