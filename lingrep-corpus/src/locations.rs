@@ -482,10 +482,8 @@ impl MappedLocations {
         }
         let analysis = AnalysisIdentity::from_bytes(read_array(&map, 16)?);
         if &analysis != expected_analysis {
-            return Err(CorpusError::VerificationMismatch {
+            return Err(CorpusError::AnalysisIdentityMismatch {
                 component: COMPONENT,
-                sentence_ordinal: None,
-                message: "analysis identity differs from the expected artifact identity".into(),
             });
         }
         let sentence_count = read_u64(&map, 48)?;

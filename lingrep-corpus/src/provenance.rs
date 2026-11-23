@@ -1377,9 +1377,9 @@ impl ProvenanceView {
             return Err(verification("provenance artifact is not ready"));
         }
         if identity.as_slice() != expected.as_bytes() {
-            return Err(verification(
-                "analysis identity differs from the expected artifact identity",
-            ));
+            return Err(CorpusError::AnalysisIdentityMismatch {
+                component: COMPONENT,
+            });
         }
         let sentence_count: i64 = row.try_get("sentence_count").map_err(database)?;
         let sentence_count =
@@ -1398,9 +1398,9 @@ impl ProvenanceView {
             (0, _, _) => return Err(invalid("empty sentence relation has bounds")),
             (count, Some(0), Some(last)) if u64::try_from(last).ok() == count.checked_sub(1) => {}
             (_, Some(_), Some(_)) => {
-                return Err(verification(
-                    "sentence IDs are not contiguous and zero-based",
-                ));
+                return Err(CorpusError::SentenceCountMismatch {
+                    component: COMPONENT,
+                });
             }
             _ => return Err(invalid("sentence relation has malformed bounds")),
         }
@@ -1446,7 +1446,9 @@ impl ProvenanceView {
             first = first
                 .checked_add(decoded.len() as u64)
                 .filter(|end| *end <= self.sentence_count)
-                .ok_or_else(|| verification("sentence text blocks exceed the sentence count"))?;
+                .ok_or(CorpusError::SentenceCountMismatch {
+                    component: COMPONENT,
+                })?;
             cursor = sqlite_integer(start, "sentence ID")?
                 .checked_add(1)
                 .ok_or_else(|| invalid("sentence ID overflow"))?;
@@ -1527,9 +1529,9 @@ impl ProvenanceView {
                         )?;
                         let previous: Option<i64> = row.try_get("previous_id").map_err(database)?;
                         if sentence > 0 && previous.is_none() {
-                            return Err(verification(
-                                "sentence IDs are not contiguous and zero-based",
-                            ));
+                            return Err(CorpusError::SentenceCountMismatch {
+                                component: COMPONENT,
+                            });
                         }
                         validate_document_membership(&row, sentence)?;
                         Ok((
@@ -3667,12 +3669,7 @@ fn reject_sidecars(path: &Path) -> Result<(), CorpusError> {
         sidecar.push(suffix);
         let sidecar = PathBuf::from(sidecar);
         match fs::symlink_metadata(&sidecar) {
-            Ok(_) => {
-                return Err(invalid(format!(
-                    "immutable artifact retained SQLite sidecar at {}",
-                    sidecar.display()
-                )));
-            }
+            Ok(_) => return Err(CorpusError::SqliteSidecar),
             Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
             Err(error) => return Err(CorpusError::Io(error)),
         }

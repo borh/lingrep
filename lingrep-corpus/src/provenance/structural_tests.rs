@@ -388,7 +388,7 @@ async fn immutable_view_rejects_a_different_analysis_identity() {
         Ok(_) => panic!("mismatched analysis identity must not open"),
         Err(error) => error,
     };
-    assert_eq!(error.code(), "verification_mismatch");
+    assert_eq!(error.code(), "analysis_identity_mismatch");
 }
 
 #[tokio::test]
@@ -482,7 +482,9 @@ async fn immutable_view_rejects_unready_or_count_inconsistent_storage() {
     database.close().await.unwrap();
     assert!(matches!(
         ProvenanceView::open(&path, &analysis_identity()).await,
-        Err(CorpusError::VerificationMismatch { .. })
+        Err(CorpusError::SentenceCountMismatch {
+            component: "provenance.sqlite",
+        })
     ));
 }
 
@@ -502,7 +504,9 @@ async fn immutable_view_rejects_noncontiguous_sentence_ids() {
 
     assert!(matches!(
         ProvenanceView::open(&path, &analysis_identity()).await,
-        Err(CorpusError::VerificationMismatch { .. })
+        Err(CorpusError::SentenceCountMismatch {
+            component: "provenance.sqlite",
+        })
     ));
 }
 
@@ -517,10 +521,7 @@ async fn immutable_view_rejects_regular_and_dangling_sqlite_sidecars() {
     fs::write(&wal, b"unexpected").unwrap();
     assert!(matches!(
         ProvenanceView::open(&path, &analysis_identity()).await,
-        Err(CorpusError::InvalidFormat {
-            component: "provenance.sqlite",
-            ..
-        })
+        Err(CorpusError::SqliteSidecar)
     ));
     fs::remove_file(&wal).unwrap();
 
@@ -530,10 +531,7 @@ async fn immutable_view_rejects_regular_and_dangling_sqlite_sidecars() {
         std::os::unix::fs::symlink("missing-target", &journal).unwrap();
         assert!(matches!(
             ProvenanceView::open(&path, &analysis_identity()).await,
-            Err(CorpusError::InvalidFormat {
-                component: "provenance.sqlite",
-                ..
-            })
+            Err(CorpusError::SqliteSidecar)
         ));
     }
 }
@@ -1542,7 +1540,9 @@ async fn immutable_view_rejects_interior_gaps_with_intact_endpoints() {
         assert!(
             matches!(
                 ProvenanceView::open(&path, &analysis_identity()).await,
-                Err(CorpusError::VerificationMismatch { .. })
+                Err(CorpusError::SentenceCountMismatch {
+                    component: "provenance.sqlite",
+                })
             ),
             "missing sentence {sentence}"
         );

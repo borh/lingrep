@@ -181,9 +181,8 @@ fn mapped_open_rejects_an_unexpected_analysis_identity() {
 
     assert!(matches!(
         MappedLocations::open(&path, &analysis(2)),
-        Err(CorpusError::VerificationMismatch {
+        Err(CorpusError::AnalysisIdentityMismatch {
             component: "locations.v1",
-            ..
         })
     ));
 }

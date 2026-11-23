@@ -1831,8 +1831,7 @@ impl CorpusArtifact {
 
     pub async fn provenance_view(&self) -> Result<ProvenanceView, CorpusError> {
         let view = ProvenanceView::open(&self.root.join(PROVENANCE_NAME), &self.analysis_identity)
-            .await
-            .map_err(map_provenance_error)?
+            .await?
             .bind_to_artifact(self.manifest.component_blake3(PROVENANCE_NAME)?);
         if view.sentence_count() != self.manifest.sentence_count {
             return Err(CorpusError::SentenceCountMismatch {
@@ -2196,36 +2195,6 @@ fn read_prefix(path: &Path, len: usize, component: &'static str) -> Result<Vec<u
 fn map_open_error(error: CorpusError) -> CorpusError {
     match error {
         CorpusError::Truncated { component, .. } => CorpusError::TruncatedComponent { component },
-        CorpusError::VerificationMismatch {
-            component, message, ..
-        } if message.contains("analysis identity") => {
-            CorpusError::AnalysisIdentityMismatch { component }
-        }
-        error => error,
-    }
-}
-
-fn map_provenance_error(error: CorpusError) -> CorpusError {
-    match error {
-        CorpusError::InvalidFormat { message, .. } if message.contains("sidecar") => {
-            CorpusError::SqliteSidecar
-        }
-        CorpusError::VerificationMismatch { message, .. }
-            if message.contains("analysis identity") =>
-        {
-            CorpusError::AnalysisIdentityMismatch {
-                component: PROVENANCE_NAME,
-            }
-        }
-        CorpusError::VerificationMismatch { message, .. }
-            if message.contains("sentence count")
-                || message.contains("row count")
-                || message.contains("sentence IDs") =>
-        {
-            CorpusError::SentenceCountMismatch {
-                component: PROVENANCE_NAME,
-            }
-        }
         error => error,
     }
 }
