@@ -70,6 +70,24 @@ pub fn published_descriptor(
     .expect("the adapter descriptor's policies are nonempty")
 }
 
+struct LaunchConfig {
+    command: ExternalAdapterCommand,
+    manifest: VerifiedAdapterManifest,
+    adapter_schema: TokenSchema,
+    cancellation: ExternalAdapterCancellation,
+}
+
+struct RunningSession {
+    process: ExternalAdapterProcess,
+    projection: BoundProjection,
+}
+
+enum SessionState {
+    Unlaunched(Box<LaunchConfig>),
+    Running(Box<RunningSession>),
+    Finished,
+}
+
 /// Owns one verified process with a fixed projection until completion or drop.
 ///
 /// The adapter reads the [`ViewFold::unprotected`] view of each input. Its
@@ -78,17 +96,11 @@ pub fn published_descriptor(
 /// multiword token publishes the adapter's `text` as `surface`, and `text` is
 /// the folded key of `surface`.
 pub struct ExternalAnalyzerSession {
-    command: ExternalAdapterCommand,
-    manifest: VerifiedAdapterManifest,
     descriptor: AnalyzerDescriptor,
-    adapter_schema: TokenSchema,
     schema: TokenSchema,
     limits: ExecutionLimits,
     diagnostic: DiagnosticCallback,
-    cancellation: ExternalAdapterCancellation,
-    process: Option<ExternalAdapterProcess>,
-    projection: Option<BoundProjection>,
-    finished: bool,
+    state: SessionState,
 }
 
 impl ExternalAnalyzerSession {
@@ -108,28 +120,26 @@ impl ExternalAnalyzerSession {
         cancellation: ExternalAdapterCancellation,
     ) -> Result<Self, TokenSchemaError> {
         Ok(Self {
-            command,
-            manifest,
             descriptor,
             schema: published_schema(&schema)?,
-            adapter_schema: schema,
             limits,
             diagnostic,
-            cancellation,
-            process: None,
-            projection: None,
-            finished: false,
+            state: SessionState::Unlaunched(Box::new(LaunchConfig {
+                command,
+                manifest,
+                adapter_schema: schema,
+                cancellation,
+            })),
         })
     }
 
     /// Reads the requested adapter cells and the inputs needed to publish
     /// source surfaces and GiNZA bunsetsu independently of that projection.
     fn adapter_projection(
-        &self,
+        adapter_schema: &TokenSchema,
         projection: &BoundProjection,
     ) -> Result<BoundProjection, AnalysisError> {
-        let bunsetsu = self
-            .adapter_schema
+        let bunsetsu = adapter_schema
             .keys()
             .iter()
             .any(|key| key.as_str() == "spacy.ginza.bunsetu");
@@ -139,7 +149,7 @@ impl ExternalAnalyzerSession {
             .filter(|key| key.as_str() != "surface")
             .cloned()
             .chain(
-                self.adapter_schema
+                adapter_schema
                     .keys()
                     .iter()
                     .filter(|key| {
@@ -154,7 +164,7 @@ impl ExternalAnalyzerSession {
                     })
                     .cloned(),
             );
-        self.adapter_schema
+        adapter_schema
             .bind_projection(keys)
             .map_err(|_| AnalysisError::UnsupportedProjection)
     }
@@ -309,40 +319,47 @@ impl AnalyzerSession for ExternalAnalyzerSession {
         inputs: Vec<TextUnit>,
         projection: &BoundProjection,
     ) -> Result<ValidatedAnalysisBatch, AnalysisError> {
-        if self.finished {
-            return Err(AnalysisError::ProviderFailure(
-                "external analyzer session has finished".into(),
-            ));
-        }
-        if projection.schema_digest() != self.schema.digest()
-            || self
-                .projection
-                .as_ref()
-                .is_some_and(|bound| bound != projection)
-        {
-            return Err(AnalysisError::UnsupportedProjection);
-        }
-        if self.process.is_none() {
-            let adapter_projection = self.adapter_projection(projection)?;
-            let config = ExternalRunConfig::new(
-                "ling-cli",
-                self.descriptor.clone(),
-                self.adapter_schema.clone(),
-                adapter_projection,
-                self.manifest.components().to_vec(),
-                ExternalProtocolLimits::default(),
-            )
-            .map_err(AnalysisError::provider)?;
-            let process = ExternalAdapterProcess::launch_with_cancellation(
-                self.command.clone(),
-                self.manifest.clone(),
-                config,
-                self.diagnostic.clone(),
-                self.cancellation.clone(),
-            )
-            .map_err(AnalysisError::provider)?;
-            self.process = Some(process);
-            self.projection = Some(projection.clone());
+        match &self.state {
+            SessionState::Finished => {
+                return Err(AnalysisError::ProviderFailure(
+                    "external analyzer session has finished".into(),
+                ));
+            }
+            SessionState::Running(running) => {
+                if projection.schema_digest() != self.schema.digest()
+                    || running.projection != *projection
+                {
+                    return Err(AnalysisError::UnsupportedProjection);
+                }
+            }
+            SessionState::Unlaunched(launch) => {
+                if projection.schema_digest() != self.schema.digest() {
+                    return Err(AnalysisError::UnsupportedProjection);
+                }
+                let adapter_projection =
+                    Self::adapter_projection(&launch.adapter_schema, projection)?;
+                let config = ExternalRunConfig::new(
+                    "ling-cli",
+                    self.descriptor.clone(),
+                    launch.adapter_schema.clone(),
+                    adapter_projection,
+                    launch.manifest.components().to_vec(),
+                    ExternalProtocolLimits::default(),
+                )
+                .map_err(AnalysisError::provider)?;
+                let process = ExternalAdapterProcess::launch_with_cancellation(
+                    launch.command.clone(),
+                    launch.manifest.clone(),
+                    config,
+                    self.diagnostic.clone(),
+                    launch.cancellation.clone(),
+                )
+                .map_err(AnalysisError::provider)?;
+                self.state = SessionState::Running(Box::new(RunningSession {
+                    process,
+                    projection: projection.clone(),
+                }));
+            }
         }
         let mut views = Vec::with_capacity(inputs.len());
         let mut adapter_inputs = Vec::with_capacity(inputs.len());
@@ -365,11 +382,12 @@ impl AnalyzerSession for ExternalAnalyzerSession {
                 views.push(Some(view));
             }
         }
-        let result = self
-            .process
-            .as_mut()
-            .expect("launched process")
-            .exchange_batch(adapter_inputs, &self.limits);
+        let SessionState::Running(running) = &mut self.state else {
+            return Err(AnalysisError::ProviderFailure(
+                "external analyzer session has finished".into(),
+            ));
+        };
+        let result = running.process.exchange_batch(adapter_inputs, &self.limits);
         match result {
             Ok(batch) => {
                 let (analysis, warnings) = batch.into_parts();
@@ -380,16 +398,16 @@ impl AnalyzerSession for ExternalAnalyzerSession {
                 self.publish(analysis, inputs, views, projection)
             }
             Err(error) => {
-                self.finished = true;
-                self.process.take();
+                self.state = SessionState::Finished;
                 Err(AnalysisError::provider(error))
             }
         }
     }
     fn finish(&mut self) -> Result<(), AnalysisError> {
-        self.finished = true;
-        if let Some(process) = self.process.take() {
-            process.finish().map_err(AnalysisError::provider)?;
+        if let SessionState::Running(running) =
+            std::mem::replace(&mut self.state, SessionState::Finished)
+        {
+            running.process.finish().map_err(AnalysisError::provider)?;
         }
         Ok(())
     }
