@@ -115,8 +115,12 @@ python3 scripts/check-adapter-wheels.py --update-exports
 ./ci.sh --fast
 ```
 
-Write `docs/release-notes/v<VERSION>.md` before creating the tag. Pushing a
-`v<VERSION>` tag publishes the release automatically.
+Write `docs/release-notes/v<VERSION>.md` before creating the tag. Check that the
+Apple silicon CI job passes the workspace unit and integration suites for the
+release candidate. Pushing a `v<VERSION>` tag starts the Release workflow.
+Publication requires the packaged binaries to pass the student scenario on
+each target and the output checks on the Linux, macOS, and WSL filesystem
+matrix.
 
 ### Python binding releases
 

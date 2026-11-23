@@ -6,7 +6,6 @@ name: Output filesystems
 on:
   push:
     branches: [main]
-    tags: ["v*"]
     paths: &paths
       - "lingrep/**"
       - "lingrep-corpus/**"
@@ -22,10 +21,16 @@ on:
   pull_request:
     paths: *paths
   workflow_dispatch:
+  workflow_call:
+    inputs:
+      release-ref:
+        description: Ref used to build the release archives in the calling workflow
+        required: true
+        type: string
 
 concurrency:
-  group: ${{ github.workflow }}-${{ github.ref }}
-  cancel-in-progress: true
+  group: ${{ github.workflow }}-${{ inputs.release-ref || github.ref }}
+  cancel-in-progress: ${{ inputs.release-ref == '' }}
 
 permissions:
   contents: read
@@ -36,6 +41,7 @@ env:
 
 jobs:
   build-linux:
+    if: inputs.release-ref == ''
     name: Build ling (Linux)
     # The oldest supported Ubuntu, so that the binary also runs in the WSL
     # distribution below.
@@ -60,6 +66,7 @@ jobs:
   linux:
     name: Linux ${{ matrix.filesystem }}
     needs: build-linux
+    if: ${{ !cancelled() && (inputs.release-ref != '' || needs.build-linux.result == 'success') }}
     runs-on: ubuntu-24.04
     timeout-minutes: 20
     strategy:
@@ -73,10 +80,17 @@ jobs:
           - { filesystem: ext4-casefold, fstype: ext4 }
     steps:
       - uses: actions/checkout@v7
+        with:
+          ref: ${{ inputs.release-ref || github.sha }}
       - uses: actions/download-artifact@v8
         with:
-          name: ling-linux
+          name: ${{ inputs.release-ref != '' && 'x86_64-unknown-linux-gnu' || 'ling-linux' }}
           path: bin
+      - name: Unpack the release binary
+        if: inputs.release-ref != ''
+        run: |
+          tar -xzf bin/*.tar.gz -C bin
+          mv bin/ling-*/bin/ling bin/ling
       - name: Install filesystem tools and the dictionary
         run: |
           chmod +x bin/ling
@@ -120,6 +134,7 @@ jobs:
         run: python3 scripts/check-output-filesystem.py "$RUNNER_TEMP/mnt/check" bin/ling
 
   build-macos:
+    if: inputs.release-ref == ''
     name: Build ling (macOS)
     runs-on: macos-15
     timeout-minutes: 60
@@ -142,6 +157,7 @@ jobs:
   macos:
     name: macOS ${{ matrix.personality }}
     needs: build-macos
+    if: ${{ !cancelled() && (inputs.release-ref != '' || needs.build-macos.result == 'success') }}
     runs-on: macos-15
     timeout-minutes: 20
     strategy:
@@ -152,10 +168,17 @@ jobs:
         personality: [ExFAT, MS-DOS FAT32, APFS]
     steps:
       - uses: actions/checkout@v7
+        with:
+          ref: ${{ inputs.release-ref || github.sha }}
       - uses: actions/download-artifact@v8
         with:
-          name: ling-macos
+          name: ${{ inputs.release-ref != '' && 'aarch64-apple-darwin' || 'ling-macos' }}
           path: bin
+      - name: Unpack the release binary
+        if: inputs.release-ref != ''
+        run: |
+          tar -xzf bin/*.tar.gz -C bin
+          mv bin/ling-*/bin/ling bin/ling
       - name: Install the dictionary
         run: |
           chmod +x bin/ling
@@ -185,15 +208,18 @@ jobs:
   wsl:
     name: WSL 2 on drive C
     needs: build-linux
+    if: ${{ !cancelled() && (inputs.release-ref != '' || needs.build-linux.result == 'success') }}
     runs-on: windows-2025
     # WSL 2 provisioning occasionally hangs on hosted runners
     # (actions/runner-images#14938) and step timeouts do not stop it.
     timeout-minutes: 30
     steps:
       - uses: actions/checkout@v7
+        with:
+          ref: ${{ inputs.release-ref || github.sha }}
       - uses: actions/download-artifact@v8
         with:
-          name: ling-linux
+          name: ${{ inputs.release-ref != '' && 'x86_64-unknown-linux-gnu' || 'ling-linux' }}
           path: bin
       - uses: Vampire/setup-wsl@v7
         with:
@@ -206,6 +232,10 @@ jobs:
           WSLENV: GITHUB_WORKSPACE/p
         run: |
           cd "$GITHUB_WORKSPACE"
+          if [ ! -f bin/ling ]; then
+            tar -xzf bin/*.tar.gz -C bin
+            mv bin/ling-*/bin/ling bin/ling
+          fi
           install -m 755 bin/ling ~/ling
           ~/ling dictionary install
           fstype="$(findmnt -n -o FSTYPE /mnt/c)"

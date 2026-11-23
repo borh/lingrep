@@ -251,9 +251,15 @@ jobs:
           if-no-files-found: error
           retention-days: 7
 
+  filesystems:
+    needs: build
+    uses: ./.github/workflows/filesystems.yml
+    with:
+      release-ref: ${{ inputs.tag || github.sha }}
+
   publish:
     name: Publish release
-    needs: [build, gate, adapters]
+    needs: [build, gate, adapters, filesystems]
     if: github.event_name == 'push' || inputs.publish
     runs-on: ubuntu-latest
     timeout-minutes: 20
