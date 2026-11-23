@@ -9,7 +9,9 @@ use std::sync::{
     atomic::{AtomicBool, Ordering},
 };
 
-use lingrep_core::analysis::{AnalyzerLanes, VibratoPlan};
+use lingrep_core::analysis::{
+    AnalyzerLanes, AnalyzerPlan as _, AnalyzerSession, AnnotatedAnalysisSession, VibratoPlan,
+};
 use lingrep_core::corpus::{
     AdmittedCorpus, CorpusFormat, CorpusReadConfig, conllu, resolve_input_format,
     stream_input_events,
@@ -57,11 +59,29 @@ enum InputSpec {
 }
 
 enum DirectAnalysis {
-    /// Built once, so every execution and sample shares one
+    /// The plan is built once, so every execution and sample shares one
     /// protected-surface table.
-    Vibrato(Arc<VibratoPlan>),
+    Vibrato {
+        plan: Arc<VibratoPlan>,
+        /// The plan's schema extended with the source annotations a TEI
+        /// root carries, as `ling matches` binds it; `None` for other formats.
+        tei_annotations: Option<TokenSchema>,
+    },
     /// The source supplies its own tokens in this schema, as CoNLL-U does.
     Pretokenized(TokenSchema),
+}
+
+impl DirectAnalysis {
+    fn vibrato(plan: Arc<VibratoPlan>, format: CorpusFormat) -> Result<Self, CliError> {
+        let tei_annotations = matches!(format, CorpusFormat::Tei | CorpusFormat::SoranohaTei)
+            .then(|| lingrep_core::corpus::tei::annotated_schema(plan.schema()))
+            .transpose()
+            .map_err(CliError::corpus)?;
+        Ok(Self::Vibrato {
+            plan,
+            tei_annotations,
+        })
+    }
 }
 
 /// Reopenable execution inputs and immutable resource bounds for TUI and
@@ -102,7 +122,8 @@ impl InteractiveExecution {
             .map_err(|error| CliError::Dictionary(error.to_string()))?;
         let plan = VibratoPlan::new(tokenizer, &dict_path)
             .map_err(|error| CliError::Dictionary(format!("{error}: {}", error.source)))?;
-        Self::direct(args, config, DirectAnalysis::Vibrato(Arc::new(plan)))
+        let analysis = DirectAnalysis::vibrato(Arc::new(plan), direct_format(args))?;
+        Self::direct(args, config, analysis)
     }
 
     fn direct(
@@ -164,7 +185,12 @@ impl InteractiveExecution {
         }
         match &self.input {
             InputSpec::Prepared { artifact } => {
-                self.open_prepared(artifact, Vec::new(), None)?;
+                let artifact = CorpusArtifact::open(artifact)?;
+                let schema = artifact.token_schema()?;
+                let projection = schema
+                    .bind_projection(schema.keys().iter().cloned())
+                    .map_err(|error| CliError::Parse(error.to_string()))?;
+                prepared_source(&artifact, &projection, Vec::new(), None)?;
             }
             InputSpec::Direct { .. } => {
                 self.open_direct(Vec::new(), None)?;
@@ -176,7 +202,7 @@ impl InteractiveExecution {
     pub(crate) fn tokenize_sample(&self, text: &str) -> Result<Vec<TokenInfo>, CliError> {
         match &self.input {
             InputSpec::Direct {
-                analysis: DirectAnalysis::Vibrato(plan),
+                analysis: DirectAnalysis::Vibrato { plan, .. },
                 ..
             } => Ok(plan.tokenize(text)),
             InputSpec::Direct {
@@ -205,26 +231,34 @@ impl InteractiveExecution {
     {
         let pool = build_worker_pool(self.config.workers)?;
         let division_kinds = matcher.lookaround_division_kinds();
-        // A prepared artifact is opened first because the display attributes
-        // depend on its stored schema: one written before `surface` existed
-        // does not carry it. A direct source is opened second because its
-        // pretokenized rows are projected through the bound catalog.
+        // Either source is opened after binding, because its rows are projected
+        // through the bound catalog. A prepared artifact binds to its stored
+        // schema, which depends on the analyzer that wrote it.
         let (source, schema, bound, plan) = match &self.input {
             InputSpec::Prepared { artifact } => {
-                let (source, stored_schema) =
-                    self.open_prepared(artifact, division_kinds, Some(Arc::clone(&pool)))?;
-                // Stored tokens are bound as UniDic morphology whichever
-                // analyzer wrote the artifact.
-                let schema = TokenSchema::unidic_morphology();
-                let bound = bind(matcher, &schema, &stored_schema, "vibrato morphology")?;
+                let artifact = CorpusArtifact::open(artifact)?;
+                let schema = artifact.token_schema()?;
+                let analyzer_name = crate::attribute_binding::analyzer_name(artifact.analyzer());
+                let bound = bind(matcher, &schema, &analyzer_name)?;
+                let source = prepared_source(
+                    &artifact,
+                    bound.projection(),
+                    division_kinds,
+                    Some(Arc::clone(&pool)),
+                )?;
                 (source, schema, bound, None)
             }
             InputSpec::Direct { analysis, .. } => {
                 let (schema, name, plan) = match analysis {
-                    DirectAnalysis::Vibrato(plan) => (
-                        TokenSchema::unidic_morphology(),
+                    DirectAnalysis::Vibrato {
+                        plan,
+                        tei_annotations,
+                    } => (
+                        tei_annotations
+                            .clone()
+                            .unwrap_or_else(TokenSchema::unidic_morphology),
                         "vibrato morphology".to_owned(),
-                        Some(plan.as_ref()),
+                        Some((plan.as_ref(), tei_annotations.is_some())),
                     ),
                     DirectAnalysis::Pretokenized(schema) => (
                         schema.clone(),
@@ -236,7 +270,7 @@ impl InteractiveExecution {
                         None,
                     ),
                 };
-                let bound = bind(matcher, &schema, &schema, &name)?;
+                let bound = bind(matcher, &schema, &name)?;
                 let source = self.open_direct(division_kinds, Some(bound.projection().clone()))?;
                 (source, schema, bound, plan)
             }
@@ -245,10 +279,21 @@ impl InteractiveExecution {
         // Lanes rather than one session, for the same reason `matches` uses
         // them: this pool is idle while tokenization runs, and an interactive
         // surface is the one that feels it.
-        let binding = plan.map_or_else(
-            || AnalysisBinding::Prepared(schema),
-            |plan| AnalysisBinding::Session(AnalyzerLanes::new(plan, self.config.workers, &pool)),
-        );
+        let binding: AnalysisBinding<Box<dyn AnalyzerSession + '_>> = match plan {
+            None => AnalysisBinding::Prepared(schema),
+            Some((plan, false)) => AnalysisBinding::Session(Box::new(AnalyzerLanes::new(
+                plan,
+                self.config.workers,
+                &pool,
+            ))),
+            Some((plan, true)) => {
+                AnalysisBinding::Session(Box::new(AnnotatedAnalysisSession::new(
+                    AnalyzerLanes::new(plan, self.config.workers, &pool),
+                    schema,
+                    limits.max_tokenized_bytes,
+                )))
+            }
+        };
         execute_analyzed(
             source,
             binding,
@@ -264,31 +309,6 @@ impl InteractiveExecution {
             &SentenceAdmission::All,
         )
         .map_err(CliError::from)
-    }
-
-    fn open_prepared(
-        &self,
-        artifact: &Path,
-        division_kinds: Vec<compact_str::CompactString>,
-        decode_pool: Option<Arc<rayon::ThreadPool>>,
-    ) -> Result<(BoxSentenceSource, TokenSchema), CliError> {
-        let artifact = CorpusArtifact::open(artifact)?;
-        let stored_schema = artifact.token_schema()?;
-        let source = artifact.sentence_source()?;
-        let source = match decode_pool {
-            Some(pool) => source.with_decode_pool(pool),
-            None => source,
-        };
-        let source = if division_kinds.is_empty() {
-            source
-        } else {
-            artifact.with_lookaround_divisions(
-                source,
-                division_kinds,
-                artifact.provenance_reader()?,
-            )?
-        };
-        Ok((Box::new(source), stored_schema))
     }
 
     /// Opens the direct source. `projection` selects the attributes kept from
@@ -351,12 +371,30 @@ impl InteractiveExecution {
     }
 }
 
+fn prepared_source(
+    artifact: &CorpusArtifact,
+    projection: &BoundProjection,
+    division_kinds: Vec<compact_str::CompactString>,
+    decode_pool: Option<Arc<rayon::ThreadPool>>,
+) -> Result<BoxSentenceSource, CliError> {
+    let source = artifact.bound_sentence_source(projection)?;
+    let source = match decode_pool {
+        Some(pool) => source.with_decode_pool(pool),
+        None => source,
+    };
+    let source = if division_kinds.is_empty() {
+        source
+    } else {
+        artifact.with_lookaround_divisions(source, division_kinds, artifact.provenance_reader()?)?
+    };
+    Ok(Box::new(source))
+}
+
 /// Binds `matcher` to `schema`, projecting the attributes it executes on and
-/// the surface attributes `display_schema` carries for the rendered views.
+/// the surface attributes `schema` carries for the rendered views.
 fn bind(
     matcher: &CompiledCatalog,
     schema: &TokenSchema,
-    display_schema: &TokenSchema,
     schema_name: &str,
 ) -> Result<BoundCatalog, CliError> {
     matcher
@@ -365,7 +403,7 @@ fn bind(
             matcher
                 .execution_attributes()
                 .into_iter()
-                .chain(display_surface_attributes(display_schema)),
+                .chain(display_surface_attributes(schema)),
         )
         .map_err(|error| crate::attribute_binding::bind_refusal(&error, schema_name))
 }
@@ -406,14 +444,25 @@ pub(crate) fn conllu_test_execution() -> Arc<InteractiveExecution> {
 
 #[cfg(test)]
 pub(crate) fn direct_test_execution(text: &str) -> (tempfile::TempDir, Arc<InteractiveExecution>) {
+    direct_test_execution_of("fixture.md", None, text)
+}
+
+/// An execution over one file named `file_name` holding `text`, read as
+/// `input_format` and tokenized by the miniature dictionary.
+#[cfg(test)]
+fn direct_test_execution_of(
+    file_name: &str,
+    input_format: Option<CorpusFormat>,
+    text: &str,
+) -> (tempfile::TempDir, Arc<InteractiveExecution>) {
     let directory = tempfile::tempdir().expect("temporary direct corpus");
-    std::fs::write(directory.path().join("fixture.md"), text).expect("write direct corpus");
+    std::fs::write(directory.path().join(file_name), text).expect("write direct corpus");
     let input = QueryInputArgs {
         dict_path: None,
         corpus: None,
         root: Some(directory.path().to_path_buf()),
         markdown: lingrep_cli_common::MarkdownReaderArgs::default(),
-        input_format: None,
+        input_format,
     };
     let config = test_config();
     static PLAN: OnceLock<Arc<VibratoPlan>> = OnceLock::new();
@@ -433,8 +482,8 @@ pub(crate) fn direct_test_execution(text: &str) -> (tempfile::TempDir, Arc<Inter
             .expect("the miniature dictionary lexicon enumerates"),
         )
     }));
-    let execution =
-        InteractiveExecution::direct(&input, &config, DirectAnalysis::Vibrato(plan)).unwrap();
+    let analysis = DirectAnalysis::vibrato(plan, direct_format(&input)).unwrap();
+    let execution = InteractiveExecution::direct(&input, &config, analysis).unwrap();
     (directory, Arc::new(execution))
 }
 
@@ -448,14 +497,18 @@ mod tests {
         let (_second_directory, second) = direct_test_execution("犬。\n");
 
         let InputSpec::Direct {
-            analysis: DirectAnalysis::Vibrato(first_plan),
+            analysis: DirectAnalysis::Vibrato {
+                plan: first_plan, ..
+            },
             ..
         } = &first.input
         else {
             panic!("direct fixture must retain a plan");
         };
         let InputSpec::Direct {
-            analysis: DirectAnalysis::Vibrato(second_plan),
+            analysis: DirectAnalysis::Vibrato {
+                plan: second_plan, ..
+            },
             ..
         } = &second.input
         else {
@@ -549,6 +602,108 @@ mod tests {
             "{error}"
         );
     }
+    /// Records every published match with its sentence, so two scans can be
+    /// compared on complete `Match` values.
+    #[derive(Default)]
+    struct RecordedMatches(Vec<(u64, lingrep_core::fsm::Match)>);
+
+    impl MatchSink for RecordedMatches {
+        type Error = lingrep_core::execution::ExecutionError;
+
+        fn push(
+            &mut self,
+            location: &lingrep_core::execution::SentenceLocation,
+            _sentence: &dyn lingrep_core::token_match::TokenSequence,
+            matches: &[lingrep_core::fsm::Match],
+        ) -> Result<lingrep_core::execution::SinkControl, lingrep_core::execution::ExecutionError>
+        {
+            self.0.extend(
+                matches
+                    .iter()
+                    .map(|matched| (location.corpus_sentence_ordinal, matched.clone())),
+            );
+            Ok(lingrep_core::execution::SinkControl::Continue {
+                records_emitted: matches.len(),
+            })
+        }
+
+        fn finish_batch(&mut self) -> Result<(), lingrep_core::execution::ExecutionError> {
+            Ok(())
+        }
+    }
+
+    fn scan(execution: &InteractiveExecution, matcher: &CompiledCatalog) -> RecordedMatches {
+        let mut sink = RecordedMatches::default();
+        execution
+            .execute(matcher, &CancellationFlag::new(), &mut sink, &mut |_, _| {})
+            .expect("scan");
+        sink
+    }
+
+    #[test]
+    fn prepared_scans_bind_the_schema_the_artifact_stores() {
+        let directory = tempfile::tempdir().expect("temporary artifact directory");
+        let request = crate::commands::corpus::BuildRequest {
+            root: PathBuf::from(concat!(
+                env!("CARGO_MANIFEST_DIR"),
+                "/tests/fixtures/psycholinguistics.conllu"
+            )),
+            output: Some(directory.path().join("fixture.lingcorpus")),
+            dict_path: None,
+            markdown: lingrep_cli_common::MarkdownReaderArgs::default()
+                .resolve()
+                .expect("default Markdown reader settings"),
+            input_format: Some(CorpusFormat::Conllu),
+        };
+        let artifact = crate::commands::corpus::ensure_artifact(
+            &request,
+            &test_config(),
+            &crate::terminal::TerminalArbiter::new(),
+            true,
+            crate::commands::corpus::PublicationRole::IntermediateCommit,
+            crate::presentation::OutputMode::Jsonl,
+        )
+        .expect("build the CoNLL-U artifact")
+        .expect("the build was not cancelled")
+        .into_path();
+        let prepared =
+            InteractiveExecution::from_input(InputSpec::Prepared { artifact }, &test_config());
+        let matcher = crate::tui::compile_catalog_source(
+            "dependency.lx",
+            "pattern object := (?<noun> [upos=NOUN]) [] (?<verb> [upos=VERB])\n  \
+             where $verb -[obj]-> $noun.",
+        )
+        .unwrap();
+
+        let expected = scan(&conllu_test_execution(), &matcher);
+        assert!(
+            !expected.0.is_empty(),
+            "the fixture has an object dependency"
+        );
+        assert_eq!(scan(&prepared, &matcher).0, expected.0);
+    }
+
+    #[test]
+    fn direct_tei_scans_bind_the_source_annotations() {
+        let (_directory, execution) = direct_test_execution_of(
+            "a.xml",
+            Some(CorpusFormat::Tei),
+            "<TEI xmlns='http://www.tei-c.org/ns/1.0'><text><body>\
+             <p><ruby><rb>猫</rb><rt>ねこ</rt></ruby>が鳥を見る。</p></body></text></TEI>",
+        );
+        let matcher =
+            crate::tui::compile_catalog_source("ruby.lx", "pattern ruby := [tei.ruby has ねこ].")
+                .unwrap();
+
+        let recorded = scan(&execution, &matcher);
+        let spans = recorded
+            .0
+            .iter()
+            .map(|(sentence, matched)| (*sentence, matched.start, matched.end))
+            .collect::<Vec<_>>();
+        assert_eq!(spans, [(0, 0, 1)]);
+    }
+
     #[test]
     fn playground_samples_reject_pretokenized_input_by_name() {
         let error = conllu_test_execution()
