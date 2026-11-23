@@ -1,6 +1,7 @@
 #![allow(clippy::unwrap_used)]
 
 use std::path::PathBuf;
+use std::sync::LazyLock;
 
 use lingrep_core::analysis::{
     AnalyzerPlan, AnalyzerSession, ExtractionProfile, InputUnitId, NormalizationPolicy,
@@ -255,6 +256,44 @@ fn load_plan_with(
     .unwrap()
 }
 
+static CORE_C_MORPHOLOGY: LazyLock<SudachiPlan> = LazyLock::new(|| {
+    load_plan(
+        SudachiEdition::Core,
+        SudachiSplit::C,
+        ExtractionProfile::Morphology,
+        SegmentationMode::Input,
+    )
+});
+
+static CORE_C_TOKENIZE: LazyLock<SudachiPlan> = LazyLock::new(|| {
+    load_plan(
+        SudachiEdition::Core,
+        SudachiSplit::C,
+        ExtractionProfile::Tokenize,
+        SegmentationMode::Input,
+    )
+});
+
+fn builtin_core_morphology(split: SudachiSplit) -> SudachiPlan {
+    fn load(split: SudachiSplit) -> SudachiPlan {
+        load_plan_with(
+            SudachiEdition::Core,
+            split,
+            ExtractionProfile::Morphology,
+            SegmentationMode::Input,
+            SudachiResources::BuiltIn,
+        )
+    }
+
+    static SPLIT_A: LazyLock<SudachiPlan> = LazyLock::new(|| load(SudachiSplit::A));
+    static SPLIT_C: LazyLock<SudachiPlan> = LazyLock::new(|| load(SudachiSplit::C));
+    match split {
+        SudachiSplit::A => SPLIT_A.clone(),
+        SudachiSplit::B => load(split),
+        SudachiSplit::C => SPLIT_C.clone(),
+    }
+}
+
 fn analyze_forms(plan: &SudachiPlan, kind: TextUnitKind, text: &str) -> Vec<Vec<String>> {
     let projection = plan
         .schema()
@@ -300,20 +339,19 @@ fn analyze_forms(plan: &SudachiPlan, kind: TextUnitKind, text: &str) -> Vec<Vec<
 #[test]
 #[ignore = "requires LINGREP_SUDACHI_RESOURCES and LINGREP_SUDACHI_DICT_CORE"]
 fn built_in_resources_match_the_pinned_resource_directory() {
-    let directory =
-        SudachiResources::directory(std::env::var_os("LINGREP_SUDACHI_RESOURCES").unwrap());
     let text = "ｱｲｳ　国家公務員が𠮷野家で働いた。";
     for split in [SudachiSplit::A, SudachiSplit::C] {
-        let [from_directory, built_in] =
-            [directory.clone(), SudachiResources::BuiltIn].map(|resources| {
-                load_plan_with(
-                    SudachiEdition::Core,
-                    split,
-                    ExtractionProfile::Morphology,
-                    SegmentationMode::Input,
-                    resources,
-                )
-            });
+        let from_directory = if split == SudachiSplit::C {
+            CORE_C_MORPHOLOGY.clone()
+        } else {
+            load_plan(
+                SudachiEdition::Core,
+                split,
+                ExtractionProfile::Morphology,
+                SegmentationMode::Input,
+            )
+        };
+        let built_in = builtin_core_morphology(split);
         assert_eq!(
             from_directory.descriptor().semantic_identity(),
             built_in.descriptor().semantic_identity()
@@ -333,12 +371,16 @@ fn sudachi_core_preserves_exact_surfaces_for_every_split() {
         (SudachiSplit::B, vec!["国家", "公務員"]),
         (SudachiSplit::C, vec!["国家公務員"]),
     ] {
-        let plan = load_plan(
-            SudachiEdition::Core,
-            split,
-            ExtractionProfile::Tokenize,
-            SegmentationMode::Input,
-        );
+        let plan = if split == SudachiSplit::C {
+            CORE_C_TOKENIZE.clone()
+        } else {
+            load_plan(
+                SudachiEdition::Core,
+                split,
+                ExtractionProfile::Tokenize,
+                SegmentationMode::Input,
+            )
+        };
         assert_eq!(
             analyze_forms(&plan, TextUnitKind::Sentence, "国家公務員"),
             [expected]
@@ -361,13 +403,7 @@ fn sudachi_coarser_units_cover_the_configured_tokens() {
         (SudachiSplit::B, vec![("sudachi.c", 0, 2)]),
         (SudachiSplit::C, vec![]),
     ] {
-        let plan = load_plan_with(
-            SudachiEdition::Core,
-            split,
-            ExtractionProfile::Morphology,
-            SegmentationMode::Input,
-            SudachiResources::BuiltIn,
-        );
+        let plan = builtin_core_morphology(split);
         let projection = plan
             .schema()
             .bind_projection(plan.schema().keys().iter().cloned())
@@ -406,12 +442,16 @@ fn every_sudachi_edition_loads_and_produces_complete_morphology() {
         SudachiEdition::Core,
         SudachiEdition::Full,
     ] {
-        let plan = load_plan(
-            edition,
-            SudachiSplit::C,
-            ExtractionProfile::Morphology,
-            SegmentationMode::Input,
-        );
+        let plan = if edition == SudachiEdition::Core {
+            CORE_C_MORPHOLOGY.clone()
+        } else {
+            load_plan(
+                edition,
+                SudachiSplit::C,
+                ExtractionProfile::Morphology,
+                SegmentationMode::Input,
+            )
+        };
         let projection = plan
             .schema()
             .bind_projection(plan.schema().keys().iter().cloned())
@@ -461,12 +501,7 @@ fn sudachi_analyzer_segmentation_groups_sentences_under_the_segment() {
 #[test]
 #[ignore = "requires LINGREP_SUDACHI_RESOURCES and LINGREP_SUDACHI_DICT_CORE"]
 fn sudachi_provider_pos_hierarchy_maps_to_portable_upos() {
-    let plan = load_plan(
-        SudachiEdition::Core,
-        SudachiSplit::C,
-        ExtractionProfile::Morphology,
-        SegmentationMode::Input,
-    );
+    let plan = &*CORE_C_MORPHOLOGY;
     let projection = plan
         .schema()
         .bind_projection(
@@ -508,12 +543,7 @@ fn sudachi_provider_pos_hierarchy_maps_to_portable_upos() {
 #[test]
 #[ignore = "requires LINGREP_SUDACHI_RESOURCES and LINGREP_SUDACHI_DICT_CORE"]
 fn long_sudachi_input_keeps_one_sentence_and_complete_source_alignment() {
-    let plan = load_plan(
-        SudachiEdition::Core,
-        SudachiSplit::C,
-        ExtractionProfile::Tokenize,
-        SegmentationMode::Input,
-    );
+    let plan = &*CORE_C_TOKENIZE;
     let mut builder = lingrep_core::fsm::FsmBuilder::new();
     builder
         .add_definition(lingrep_core::fsm::PatternSource::named(
@@ -574,12 +604,7 @@ fn long_sudachi_input_keeps_one_sentence_and_complete_source_alignment() {
 #[test]
 #[ignore = "requires LINGREP_SUDACHI_RESOURCES and LINGREP_SUDACHI_DICT_CORE"]
 fn sudachi_tokens_carry_the_exact_surface_and_its_folded_key() {
-    let plan = load_plan(
-        SudachiEdition::Core,
-        SudachiSplit::C,
-        ExtractionProfile::Morphology,
-        SegmentationMode::Input,
-    );
+    let plan = &*CORE_C_MORPHOLOGY;
     let keys = ["surface", "text", "lemma", "upos"];
     let projection = plan
         .schema()

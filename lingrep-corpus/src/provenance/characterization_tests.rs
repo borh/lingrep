@@ -107,7 +107,7 @@ async fn batch_page(view: &ProvenanceView, sentences: &[SentenceId]) -> u128 {
     started.elapsed().as_micros()
 }
 
-async fn characterize(scale: Scale) {
+async fn characterize(scale: Scale, samples: usize) {
     let directory = tempfile::tempdir().expect("create characterization directory");
     let path = directory.path().join(format!("{}.sqlite", scale.name));
 
@@ -152,9 +152,9 @@ async fn characterize(scale: Scale) {
         .copied()
         .map(SentenceId::new)
         .collect::<Vec<_>>();
-    let mut point_page_us = Vec::with_capacity(15);
-    let mut batch_page_us = Vec::with_capacity(15);
-    for iteration in 0..15 {
+    let mut point_page_us = Vec::with_capacity(samples);
+    let mut batch_page_us = Vec::with_capacity(samples);
+    for iteration in 0..samples {
         if iteration % 2 == 0 {
             point_page_us.push(point_page(&view, &page_ids).await);
             batch_page_us.push(batch_page(&view, &batch_page_ids).await);
@@ -181,8 +181,8 @@ async fn characterize(scale: Scale) {
     assert_eq!(aggregate_occurrences, scale.region_occurrences);
     assert!(!coverage.is_empty());
 
-    let mut batch_aggregate_us = Vec::with_capacity(15);
-    for _ in 0..15 {
+    let mut batch_aggregate_us = Vec::with_capacity(samples);
+    for _ in 0..samples {
         let started = Instant::now();
         let section_coverage = view
             .section_coverage(64)
@@ -261,17 +261,17 @@ async fn characterize(scale: Scale) {
 
 #[tokio::test]
 async fn provenance_shared_api_smoke_characterization() {
-    characterize(SMOKE).await;
+    characterize(SMOKE, 1).await;
 }
 
 #[tokio::test]
 #[ignore = "explicit 400k-sentence / 1m-region-occurrence characterization"]
 async fn provenance_shared_api_representative_characterization() {
-    characterize(REPRESENTATIVE).await;
+    characterize(REPRESENTATIVE, 15).await;
 }
 
 #[tokio::test]
 #[ignore = "explicit 5m-sentence / 10m-region-occurrence capacity characterization"]
 async fn provenance_shared_api_stress_characterization() {
-    characterize(STRESS).await;
+    characterize(STRESS, 15).await;
 }
