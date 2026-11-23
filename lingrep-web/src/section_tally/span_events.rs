@@ -57,35 +57,62 @@ impl SpanSource {
     }
 }
 
+#[derive(Debug, Clone, Copy)]
+enum SpanCursor {
+    /// Ready to pull the next event; carries the highest `first` ordinal
+    /// accepted so far (`None` before the first event).
+    Empty { previous_first: Option<u64> },
+    /// Holding one validated lookahead event (`event.first` is the high-water
+    /// mark).
+    Peeked(SpanEvent),
+}
+
+enum SpanStreamState {
+    Open {
+        source: SpanSource,
+        cursor: SpanCursor,
+    },
+    /// Clean `End` sentinel observed; the source has been dropped.
+    Ended,
+    /// Sticky terminal error; the source has been dropped.
+    Poisoned(SpanStreamError),
+}
+
 pub struct SpanEvents {
-    source: SpanSource,
-    peeked: Option<SpanEvent>,
-    ended: bool,
-    previous_first: Option<u64>,
-    poisoned: Option<SpanStreamError>,
+    state: SpanStreamState,
 }
 
 // Report stream position rather than the underlying channel receiver.
 impl std::fmt::Debug for SpanEvents {
     fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        formatter
-            .debug_struct("SpanEvents")
-            .field("peeked", &self.peeked)
-            .field("ended", &self.ended)
-            .field("previous_first", &self.previous_first)
-            .field("poisoned", &self.poisoned)
-            .finish_non_exhaustive()
+        match &self.state {
+            SpanStreamState::Open { cursor, .. } => formatter
+                .debug_struct("SpanEvents")
+                .field("state", &"Open")
+                .field("cursor", cursor)
+                .finish_non_exhaustive(),
+            SpanStreamState::Ended => formatter
+                .debug_struct("SpanEvents")
+                .field("state", &"Ended")
+                .finish(),
+            SpanStreamState::Poisoned(error) => formatter
+                .debug_struct("SpanEvents")
+                .field("state", &"Poisoned")
+                .field("error", error)
+                .finish(),
+        }
     }
 }
 
 impl SpanEvents {
     pub(super) fn new(source: SpanSource) -> Self {
         Self {
-            source,
-            peeked: None,
-            ended: false,
-            previous_first: None,
-            poisoned: None,
+            state: SpanStreamState::Open {
+                source,
+                cursor: SpanCursor::Empty {
+                    previous_first: None,
+                },
+            },
         }
     }
 
@@ -96,36 +123,48 @@ impl SpanEvents {
     /// Returns [`SpanStreamError::DecreasingStart`] when the stream violates
     /// the `ORDER BY span_id` contract, or the source's own terminal error.
     pub fn peek(&mut self) -> Result<Option<SpanEvent>, SpanStreamError> {
-        if let Some(error) = &self.poisoned {
-            return Err(error.clone());
-        }
-        if self.peeked.is_none() && !self.ended {
-            match self.source.next().map_err(|error| self.poison(error))? {
-                Some(event) => {
-                    if let Some(previous) = self.previous_first
-                        && event.first < previous
-                    {
-                        return Err(self.poison(SpanStreamError::DecreasingStart {
-                            previous,
-                            found: event.first,
-                        }));
+        match &mut self.state {
+            SpanStreamState::Ended => Ok(None),
+            SpanStreamState::Poisoned(error) => Err(error.clone()),
+            SpanStreamState::Open { source, cursor } => match *cursor {
+                SpanCursor::Peeked(event) => Ok(Some(event)),
+                SpanCursor::Empty { previous_first } => match source.next() {
+                    Ok(Some(event)) => {
+                        if let Some(previous) = previous_first
+                            && event.first < previous
+                        {
+                            let error = SpanStreamError::DecreasingStart {
+                                previous,
+                                found: event.first,
+                            };
+                            self.state = SpanStreamState::Poisoned(error.clone());
+                            return Err(error);
+                        }
+                        *cursor = SpanCursor::Peeked(event);
+                        Ok(Some(event))
                     }
-                    self.previous_first = Some(event.first);
-                    self.peeked = Some(event);
-                }
-                None => self.ended = true,
-            }
+                    Ok(None) => {
+                        self.state = SpanStreamState::Ended;
+                        Ok(None)
+                    }
+                    Err(error) => {
+                        self.state = SpanStreamState::Poisoned(error.clone());
+                        Err(error)
+                    }
+                },
+            },
         }
-        Ok(self.peeked)
-    }
-
-    fn poison(&mut self, error: SpanStreamError) -> SpanStreamError {
-        self.poisoned.get_or_insert(error).clone()
     }
 
     /// Consumes the peeked event. Call only after `peek` returned `Some`.
     pub fn take(&mut self) {
-        self.peeked = None;
+        if let SpanStreamState::Open { cursor, .. } = &mut self.state
+            && let SpanCursor::Peeked(event) = *cursor
+        {
+            *cursor = SpanCursor::Empty {
+                previous_first: Some(event.first),
+            };
+        }
     }
 
     /// Consumes the remainder through `End`. Ordering is validated; overlap is
@@ -249,5 +288,25 @@ mod tests {
             bad.drain(),
             Err(SpanStreamError::DecreasingStart { .. })
         ));
+    }
+
+    #[test]
+    fn ended_and_poisoned_states_are_terminal_across_take_and_peek() {
+        let mut ended = SpanEvents::from_events(vec![event(0, 3, 5)]);
+        assert_eq!(ended.peek().unwrap(), Some(event(0, 3, 5)));
+        ended.take();
+        assert_eq!(ended.peek().unwrap(), None);
+        ended.take();
+        assert_eq!(ended.peek().unwrap(), None);
+        assert!(ended.drain().is_ok());
+
+        let mut poisoned =
+            SpanEvents::from_events(vec![event(0, 10, 12), event(1, 4, 6), event(2, 20, 22)]);
+        assert_eq!(poisoned.peek().unwrap(), Some(event(0, 10, 12)));
+        poisoned.take();
+        let error = poisoned.peek().unwrap_err();
+        poisoned.take();
+        assert_eq!(poisoned.peek().unwrap_err(), error);
+        assert_eq!(poisoned.drain().unwrap_err(), error);
     }
 }
