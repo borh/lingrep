@@ -138,8 +138,17 @@ fn collect_relation_labels(labels: &RelationLabels<RelationLabel>, into: &mut BT
     if let RelationLabels::Listed(labels) = labels {
         let rel = AttributeKey::new("dep.rel").expect("dependency keys are canonical");
         for label in labels {
-            let (RelationLabel::Exact(value) | RelationLabel::SubtypeOf(value)) = label;
-            into.insert((rel.clone(), value.clone(), label.authored()));
+            let stem = match label {
+                RelationLabel::Plain(stem) => Some(stem),
+                RelationLabel::Deep(test) => test.stem.as_ref(),
+            };
+            if let Some(stem) = stem {
+                into.insert((
+                    rel.clone(),
+                    stem.declaration_value().clone(),
+                    label.authored(),
+                ));
+            }
         }
     }
 }

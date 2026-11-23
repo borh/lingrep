@@ -1366,6 +1366,8 @@ mod tests {
             "pattern p := (?<h> []) where $h -[obj]-> [upos=NOUN]{0}.",
             "key: [$n]\npattern p := (?<h> []) where $h -[obj]-> [upos=NOUN] as $n.",
             "pattern p := (?<h> []) where $h -[obj]-> [upos=NOUN]{1,2}.",
+            "pattern p := (?<h> []) where $h -[*@pass]-> _.",
+            "pattern p := (?<h> []) where $h -[obj@!pass]-> [upos=NOUN].",
         ] {
             let definition = execution_definition(source);
             let compiled = compile_catalog(
@@ -1382,6 +1384,9 @@ mod tests {
                 [(Some("NOUN"), "2", "obj"), (Some("VERB"), "0", "root")],
                 [(Some("NOUN"), "2", "nsubj"), (Some("VERB"), "0", "root")],
                 [(None, "2", "obj"), (Some("VERB"), "0", "root")],
+                [(Some("NOUN"), "2", "obj@pass"), (Some("VERB"), "0", "root")],
+                [(Some("NOUN"), "2", "obj@caus"), (Some("VERB"), "0", "root")],
+                [(Some("NOUN"), "2", "obj@"), (Some("VERB"), "0", "root")],
             ] {
                 let values = observations
                     .iter()

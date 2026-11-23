@@ -8,6 +8,8 @@
 (key_entry key: (identifier) @property)
 (skip_entry key: (identifier) @property)
 (match_key_projection attribute: (attribute_key) @property)
+(deep_key_projection "deep" @function.builtin)
+(deep_relation_label) @string.special
 (capture_key_projection
   capture: (capture_reference
     "$" @operator

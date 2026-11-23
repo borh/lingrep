@@ -115,7 +115,7 @@ pub(crate) fn materialize_program(
             {
                 for label in labels {
                     bytes =
-                        bytes.saturating_add(std::mem::size_of_val(label) + label.authored().len());
+                        bytes.saturating_add(std::mem::size_of_val(label) + label.charged_bytes());
                 }
             }
             if let MeasureSource::Tree(super::model::TreeLayer::Span(kind), _)
@@ -674,7 +674,7 @@ impl Materializer<'_> {
                 RelationLabels::Listed(labels) => labels
                     .iter()
                     .try_fold(0usize, |total, label| {
-                        total.checked_add(label.authored().len())
+                        total.checked_add(label.charged_bytes())
                     })
                     .ok_or_else(|| self.limit("generated owned bytes overflowed"))?,
             };
@@ -859,6 +859,17 @@ impl Materializer<'_> {
         };
         let mut resolved = Vec::with_capacity(relations.len());
         for relation in relations {
+            if let RelationLabels::Listed(labels) = &relation.labels {
+                for label in labels {
+                    if matches!(label, super::model::RelationLabel::Deep(_)) {
+                        self.owned_bytes = self.owned_bytes.saturating_add(label.charged_bytes());
+                    }
+                }
+                if self.owned_bytes > self.limits.max_generated_owned_bytes() {
+                    return Err(self
+                        .limit("enhanced relation labels exceed the generated owned byte limit"));
+                }
+            }
             resolved.push(ExecutionEnhancedRelation {
                 layer: relation.layer,
                 polarity: relation.polarity,

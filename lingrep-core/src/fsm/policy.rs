@@ -427,6 +427,7 @@ pub struct KeyProjection {
     /// The attribute to read off them.
     pub attribute: AttributeKey,
     canonical_name: CompactString,
+    deep_feature: bool,
 }
 
 impl KeyProjection {
@@ -437,6 +438,7 @@ impl KeyProjection {
             target: KeyTarget::Match,
             attribute,
             canonical_name,
+            deep_feature: false,
         }
     }
 
@@ -458,6 +460,7 @@ impl KeyProjection {
             target: KeyTarget::Capture { name, component },
             attribute,
             canonical_name,
+            deep_feature: false,
         }
     }
 
@@ -471,6 +474,7 @@ impl KeyProjection {
             },
             attribute: AttributeKey::new("dep.rel").expect("dep.rel is canonical"),
             canonical_name: format!("${name}.rel").into(),
+            deep_feature: false,
         }
     }
 
@@ -482,12 +486,28 @@ impl KeyProjection {
         self.target = KeyTarget::GraphEdge { name };
     }
 
+    pub(crate) fn with_deep_feature(mut self) -> Self {
+        self.canonical_name = format!("deep({})", self.canonical_name).into();
+        self.deep_feature = true;
+        self
+    }
+
+    fn project_scalar(&self, value: &str) -> Option<String> {
+        let value = if self.deep_feature {
+            super::types::split_deep_relation(value)?.1?
+        } else {
+            value
+        };
+        Some(value.to_owned())
+    }
+
     #[must_use]
     pub(crate) fn count(name: &str) -> Self {
         Self {
             target: KeyTarget::Count { name: name.into() },
             attribute: AttributeKey::new("graph.count").expect("qualified attribute"),
             canonical_name: format!("${name}").into(),
+            deep_feature: false,
         }
     }
 
@@ -497,6 +517,7 @@ impl KeyProjection {
             target: KeyTarget::LexicalTerm,
             attribute: AttributeKey::new("text").expect("form is canonical"),
             canonical_name: CompactString::const_new("term"),
+            deep_feature: false,
         }
     }
 
@@ -507,6 +528,7 @@ impl KeyProjection {
             target: KeyTarget::LexicalSegments,
             attribute,
             canonical_name,
+            deep_feature: false,
         }
     }
 
@@ -1332,7 +1354,7 @@ fn project_key_fields<S: TokenSequence + ?Sized>(
                 .find(|binding| binding.name() == name.as_str())?;
             projected.push(ProjectedKeyField {
                 name: field.name(),
-                value: match binding {
+                value: field.project_scalar(match binding {
                     crate::fsm::GraphBinding::Node {
                         node: crate::corpus::conllu::EnhancedNodeId::Word { token_index },
                         ..
@@ -1340,8 +1362,7 @@ fn project_key_fields<S: TokenSequence + ?Sized>(
                         tokens.scalar_key(*token_index, &field.attribute)?
                     }
                     _ => binding.scalar(&field.attribute)?,
-                }
-                .to_owned(),
+                })?,
             });
             continue;
         }
@@ -1375,7 +1396,7 @@ fn project_key_fields<S: TokenSequence + ?Sized>(
                 Some(value) => Some(value.to_owned()),
                 None => tokens
                     .scalar_key(index, &field.attribute)
-                    .map(ToString::to_string),
+                    .and_then(|value| field.project_scalar(value)),
             }
         };
         let value = match component {

@@ -168,6 +168,8 @@ The bracket holds one or more terms joined by `|`:
   -[obl:*]->                      any subtype of `obl`, but not bare `obl`
   -[nsubj|csubj]->                either label
   -[@SUBJ|expl]->                 a named `set`'s members, plus a literal
+  -[comp:aux@pass]->              a label with the SUD deep feature `pass`
+  -[*@!pass]->                    any observed relation without that feature
 
 `-[*]->` matches any scalar `dep.rel` value present on the dependent token;
 it does not match a missing attribute and cannot be combined with other terms.
@@ -178,6 +180,16 @@ member that is not a well-formed relation label is a compile error. A term
 repeated in one bracket, and two positive constraints sharing a dependent capture with
 disjoint label sets, are both rejected: a token carries exactly one `dep.rel`,
 so the first adds nothing and the second could never match.
+
+Deep-feature terms apply to basic and enhanced edges. `@!pass` also accepts
+a label with a different feature. `comp:*@pass` accepts any `comp` subtype.
+Names begin with an ASCII lowercase letter and may continue with lowercase
+letters, digits and underscores. A term with a deep-feature test can appear
+as an unquoted `set` member (for example `set S := {comp:aux@pass}.`). Plain
+exact labels still compare the full relation. The key projections
+`deep($dependent.dep.rel)` and `deep($edge.rel)` read just the feature of a
+basic relation and a named enhanced edge, respectively. A missing feature
+makes the occurrence unkeyable.
 
 Two operands that no single match can bind together are rejected as well: a
 capture in an alternation branch binds only when that branch is taken, so
@@ -402,6 +414,9 @@ compile error. A `matches` or `summarize` run warns with token counts when the
 corpus has values outside a declared set. Named sets: `ud-v2` (upos; dep.rel, where `nsubj:pass` is
 checked by `nsubj`), `spacy` (upos: ud-v2 and SPACE), `clearnlp` (dep.rel), and
 `penn` (xpos).
+For `comp:aux@pass`, `dep.rel` declarations check `comp:aux`. A feature term
+with `*` supplies no label literal to validate. An observed decorated value
+passes if its full spelling or its label belongs to the declared set.
 
 COMPILER-OWNED METADATA
 

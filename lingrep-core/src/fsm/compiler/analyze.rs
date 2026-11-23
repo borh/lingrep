@@ -3,8 +3,8 @@ use std::collections::{BTreeMap, BTreeSet};
 use super::diagnostic::{CompileError, Diagnostic, DiagnosticCode};
 use super::model::{
     CaptureId, ExecutionCapability, ExecutionDefinition, ExecutionEnhancedEndpoint, ExecutionExpr,
-    ExecutionRelation, RelationLabel, RelationLabels, RelationPolarity, RelationTarget,
-    SourceRegistry, SourceSpan,
+    ExecutionRelation, RelationLabel, RelationLabels, RelationPolarity, RelationStem,
+    RelationTarget, SourceRegistry, SourceSpan,
 };
 
 const MAX_BACKREFERENCED_WIDTH: usize = 8;
@@ -357,12 +357,39 @@ fn relation_labels_intersect(
     }
 }
 
-fn relation_label_intersects(left: &RelationLabel, right: &RelationLabel) -> bool {
+fn stems_intersect(left: &RelationStem, right: &RelationStem) -> bool {
     match (left, right) {
-        (RelationLabel::Exact(left), RelationLabel::Exact(right)) => left == right,
-        (RelationLabel::Exact(exact), RelationLabel::SubtypeOf(_)) => right.matches(exact),
-        (RelationLabel::SubtypeOf(_), RelationLabel::Exact(exact)) => left.matches(exact),
-        (RelationLabel::SubtypeOf(left), RelationLabel::SubtypeOf(right)) => left == right,
+        (RelationStem::Exact(exact), _) => right.matches(exact),
+        (_, RelationStem::Exact(exact)) => left.matches(exact),
+        (RelationStem::SubtypeOf(left), RelationStem::SubtypeOf(right)) => left == right,
+    }
+}
+
+fn relation_label_intersects(left: &RelationLabel, right: &RelationLabel) -> bool {
+    use RelationLabel::{Deep, Plain};
+    use RelationPolarity::{Negative, Positive};
+
+    match (left, right) {
+        (Plain(left), Plain(right)) => stems_intersect(left, right),
+        (Plain(RelationStem::Exact(exact)), Deep(_)) => right.matches(exact),
+        (Deep(_), Plain(RelationStem::Exact(exact))) => left.matches(exact),
+        (Plain(stem), Deep(deep)) | (Deep(deep), Plain(stem)) => deep
+            .stem
+            .as_ref()
+            .is_none_or(|expected| stems_intersect(stem, expected)),
+        (Deep(left), Deep(right)) => {
+            let compatible = match (left.polarity, right.polarity) {
+                (Positive, Positive) => left.feature == right.feature,
+                (Negative, Negative) => true,
+                _ => left.feature != right.feature,
+            };
+            compatible
+                && left
+                    .stem
+                    .as_ref()
+                    .zip(right.stem.as_ref())
+                    .is_none_or(|(left, right)| stems_intersect(left, right))
+        }
     }
 }
 
@@ -383,12 +410,40 @@ fn relation_labels_subset(
     }
 }
 
-fn relation_label_subset(subset: &RelationLabel, superset: &RelationLabel) -> bool {
+fn stem_subset(subset: &RelationStem, superset: &RelationStem) -> bool {
     match (subset, superset) {
-        (RelationLabel::Exact(left), RelationLabel::Exact(right)) => left == right,
-        (RelationLabel::Exact(exact), RelationLabel::SubtypeOf(_)) => superset.matches(exact),
-        (RelationLabel::SubtypeOf(left), RelationLabel::SubtypeOf(right)) => left == right,
-        (RelationLabel::SubtypeOf(_), RelationLabel::Exact(_)) => false,
+        (RelationStem::Exact(exact), _) => superset.matches(exact),
+        (RelationStem::SubtypeOf(left), RelationStem::SubtypeOf(right)) => left == right,
+        (RelationStem::SubtypeOf(_), RelationStem::Exact(_)) => false,
+    }
+}
+
+fn relation_label_subset(subset: &RelationLabel, superset: &RelationLabel) -> bool {
+    use RelationLabel::{Deep, Plain};
+    use RelationPolarity::{Negative, Positive};
+
+    match (subset, superset) {
+        (Plain(left), Plain(right)) => stem_subset(left, right),
+        (Plain(RelationStem::Exact(exact)), Deep(_)) => superset.matches(exact),
+        (Plain(RelationStem::SubtypeOf(_)), Deep(_)) => false,
+        (Deep(_), Plain(RelationStem::Exact(_))) => false,
+        (Deep(deep), Plain(stem)) => deep
+            .stem
+            .as_ref()
+            .is_some_and(|left| stem_subset(left, stem)),
+        (Deep(left), Deep(right)) => {
+            let covers_feature = match (left.polarity, right.polarity) {
+                (Positive, Positive) | (Negative, Negative) => left.feature == right.feature,
+                (Positive, Negative) => left.feature != right.feature,
+                (Negative, Positive) => false,
+            };
+            covers_feature
+                && right.stem.as_ref().is_none_or(|right| {
+                    left.stem
+                        .as_ref()
+                        .is_some_and(|left| stem_subset(left, right))
+                })
+        }
     }
 }
 
@@ -1006,5 +1061,31 @@ mod relation_label_tests {
             &RelationLabels::Any,
             &listed(&["obj"]),
         ));
+    }
+
+    #[test]
+    fn deep_feature_intersection_and_coverage_distinguish_raw_labels() {
+        for (left, right, intersect, subset) in [
+            ("comp:aux@pass", "comp:aux", false, false),
+            ("comp:aux@pass", "comp:*", true, true),
+            ("comp:aux", "comp:aux@!pass", true, true),
+            ("comp:aux@pass", "*@!pass", false, false),
+            ("comp:aux@caus", "*@!pass", true, true),
+            ("comp:aux@!pass", "comp:*@!caus", true, false),
+            ("comp:aux@!pass", "comp:*@!pass", true, true),
+            ("*@pass", "comp:aux@pass", true, false),
+        ] {
+            let patterns = (label(left), label(right));
+            assert_eq!(
+                relation_label_intersects(&patterns.0, &patterns.1),
+                intersect,
+                "{left}, {right}"
+            );
+            assert_eq!(
+                relation_label_subset(&patterns.0, &patterns.1),
+                subset,
+                "{left}, {right}"
+            );
+        }
     }
 }

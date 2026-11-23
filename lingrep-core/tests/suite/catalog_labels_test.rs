@@ -85,6 +85,27 @@ fn literals_are_checked_against_the_declared_set() {
             rejected,
         ),
         (
+            "a decorated term checks its label against the declaration",
+            "labels: {dep.rel: {comp:aux}}\np := (?<h> []) (?<d> []) where $h -[comp:aux@pass]-> $d.",
+            Ok(()),
+        ),
+        (
+            "a decorated set member checks its label against the declaration",
+            "labels: {dep.rel: {comp:obj}}\nset Aux := {comp:aux@pass}.\n\
+             p := (?<h> []) (?<d> []) where $h -[enhanced @Aux]-> $d.",
+            rejected,
+        ),
+        (
+            "a wildcard feature term supplies no label literal",
+            "labels: {dep.rel: {comp:obj}}\np := (?<h> []) (?<d> []) where $h -[*@!pass]-> $d.",
+            Ok(()),
+        ),
+        (
+            "an invalid feature in a relation set is rejected",
+            "set Aux := {comp:aux@Pass}.\np := (?<h> []) (?<d> []) where $h -[@Aux]-> $d.",
+            Err(DiagnosticCode::InvalidRelationLabel),
+        ),
+        (
             "a union of named sets",
             "labels: { dep.rel: [\"clearnlp\", \"ud-v2\"] }\n\
              p := (?<v> []) (?<o> []) where $v -[dobj | obj]-> $o.",

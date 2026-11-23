@@ -213,6 +213,26 @@ test("span constraints and tree measurements highlight named layers", async () =
   }
 });
 
+test("SUD edge terms and deep key projections are highlighted", async () => {
+  const vendor = `${process.cwd()}/lingrep-web/assets/editor/vendor`;
+  const { Parser, Language, Query } = await import(`${vendor}/web-tree-sitter.js`);
+  await Parser.init({ locateFile: (name) => `${vendor}/${name}` });
+  const parser = new Parser();
+  const language = await Language.load(`${vendor}/tree-sitter-lingrep.wasm`);
+  parser.setLanguage(language);
+  const query = new Query(language, readFileSync(`${vendor}/highlights.scm`, "utf8"));
+  const source = "key: [deep($d.dep.rel)]\np := (?<h> []) (?<d> []) where $h -[comp:aux@!pass]-> $d.";
+  const tree = parser.parse(source);
+  assert.equal(tree.rootNode.hasError, false);
+  const ranges = highlightRangesFromCaptures(query.captures(tree.rootNode).map(({ name, node }) => ({
+    name, start: node.startIndex, end: node.endIndex,
+  })));
+  for (const [text, cls] of [["deep", "pattern-keyword"], ["comp:aux@!pass", "pattern-string"]]) {
+    const start = source.indexOf(text);
+    assert.ok(ranges.some((range) => range.start === start && range.end === start + text.length && range.cls === cls), text);
+  }
+});
+
 test("annotation bundles and analytical roles highlight their names and keywords", async () => {
   const vendor = `${process.cwd()}/lingrep-web/assets/editor/vendor`;
   const { Parser, Language, Query } = await import(`${vendor}/web-tree-sitter.js`);

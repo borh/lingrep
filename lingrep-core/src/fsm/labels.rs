@@ -295,6 +295,9 @@ impl LabelDeclaration {
 
     pub fn admits(&self, value: &str) -> bool {
         self.set.admits(value)
+            || (self.attribute.as_str() == "dep.rel"
+                && super::types::split_deep_relation(value)
+                    .is_some_and(|(stem, feature)| feature.is_some() && self.set.admits(stem)))
     }
 }
 

@@ -544,6 +544,35 @@ exactly one `dep.rel`. The matched label is available this way only on a
 dependent operand. On a head-only capture, `$v.dep.rel` is that token's own
 relation to its head.
 
+### SUD deep features on dependency edges
+
+CoNLL-U input can carry a SUD relation such as `comp:aux@pass` in DEPREL or
+DEPS. The reader retains the complete relation. A qualified term separates
+the label `comp:aux` from the deep feature `pass` for matching.
+
+```pattern
+key: [deep($d.dep.rel)]
+passive := (?<h> [upos=VERB]) where $h -[comp:aux@pass]-> (?<d> [upos=AUX]).
+
+key: [$e.rel, deep($e.rel)]
+other_aux := (?<h> [upos=VERB]) where $h -[enhanced comp:aux@!pass as $e]-> (?<d> [upos=AUX]).
+```
+
+`comp:aux@!pass` requires an observed `comp:aux` edge that has another deep
+feature or has no deep feature. `*@pass` and `*@!pass` allow any label and
+`comp:*@pass` allows any `comp` subtype. Qualified terms can be joined by `|`
+and written as unquoted members of a `set`. A standalone `@NAME` still refers
+to a set. Plain exact terms still compare the complete relation, so `comp:aux`
+matches the unmarked value. A plain subtype wildcard still matches any
+nonempty subtype suffix, including one followed by a deep feature.
+
+A deep feature is one lowercase ASCII name beginning with a letter and
+continuing with letters, digits or underscores. An empty or malformed suffix
+after `@` satisfies neither kind of qualified term. `deep($d.dep.rel)` reads
+the feature from a dependent word's basic relation, and `deep($e.rel)` reads
+it from the named enhanced edge. A missing feature makes the record unkeyable.
+The ordinary relation projections retain the full label, including `@pass`.
+
 A multi-label bracket is one disjunctive constraint, not an independent count for
 every member. Candidates admitted by its labels compete in the definition's
 per-start longest-candidate selection, so a key's published count can change when
@@ -1033,7 +1062,10 @@ explicit `{…}` set:
 Every literal of a declared attribute in the file's definitions must be in its
 set: values after `=`, `!=`, `in`, `not in`, `has` and `has any`, members of a
 referenced `set`, and basic and enhanced `where` relation labels, where
-`nsubj:*` is checked as `nsubj`. A literal outside the set is a compile error.
+`nsubj:*` is checked as `nsubj`. For a deep-feature term, `dep.rel` declarations
+check the label portion (`comp:aux` in `comp:aux@pass`). A term like `*@pass`
+has no label literal to check. Deep-feature names use the spelling rule above.
+A literal outside the set is a compile error.
 Regex and substring tests are not checked. The declaration applies to the file
 it appears in, so a catalog built from several files can combine files written
 for different schemes.
@@ -1041,7 +1073,9 @@ for different schemes.
 A `matches` or `summarize` run also counts, over the sentences it reads, the
 tokens whose value of a declared attribute is outside its set, and reports them
 after the run as `warning[label_outside_declared_set]`, listing up to eight
-values with token counts. The warning does not change the exit status. Such
+values with token counts. A `dep.rel` value with a well-formed deep suffix is
+admitted if the declaration admits either the complete value or its label.
+The warning does not change the exit status. Such
 values show that the corpus uses labels outside the catalog's scheme, as when a
 ClearNLP catalog runs over a UD parse and its `dobj` tests match nothing.
 Over a prepared corpus, a run can read only the sentences that the posting

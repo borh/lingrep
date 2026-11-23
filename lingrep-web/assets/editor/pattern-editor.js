@@ -365,6 +365,7 @@ const captureClasses = new Map([
   ["operator", "pattern-operator"],
   ["property", "pattern-property"],
   ["string", "pattern-string"],
+  ["string.special", "pattern-string"],
   ["string.regex", "pattern-regex"],
   ["entity.name.function", "pattern-definition"],
   ["variable", "pattern-variable"],

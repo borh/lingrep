@@ -1336,6 +1336,20 @@ fn pinned_grammar_parses_match_mode_operators() {
 }
 
 #[test]
+fn pinned_tree_sitter_exposes_edge_features_and_deep_keys() {
+    let tree = parse_with_pinned_grammar(
+        "key: [deep($d.dep.rel), deep($e.rel)]\n\
+         p := (?<h> []) (?<d> []) where $h -[comp:aux@pass]-> $d, \
+         $h -[enhanced @ALTS|*@!pass as $e]-> $d.",
+    );
+    let root = tree.root_node();
+    assert!(!root.has_error(), "{root}");
+    assert_eq!(count_named_nodes(root, "deep_key_projection"), 2);
+    assert_eq!(count_named_nodes(root, "deep_relation_label"), 2);
+    assert_eq!(count_named_nodes(root, "set_reference"), 1);
+}
+
+#[test]
 fn pinned_tree_sitter_exposes_named_tree_layers() {
     let source = r#"p := (?<v> []) measure count(tree(custom.layer).nodes) as $n, tree("custom layer").depth($v) as $d."#;
     let tree = parse_with_pinned_grammar(source);
@@ -1950,6 +1964,101 @@ fn enhanced_where_clause_preserves_named_parallel_edges_and_projects_graph_keys(
             .count(),
         2,
         "resolve keeps every graph assignment in the winning rank cohort",
+    );
+}
+
+#[test]
+fn sud_edge_features_filter_basic_and_parallel_enhanced_edges_and_project_keys() {
+    use lingrep_core::corpus::conllu::{EnhancedNodeId, Reader, token_schema};
+    use lingrep_core::fsm::{GraphBinding, project_key};
+
+    let source = "1\tsees\tsee\tVERB\t_\t_\t0\troot\t0:root\t_\n\
+                  2\tis\tbe\tAUX\t_\t_\t1\tcomp:aux@pass\t1:comp:aux|1:comp:aux@caus|1:comp:aux@pass\t_\n";
+    let catalog = "labels: {dep.rel: {comp:aux}}\n\
+        set Causes := {comp:aux@caus}.\n\
+        set OtherAux := {comp:aux@!pass}.\n\
+        key: [$d.dep.rel, deep($d.dep.rel)]\n\
+        basic := (?<h> [upos=VERB]) (?<d> [upos=AUX]) where $h -[comp:aux@pass]-> $d.\n\
+        basic_excluded := (?<h> [upos=VERB]) (?<d> [upos=AUX]) where $h -[*@!pass]-> $d.\n\
+        basic_exact := (?<h> [upos=VERB]) (?<d> [upos=AUX]) where $h -[comp:aux]-> $d.\n\
+        key: [$e.rel, deep($e.rel)]\n\
+        enhances := (?<h> [upos=VERB]) (?<d> [upos=AUX]) where $h -[enhanced @Causes|*@pass as $e]-> $d.\n\
+        key: [deep($e.rel)]\n\
+        excludes := (?<h> [upos=VERB]) (?<d> [upos=AUX]) where $h -[enhanced @OtherAux as $e]-> $d.";
+    let compiled = compile_catalog(
+        PatternSource::named("deep-features.lx", catalog),
+        CompileLimits::default(),
+    )
+    .unwrap();
+    let [declared] = compiled.matcher.label_declarations() else {
+        panic!("expected one dependency label declaration");
+    };
+    assert!(declared.admits("comp:aux@pass"));
+    assert!(!declared.admits("comp:aux@"));
+    let bound = compiled.matcher.bind(&token_schema()).unwrap();
+    let sentence = Reader::new(std::io::BufReader::new(source.as_bytes()), "deep-features")
+        .next()
+        .unwrap()
+        .unwrap();
+    let input = BoundSentenceInput::new(
+        sentence.project(bound.projection()).unwrap(),
+        EnhancedGraphInput::Observation(sentence.enhanced_graph().clone()),
+    );
+    let expected = |pattern: &str, relation: Option<&str>| {
+        let mut matched = with_captures(full_match(pattern, 0, 2), &[("h", 0, 1), ("d", 1, 2)]);
+        matched.graph_bindings = relation
+            .into_iter()
+            .map(|relation| GraphBinding::Edge {
+                name: "e".into(),
+                head: EnhancedNodeId::Word { token_index: 0 },
+                dependent: EnhancedNodeId::Word { token_index: 1 },
+                relation: relation.into(),
+            })
+            .collect();
+        matched
+    };
+    let matches = bound.find_matches_input(&input).unwrap();
+    assert_eq!(
+        matches,
+        [
+            expected("basic", None),
+            expected("enhances", Some("comp:aux@caus")),
+            expected("enhances", Some("comp:aux@pass")),
+            expected("excludes", Some("comp:aux")),
+            expected("excludes", Some("comp:aux@caus")),
+        ]
+    );
+    let keys = matches
+        .iter()
+        .map(|matched| {
+            project_key(bound.catalog_policy(), matched, input.words()).map(|fields| {
+                fields
+                    .into_iter()
+                    .map(|field| (field.name.to_string(), field.value))
+                    .collect::<Vec<_>>()
+            })
+        })
+        .collect::<Vec<_>>();
+    let fields = |pairs: &[(&str, &str)]| {
+        Some(
+            pairs
+                .iter()
+                .map(|(name, value)| (name.to_string(), value.to_string()))
+                .collect(),
+        )
+    };
+    assert_eq!(
+        keys,
+        [
+            fields(&[
+                ("$d.dep.rel", "comp:aux@pass"),
+                ("deep($d.dep.rel)", "pass")
+            ]),
+            fields(&[("$e.rel", "comp:aux@caus"), ("deep($e.rel)", "caus")]),
+            fields(&[("$e.rel", "comp:aux@pass"), ("deep($e.rel)", "pass")]),
+            None,
+            fields(&[("deep($e.rel)", "caus")]),
+        ]
     );
 }
 

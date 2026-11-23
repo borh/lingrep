@@ -1474,6 +1474,18 @@ impl<'a, 'src> Lowerer<'a, 'src> {
         let mut seen = HashSet::new();
         let mut cursor = value_node.walk();
         for projection_node in value_node.named_children(&mut cursor) {
+            let deep = projection_node.kind() == "deep_key_projection";
+            let projection_node = if deep {
+                required_field(
+                    self.source,
+                    &self.source_label,
+                    projection_node,
+                    "relation",
+                    "capture_key_projection",
+                )?
+            } else {
+                projection_node
+            };
             if matches!(
                 projection_node.kind(),
                 "lexical_term_projection" | "count_key_projection"
@@ -1607,6 +1619,26 @@ impl<'a, 'src> Lowerer<'a, 'src> {
                         "unknown key projection",
                     ));
                 }
+            };
+            let projection = if deep {
+                if projection.attribute.as_str() != "dep.rel"
+                    || !matches!(
+                        projection.target,
+                        crate::fsm::KeyTarget::Capture {
+                            component: KeyComponent::Sole,
+                            ..
+                        }
+                    )
+                {
+                    return Err(self.error(
+                        projection_node,
+                        DiagnosticCode::InvalidPolicyValue,
+                        "deep(...) requires a single-token dependency relation or a named edge relation",
+                    ));
+                }
+                projection.with_deep_feature()
+            } else {
+                projection
             };
             let canonical = projection.name();
             if !seen.insert(canonical.clone()) {
@@ -2776,7 +2808,7 @@ impl<'a, 'src> Lowerer<'a, 'src> {
                     name: self.text(name_node)?.into(),
                     span: self.span_of(term_node)?,
                 }
-            } else {
+            } else if matches!(term_node.kind(), "relation_label" | "deep_relation_label") {
                 let text = self.text(term_node)?;
                 let label = RelationLabel::parse(text).ok_or_else(|| {
                     self.error(
@@ -2801,6 +2833,12 @@ impl<'a, 'src> Lowerer<'a, 'src> {
                     ));
                 }
                 ParsedLabelTerm::Label(label)
+            } else {
+                return Err(self.error(
+                    term_node,
+                    DiagnosticCode::UnknownNode,
+                    "unknown dependency relation term",
+                ));
             };
             terms.push(term);
         }

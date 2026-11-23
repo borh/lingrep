@@ -550,23 +550,26 @@ pub(crate) type ParsedMeasure = NamedMeasure<CompactString, ParsedTest, ParsedLa
 pub(crate) type BoundMeasure = NamedMeasure<CompactString, Box<[TokenPredicate]>, RelationLabel>;
 pub(crate) type ExecutionMeasure = NamedMeasure<CaptureId, Box<[TokenPredicate]>, RelationLabel>;
 
-/// One matcher for a dependent's `dep.rel`.
-///
-/// `dep.rel` is DEPREL lowercased whole with its subtype included, so `obl`
-/// and `obl:tmod` are two different labels and [`Self::Exact`] tells them
-/// apart. [`Self::SubtypeOf`] is the family form authored `obl:*`: it holds
-/// for any label that is the prefix followed by `:` and a nonempty subtype,
-/// and not for the bare prefix: matching the unsubtyped label would make
-/// `obl|obl:*` equivalent to `obl:*`.
 #[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord)]
 pub(crate) enum RelationLabel {
+    Plain(RelationStem),
+    Deep(Box<DeepRelationLabel>),
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord)]
+pub(crate) enum RelationStem {
     Exact(CompactString),
-    /// The prefix before `:`; the authored form is `<prefix>:*`.
     SubtypeOf(CompactString),
 }
 
-impl RelationLabel {
-    /// Whether one observed `dep.rel` value satisfies this matcher.
+#[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord)]
+pub(crate) struct DeepRelationLabel {
+    pub(crate) stem: Option<RelationStem>,
+    pub(crate) feature: CompactString,
+    pub(crate) polarity: RelationPolarity,
+}
+
+impl RelationStem {
     pub(crate) fn matches(&self, observed: &str) -> bool {
         match self {
             Self::Exact(label) => observed == label.as_str(),
@@ -577,37 +580,114 @@ impl RelationLabel {
         }
     }
 
-    /// The authored spelling, for diagnostics.
-    pub(crate) fn authored(&self) -> CompactString {
+    pub(crate) fn declaration_value(&self) -> &CompactString {
+        match self {
+            Self::Exact(label) | Self::SubtypeOf(label) => label,
+        }
+    }
+
+    fn authored(&self) -> CompactString {
         match self {
             Self::Exact(label) => label.clone(),
             Self::SubtypeOf(prefix) => CompactString::from(format!("{prefix}:*")),
         }
     }
 
-    /// Parses one authored term, or `None` when it is not a well-formed label.
-    ///
-    /// The grammar already constrains a literal term, so this exists for the
-    /// other producer: a `set` member, which may be any literal at all.
-    pub(crate) fn parse(term: &str) -> Option<Self> {
+    fn charged_bytes(&self) -> usize {
+        self.declaration_value().len()
+            + if matches!(self, Self::SubtypeOf(_)) {
+                2
+            } else {
+                0
+            }
+    }
+
+    fn parse(term: &str) -> Option<Self> {
+        use crate::fsm::types::is_relation_feature_name;
         let (prefix, subtype) = match term.split_once(':') {
             None => (term, None),
             Some((prefix, subtype)) => (prefix, Some(subtype)),
         };
-        let label_chars = |text: &str| {
-            let mut chars = text.chars();
-            chars.next().is_some_and(|first| first.is_ascii_lowercase())
-                && chars.all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '_')
-        };
-        if !label_chars(prefix) {
+        if !is_relation_feature_name(prefix) {
             return None;
         }
         match subtype {
             None => Some(Self::Exact(CompactString::from(term))),
             Some("*") => Some(Self::SubtypeOf(CompactString::from(prefix))),
-            Some(subtype) if label_chars(subtype) => Some(Self::Exact(CompactString::from(term))),
+            Some(subtype) if is_relation_feature_name(subtype) => {
+                Some(Self::Exact(CompactString::from(term)))
+            }
             Some(_) => None,
         }
+    }
+}
+
+impl RelationLabel {
+    pub(crate) fn matches(&self, observed: &str) -> bool {
+        match self {
+            Self::Plain(stem) => stem.matches(observed),
+            Self::Deep(test) => {
+                crate::fsm::types::split_deep_relation(observed).is_some_and(|(stem, feature)| {
+                    test.stem
+                        .as_ref()
+                        .is_none_or(|expected| expected.matches(stem))
+                        && ((feature == Some(test.feature.as_str()))
+                            == (test.polarity == RelationPolarity::Positive))
+                })
+            }
+        }
+    }
+
+    pub(crate) fn authored(&self) -> CompactString {
+        match self {
+            Self::Plain(stem) => stem.authored(),
+            Self::Deep(test) => {
+                let stem = test
+                    .stem
+                    .as_ref()
+                    .map_or(CompactString::const_new("*"), RelationStem::authored);
+                let exclusion = if test.polarity == RelationPolarity::Negative {
+                    "!"
+                } else {
+                    ""
+                };
+                CompactString::from(format!("{stem}@{exclusion}{}", test.feature))
+            }
+        }
+    }
+
+    pub(crate) fn charged_bytes(&self) -> usize {
+        match self {
+            Self::Plain(stem) => stem.charged_bytes(),
+            Self::Deep(test) => {
+                std::mem::size_of_val(test.as_ref())
+                    + test.stem.as_ref().map_or(0, RelationStem::charged_bytes)
+                    + test.feature.len()
+            }
+        }
+    }
+
+    pub(crate) fn parse(term: &str) -> Option<Self> {
+        let Some((stem, feature)) = term.split_once('@') else {
+            return RelationStem::parse(term).map(Self::Plain);
+        };
+        let (feature, polarity) = match feature.strip_prefix('!') {
+            Some(feature) => (feature, RelationPolarity::Negative),
+            None => (feature, RelationPolarity::Positive),
+        };
+        if !crate::fsm::types::is_relation_feature_name(feature) {
+            return None;
+        }
+        let stem = if stem == "*" {
+            None
+        } else {
+            Some(RelationStem::parse(stem)?)
+        };
+        Some(Self::Deep(Box::new(DeepRelationLabel {
+            stem,
+            feature: feature.into(),
+            polarity,
+        })))
     }
 }
 

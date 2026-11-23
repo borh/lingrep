@@ -185,6 +185,25 @@ impl fmt::Display for EnhancedGraphExecutionError {
 
 impl std::error::Error for EnhancedGraphExecutionError {}
 
+pub(crate) fn is_relation_feature_name(name: &str) -> bool {
+    let mut chars = name.bytes();
+    chars.next().is_some_and(|first| first.is_ascii_lowercase())
+        && chars.all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == b'_')
+}
+
+pub(crate) fn split_deep_relation(relation: &str) -> Option<(&str, Option<&str>)> {
+    if relation.is_empty() || relation == "_" {
+        return None;
+    }
+    match relation.split_once('@') {
+        Some((stem, feature)) if !stem.is_empty() && is_relation_feature_name(feature) => {
+            Some((stem, Some(feature)))
+        }
+        Some(_) => None,
+        None => Some((relation, None)),
+    }
+}
+
 impl GraphBinding {
     #[must_use]
     pub fn name(&self) -> &str {
