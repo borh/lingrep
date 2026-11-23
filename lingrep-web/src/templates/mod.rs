@@ -691,7 +691,7 @@ mod tests {
         // sits between the textarea tags.
         assert!(html.contains("required></textarea>"));
         assert!(html.contains("<!DOCTYPE html>"));
-        assert!(html.contains("<title>lingrep-web</title>"));
+        assert!(html.contains("<title>Analysis tools · lingrep</title>"));
         assert!(html.contains("src=\"assets/results-explorer.js\""));
         assert!(html.contains("src=\"assets/app.js\""));
         assert!(!html.contains("item.setAttribute(\"aria-pressed\""));

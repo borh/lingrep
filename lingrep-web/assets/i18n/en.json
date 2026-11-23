@@ -873,5 +873,6 @@
   "library.filter_catalogs": "Filter catalogs",
   "library.filter_catalogs_placeholder": "Filter catalogs…",
   "library.filter_catalogs_none": "No catalog name contains that text.",
-  "sample.inputs_title": "Pattern and sample text"
+  "sample.inputs_title": "Pattern and sample text",
+  "nav.skip": "Skip to content"
 }

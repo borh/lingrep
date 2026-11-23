@@ -3,7 +3,8 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>{% block title %}lingrep-web{% endblock %}</title>
+    <title>{% block title %}lingrep{% endblock %}</title>
+    <meta name="color-scheme" content="light dark">
     <link rel="icon" href="data:,">
     <script src="assets/questions/theme.js"></script>
     <script defer src="assets/vendor/htmx.min.js"></script>
@@ -20,8 +21,9 @@
     <link rel="stylesheet" href="assets/app.css">
 </head>
 <body hx-ext="sse">
+    <a class="skip" href="#main" data-i18n="nav.skip">Skip to content</a>
     {% include "partials/nav.html" %}
-    <main>{% block content %}{% endblock %}</main>
+    <main id="main" tabindex="-1">{% block content %}{% endblock %}</main>
     <dialog id="site-help" class="site-help-dialog" data-site-help aria-labelledby="site-help-title">
       <header class="site-help-header">
         <h2 id="site-help-title" data-i18n="nav.help">Help</h2>
