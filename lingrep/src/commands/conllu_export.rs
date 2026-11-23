@@ -92,7 +92,12 @@ impl ConlluExport {
         let offsets = (0..forms.len())
             .map(|word| words.char_span(word))
             .collect::<Option<Vec<_>>>();
-        if let Some(offsets) = &offsets {
+        // The words of a multiword token share its span, and their forms do not
+        // spell its text.
+        let tiled = offsets
+            .as_ref()
+            .filter(|offsets| offsets.windows(2).all(|pair| pair[0].end <= pair[1].start));
+        if let Some(offsets) = tiled {
             let mut text = String::new();
             let mut end = 0;
             for (form, span) in forms.iter().zip(offsets) {

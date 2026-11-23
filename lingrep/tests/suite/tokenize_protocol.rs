@@ -834,3 +834,37 @@ fn conllu_export_writes_missing_syntax_for_morphology() {
     assert_eq!(sentences[0].text(), "猫。");
     assert_eq!(sentences[1].sent_id(), Some("lingrep-1"));
 }
+
+#[test]
+fn conllu_export_omits_text_it_cannot_rebuild_and_rejects_global_json() {
+    let directory = TempDir::new().unwrap();
+    let input = directory.path().join("mwt.conllu");
+    std::fs::write(
+        &input,
+        concat!(
+            "# text = Vamos al mar.\n",
+            "1\tVamos\tir\tVERB\t_\t_\t0\troot\t_\t_\n",
+            "2-3\tal\t_\t_\t_\t_\t_\t_\t_\t_\n",
+            "2\ta\ta\tADP\t_\t_\t4\tcase\t_\t_\n",
+            "3\tel\tel\tDET\t_\t_\t4\tdet\t_\t_\n",
+            "4\tmar\tmar\tNOUN\t_\t_\t1\tobl\t_\tSpaceAfter=No\n",
+            "5\t.\t.\tPUNCT\t_\t_\t1\tpunct\t_\t_\n\n",
+        ),
+    )
+    .unwrap();
+    let output = lingrep()
+        .args(["tokenize", "--output-format", "conllu"])
+        .arg(&input)
+        .output()
+        .unwrap();
+    assert!(output.status.success(), "{:?}", output.stderr);
+    let exported = String::from_utf8(output.stdout).unwrap();
+    assert!(exported.contains("\ta\ta\tADP"), "{exported}");
+    assert!(!exported.contains("# text"), "{exported}");
+
+    lingrep()
+        .args(["--json", "tokenize", "--output-format", "conllu"])
+        .arg(&input)
+        .assert()
+        .code(2);
+}

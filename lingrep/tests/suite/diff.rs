@@ -253,3 +253,82 @@ fn definitions_are_paired_by_name_or_named_and_incomparable_runs_exit_2() {
     assert_eq!(output.status.code(), Some(2));
     assert!(String::from_utf8_lossy(&output.stderr).contains("--retain"));
 }
+
+#[test]
+fn definitions_are_compared_under_their_published_names() {
+    let directory = tempfile::tempdir().unwrap();
+    let run = |name: &str, body: &str| {
+        let catalog = directory.path().join(format!("{name}.lx"));
+        std::fs::write(
+            &catalog,
+            format!("output_name: \"x\"\npattern p := {body}.\n"),
+        )
+        .unwrap();
+        let output = lingrep_without_dictionary()
+            .args(["--json", "matches", "--input-format", "conllu"])
+            .args([
+                "--source-metadata",
+                if name == "a" {
+                    "@sentence.sent_id"
+                } else {
+                    "@sentence.text"
+                },
+            ])
+            .arg("--patterns")
+            .arg(&catalog)
+            .arg(fixture("psycholinguistics.conllu"))
+            .output()
+            .unwrap();
+        assert_success(&output);
+        let path = directory.path().join(format!("{name}.jsonl"));
+        std::fs::write(&path, &output.stdout).unwrap();
+        path
+    };
+    let a = run("a", "[upos=NOUN]");
+    let b = run("b", "[upos=VERB]");
+
+    let events = diff(&a, &b, &[]);
+    let definition = of(&events, "definition")[0];
+    assert_eq!(definition["a"], "x");
+    assert_eq!(definition["shared"], 0);
+    assert_ne!(definition["a_only"], 0);
+    assert_ne!(definition["b_only"], 0);
+
+    // Requested source metadata is not part of the published record.
+    let a_again = run("b", "[upos=NOUN]");
+    let events = diff(&a, &a_again, &["--level", "record"]);
+    assert_eq!(of(&events, "complete")[0]["differences_found"], false);
+}
+
+#[test]
+fn human_output_shows_terminal_controls_in_stream_text_as_visible_text() {
+    let directory = tempfile::tempdir().unwrap();
+    let a = matches(directory.path(), "a.jsonl", BASE, &[]);
+    let hostile = directory.path().join("hostile.jsonl");
+    let stream = std::fs::read_to_string(&a).unwrap();
+    let mut seen = false;
+    let lines = stream
+        .lines()
+        .filter(|line| {
+            // Drop one match so the other stream reports it as an occurrence.
+            let is_match = line.contains("\"type\":\"match\"");
+            let drop = is_match && !seen;
+            seen |= is_match;
+            !drop
+        })
+        .collect::<Vec<_>>()
+        .join("\n");
+    std::fs::write(&hostile, lines).unwrap();
+    let escaped = stream.replace("\"surface\":\"", "\"surface\":\"\\u001b[2J");
+    assert_ne!(escaped, stream);
+    std::fs::write(&a, escaped).unwrap();
+
+    let output = lingrep_without_dictionary()
+        .arg("diff")
+        .args([&a, &hostile])
+        .output()
+        .unwrap();
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(stdout.contains("a_only"), "{stdout}");
+    assert!(!stdout.contains('\u{1b}'), "{stdout:?}");
+}

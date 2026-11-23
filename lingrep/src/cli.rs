@@ -2356,6 +2356,14 @@ impl Cli {
                 "--json cannot be used with --tsv",
             ));
         }
+        if cli.json
+            && matches!(&cli.command, Command::Tokenize(args) if args.output_format.is_some())
+        {
+            return Err(Self::command().error(
+                clap::error::ErrorKind::ArgumentConflict,
+                "--json cannot be used with --output-format",
+            ));
+        }
         if cli.json && cli.color == ColorMode::Always {
             return Err(Self::command().error(
                 clap::error::ErrorKind::ArgumentConflict,
