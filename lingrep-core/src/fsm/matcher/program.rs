@@ -612,8 +612,9 @@ impl Program {
             }
             accepted.sort_by_key(|hit| std::cmp::Reverse(hit.candidate.position));
             // The longest candidate of each branch selection is published. In
-            // an interpreted pattern its other readings join it when they have
-            // the same measures, and are published separately when they differ.
+            // an interpreted pattern its other readings of that span join it
+            // when they have the same measures, and are separate records of
+            // the span when they differ.
             let mut longest = BTreeMap::new();
             let mut measured: Vec<Option<Vec<GraphBinding>>> = Vec::new();
             if !self.measures.is_empty() {
