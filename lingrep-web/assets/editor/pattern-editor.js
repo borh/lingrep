@@ -237,6 +237,8 @@ function captureKeyPicker(state, edits = [], checkedSource = null) {
   const message = document.createElement("p");
   message.textContent = edits.length ? t("editor.grouping_run") : t("editor.grouping_text_only");
   picker.append(message);
+  // With no key to choose there is nothing to open the disclosure for.
+  picker.hidden = !edits.length;
   if (!edits.length || checkedSource !== state.source()) return;
   const patternLabel = document.createElement("label");
   patternLabel.append(t("editor.grouping_pattern"));
@@ -1491,8 +1493,9 @@ function renderStatus(state) {
   state.status.textContent = state.submitNotice ? `${t(state.submitNotice)} ${message}` : message;
 }
 
-function status(state, message, terminal = false) {
+function status(state, message, terminal = false, invalid = false) {
   state.statusMessage = message;
+  state.status.toggleAttribute("data-invalid", invalid);
   renderStatus(state);
   state.status.setAttribute("aria-live", terminal ? "polite" : "off");
 }
@@ -1738,7 +1741,7 @@ async function checkSource(state, source, reason = "input") {
       const diagnostic = result.diagnostics?.[0];
       status(state, () => diagnostic?.location
         ? t("editor.status_at", { message: diagnosticMessage(diagnostic), line: diagnostic.location.line, column: diagnostic.location.column })
-        : diagnosticMessage(diagnostic), true);
+        : diagnosticMessage(diagnostic), true, true);
       const excerpt = diagnosticExcerpt(source, diagnostic?.location);
       state.diagnosticNode.replaceChildren();
       if (excerpt) {
@@ -1780,7 +1783,7 @@ function patternLintSource(state) {
       state.textarea.setAttribute("aria-invalid", "true");
       const first = local[0];
       const line = view.state.doc.lineAt(first.from);
-      status(state, () => t("editor.status_local_syntax", { line: line.number, column: first.from - line.from + 1, message: first.message }), true);
+      status(state, () => t("editor.status_local_syntax", { line: line.number, column: first.from - line.from + 1, message: first.message }), true, true);
       announceInvalid(state, first.from);
       return local;
     }
@@ -2003,6 +2006,7 @@ async function enhance(textarea, grammar, cm, options = {}) {
     source: () => state.view.state.doc.toString(),
     corpus: options.corpus ?? (() => (textarea.dataset.patternCorpus ? document.querySelector(textarea.dataset.patternCorpus)?.value || null : null)),
   };
+  if (textarea.id !== "corpus-pattern") onLocaleChange(() => renderStatus(state));
   if (textarea.id === "corpus-pattern") {
     const picker = document.createElement("details");
     picker.className = "pattern-key-picker";

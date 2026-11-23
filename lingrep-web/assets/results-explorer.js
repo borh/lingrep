@@ -460,7 +460,9 @@ function isErrorFragment(html) {
 }
 
 function beginSampleRequest(form) {
-  form.querySelector("[data-sample-status]").textContent = t("sample.running");
+  const status = form.querySelector("[data-sample-status]");
+  status.classList.remove("visually-hidden");
+  status.textContent = t("sample.running");
   document.getElementById("sample-results")?.setAttribute("aria-busy", "true");
 }
 
@@ -471,7 +473,15 @@ function finishSampleRequest(target) {
     ?.querySelector("[data-sample-status]");
   // The status line is the page's one live region for a run: it announces the
   // counts, not the whole result.
-  if (status) status.textContent = target.querySelector("[data-sample-summary]")?.textContent.trim() ?? "";
+  if (status) {
+    status.classList.add("visually-hidden");
+    // Swapped-in markup is localized after this runs, so the counts are
+    // looked up here instead of copied.
+    const counts = target.querySelector("[data-sample-summary] [data-i18n]");
+    status.textContent = counts
+      ? t(counts.dataset.i18n, JSON.parse(counts.dataset.i18nArgs ?? "null"))
+      : "";
+  }
   restoreSampleSelection(target);
 }
 
@@ -602,7 +612,9 @@ async function renderSampleReference(tokenKeys) {
 }
 
 function failSampleRequest(form) {
-  form.querySelector("[data-sample-status]").textContent = t("sample.run_failed");
+  const status = form.querySelector("[data-sample-status]");
+  status.classList.remove("visually-hidden");
+  status.textContent = t("sample.run_failed");
   document.getElementById("sample-results")?.setAttribute("aria-busy", "false");
 }
 
@@ -1742,6 +1754,10 @@ if (typeof document !== "undefined") {
   // Locale flip: re-render the strings this module owns (pager, filter
   // status, clear-filter chips, controller-driven inspector titles).
   onLocaleChange(() => {
+    const results = document.getElementById("sample-results");
+    const status = document.querySelector("[data-sample-status]");
+    const counts = results?.querySelector("[data-sample-summary] [data-i18n]");
+    if (status && counts) status.textContent = t(counts.dataset.i18n, JSON.parse(counts.dataset.i18nArgs ?? "null"));
     for (const grid of document.querySelectorAll("[data-hit-grid]")) {
       applyRowFilters(grid.closest(".pattern-detail"));
       const controller = hitControllers.get(grid);

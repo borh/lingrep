@@ -691,7 +691,7 @@ mod tests {
         // sits between the textarea tags.
         assert!(html.contains("required></textarea>"));
         assert!(html.contains("<!DOCTYPE html>"));
-        assert!(html.contains("<title>Analysis tools · lingrep</title>"));
+        assert!(html.contains("<title data-i18n=\"title.tools\">Analysis tools · lingrep</title>"));
         assert!(html.contains("src=\"assets/results-explorer.js\""));
         assert!(html.contains("src=\"assets/app.js\""));
         assert!(!html.contains("item.setAttribute(\"aria-pressed\""));
@@ -907,8 +907,7 @@ mod tests {
         .render()
         .unwrap();
         assert!(
-            failure_html
-                .contains("class=\"revision-status revision-status-error\" role=\"status\"")
+            failure_html.contains("class=\"revision-status revision-status-error\" role=\"alert\"")
         );
         assert!(failure_html.contains(
             "<span data-i18n=\"status.failed_compile\">The pattern did not compile:</span> \

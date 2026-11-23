@@ -32,7 +32,7 @@
       </tr>
     {% endfor %}
     </tbody></table>
-    {% else %}<p class="empty-results" data-i18n="results.empty">No matches for the authored patterns.</p>{% endif %}
+    {% else %}<p class="empty-results" data-i18n="results.empty">No matches in the current search scope.</p>{% endif %}
     {% match coverage %}{% when Some with (coverage) %}<p class="catalog-coverage" data-catalog-coverage data-i18n="results.coverage" data-i18n-args='{"matched": "{{ coverage.matched_label }}", "scanned": "{{ coverage.scanned_label }}", "pct": "{{ coverage.percent_label }}"}'>{{ coverage.matched_label }} of {{ coverage.scanned_label }} scanned sentences carry a match ({{ coverage.percent_label }}%)</p>{% when None %}{% endmatch %}
   </details>
   </div>

@@ -1,6 +1,6 @@
 {% extends "layout.html" %}
 {% import "macros.html" as macros %}
-{% block title %}Sample debugger · lingrep{% endblock %}
+{% block title %}<title data-i18n="title.sample">Sample debugger · lingrep</title>{% endblock %}
 {% block head %}{% include "partials/pattern_editor_assets.html" %}{% endblock %}
 {% block content %}
 {% call macros::corpus_line("none (this page reads only the sample text)", "corpus.none", false) %}{% endcall %}
