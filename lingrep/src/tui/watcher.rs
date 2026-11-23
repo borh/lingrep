@@ -27,7 +27,7 @@ impl PatternWatcher {
             .and_then(|m| m.modified().ok());
 
         match (self.last_modified, current_modified) {
-            (Some(last), Some(current)) if current > last => {
+            (Some(last), Some(current)) if current != last => {
                 self.last_modified = Some(current);
                 self.reload_count += 1;
                 Some(PatternFileChanged {
@@ -119,6 +119,25 @@ mod tests {
 
         // First check should return None since no change since creation
         assert!(watcher.check().is_none());
+        assert!(watcher.check().is_none());
+    }
+
+    #[test]
+    fn replacement_with_an_older_timestamp_is_detected() {
+        let dir = TempDir::new().unwrap();
+        let path = dir.path().join("test.lx");
+        fs::write(&path, "initial").unwrap();
+        let mut watcher = PatternWatcher::new(path.clone());
+
+        let older = fs::metadata(&path).unwrap().modified().unwrap() - Duration::from_secs(60);
+        File::options()
+            .write(true)
+            .open(&path)
+            .unwrap()
+            .set_modified(older)
+            .unwrap();
+
+        assert!(watcher.check().is_some());
         assert!(watcher.check().is_none());
     }
 }

@@ -134,6 +134,9 @@ pub struct Model {
     pub tasks: TaskStates,
     pub cache: ResultCache,
     pub pattern_draft: String,
+    /// Text of the most recent pattern scan. Surface and KWIC scans compile
+    /// this, not the draft, so they describe the patterns in the frequency table.
+    pub scanned_pattern: String,
     pub selected_pattern: Option<PatternId>,
     pub scroll: ScrollState,
     pub request_seq: u64,
@@ -313,7 +316,10 @@ impl Model {
                     (last, plan)
                 };
                 self.scroll.surface.offset = self.scroll.surface.offset.min(last);
-                let (store, start) = load_plan?;
+                let Some((store, start)) = load_plan else {
+                    self.tasks.surface.page_request_id = None;
+                    return None;
+                };
                 let page_request_id = self.next_page_request_id();
                 self.tasks.surface.page_request_id = Some(page_request_id);
                 Some(Command::LoadSurfaceWindow {
@@ -337,7 +343,10 @@ impl Model {
                 };
                 self.scroll.context.offset = self.scroll.context.offset.min(last);
                 self.selected_kwic_line = self.selected_kwic_line.min(last);
-                let (store, start) = load_plan?;
+                let Some((store, start)) = load_plan else {
+                    self.tasks.kwic.page_request_id = None;
+                    return None;
+                };
                 let page_request_id = self.next_page_request_id();
                 self.tasks.kwic.page_request_id = Some(page_request_id);
                 Some(Command::LoadKwicWindow {

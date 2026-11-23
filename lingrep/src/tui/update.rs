@@ -32,10 +32,7 @@ pub fn update(msg: ExplorerMessage, mut model: Model) -> (Model, Option<Command>
                 }
             };
             model.pattern_draft = source;
-            let pattern_count = model.pattern_names.len();
-            model.reload_status = Some(format!(
-                "Reloaded patterns ({pattern_count}) - #{reload_count}"
-            ));
+            model.reload_status = Some(format!("Reloaded patterns - #{reload_count}"));
             start_pattern_scan(model)
         }
 
@@ -90,9 +87,18 @@ pub fn update(msg: ExplorerMessage, mut model: Model) -> (Model, Option<Command>
             model.tasks.pattern.status = LoadStatus::Complete;
             model.tasks.pattern.displayed_request_id = Some(request_id);
             model.tasks.pattern.request_id = None;
-            model.mode = AppMode::Viewing {
-                tab: Tab::Frequencies,
-            };
+            let typing = matches!(
+                model.mode,
+                AppMode::EditingPattern
+                    | AppMode::Viewing {
+                        tab: Tab::Playground
+                    }
+            );
+            if !typing {
+                model.mode = AppMode::Viewing {
+                    tab: Tab::Frequencies,
+                };
+            }
             (model, None)
         }
 
@@ -124,6 +130,7 @@ pub fn update(msg: ExplorerMessage, mut model: Model) -> (Model, Option<Command>
                 return (model, None);
             }
             model.tasks.surface.received_lines = result.len();
+            model.cache.surface.clear();
             model.cache.surface.put((request_id, pattern_id), result);
             model.scroll.surface.offset = 0;
             model.tasks.surface.page_request_id = None;
@@ -193,6 +200,7 @@ pub fn update(msg: ExplorerMessage, mut model: Model) -> (Model, Option<Command>
                 return (model, None);
             }
             model.tasks.kwic.received_lines = result.len();
+            model.cache.kwic.clear();
             model.cache.kwic.put((request_id, pattern_id), result);
             model.scroll.context.offset = 0;
             model.selected_kwic_line = 0;
@@ -527,6 +535,7 @@ fn handle_ui(msg: UiMsg, mut model: Model) -> (Model, Option<Command>) {
                     _ => {}
                 }
                 if playground_input && changed {
+                    model.playground_request_id = None;
                     model.playground_matches.clear();
                     model.playground_error = None;
                 }
@@ -569,16 +578,19 @@ fn start_pattern_scan(mut model: Model) -> (Model, Option<Command>) {
     }
 
     let pattern_text = model.pattern_draft.clone();
+    model.scanned_pattern.clone_from(&pattern_text);
     let request_id = model.next_request_id();
 
     model.tasks.pattern.status = LoadStatus::Loading;
     model.tasks.pattern.request_id = Some(request_id);
     model.tasks.pattern.displayed_request_id = Some(request_id);
     model.tasks.pattern.progress = Default::default();
-    model.tasks.surface.displayed_request_id = None;
-    model.tasks.surface.page_request_id = None;
-    model.tasks.kwic.displayed_request_id = None;
-    model.tasks.kwic.page_request_id = None;
+    for detail in [&mut model.tasks.surface, &mut model.tasks.kwic] {
+        detail.status = LoadStatus::Idle;
+        detail.request_id = None;
+        detail.displayed_request_id = None;
+        detail.page_request_id = None;
+    }
 
     model
         .cache
@@ -598,7 +610,7 @@ fn start_surface_if_selected(mut model: Model) -> (Model, Option<Command>) {
     if let Some(pid) = model.selected_pattern
         && let Some(pattern_name) = model.pattern_ids.get(&pid).cloned()
     {
-        let pattern_text = model.pattern_draft.clone();
+        let pattern_text = model.scanned_pattern.clone();
         let request_id = model.next_request_id();
 
         model.tasks.surface.status = LoadStatus::Loading;
@@ -626,7 +638,7 @@ fn start_kwic_if_selected(mut model: Model) -> (Model, Option<Command>) {
     if let Some(pid) = model.selected_pattern
         && let Some(pattern_name) = model.pattern_ids.get(&pid).cloned()
     {
-        let pattern_text = model.pattern_draft.clone();
+        let pattern_text = model.scanned_pattern.clone();
         let request_id = model.next_request_id();
 
         model.tasks.kwic.status = LoadStatus::Loading;
@@ -783,6 +795,135 @@ mod tests {
         assert_eq!(view.kwic_lines.len(), 1);
         assert_eq!(view.selected_kwic_idx, Some(0));
         assert_eq!(view.kwic_lines[0].key, "key-299");
+    }
+
+    #[test]
+    fn pattern_rescan_discards_in_flight_detail_results() {
+        let mut model = make_model();
+        let pattern = model.get_or_create_pattern_id("p");
+        model.pattern_draft = "p := [text=猫].".into();
+        model.tasks.surface.request_id = Some(RequestId(7));
+        model.tasks.surface.status = LoadStatus::Loading;
+
+        let (model, _) = start_pattern_scan(model);
+        let (model, _) = update(
+            ExplorerMessage::SurfaceFinished {
+                request_id: RequestId(7),
+                pattern_id: pattern,
+                result: PagedResult::from_rows(&[SurfaceEntry {
+                    form: "old".into(),
+                    count: 1,
+                }]),
+            },
+            model,
+        );
+
+        assert!(model.cache.surface.is_empty());
+        assert_eq!(model.tasks.surface.status, LoadStatus::Idle);
+        assert_eq!(model.tasks.surface.displayed_request_id, None);
+    }
+
+    #[test]
+    fn pattern_scan_completion_does_not_leave_a_text_input_mode() {
+        for mode in [
+            AppMode::EditingPattern,
+            AppMode::Viewing {
+                tab: Tab::Playground,
+            },
+        ] {
+            let mut model = make_model();
+            model.pattern_draft = "p := [text=猫].".into();
+            let (mut model, _) = start_pattern_scan(model);
+            let request_id = model.tasks.pattern.request_id.unwrap();
+            model.mode = mode.clone();
+
+            let (model, _) = update(ExplorerMessage::PatternFinished { request_id }, model);
+
+            assert_eq!(model.mode, mode);
+            assert_eq!(model.tasks.pattern.status, LoadStatus::Complete);
+        }
+    }
+
+    #[test]
+    fn detail_scans_compile_the_scanned_pattern_not_the_unsubmitted_draft() {
+        let mut model = make_model();
+        model.pattern_draft = "p := [text=猫].".into();
+        let (mut model, _) = start_pattern_scan(model);
+        let pattern = model.get_or_create_pattern_id("p");
+        model.selected_pattern = Some(pattern);
+        model.pattern_draft.push_str(" unsubmitted");
+
+        let (model, surface) = start_surface_if_selected(model);
+        let (_, kwic) = start_kwic_if_selected(model);
+
+        assert!(matches!(
+            surface,
+            Some(Command::StartSurface { pattern_text, .. }) if pattern_text == "p := [text=猫]."
+        ));
+        assert!(matches!(
+            kwic,
+            Some(Command::StartKwic { pattern_text, .. }) if pattern_text == "p := [text=猫]."
+        ));
+    }
+
+    #[test]
+    fn completed_detail_scan_replaces_the_previous_cached_result() {
+        let mut model = make_model();
+        let pattern = model.get_or_create_pattern_id("p");
+        for request in [RequestId(1), RequestId(2)] {
+            model.tasks.kwic.request_id = Some(request);
+            (model, _) = update(
+                ExplorerMessage::KwicFinished {
+                    request_id: request,
+                    pattern_id: pattern,
+                    result: PagedResult::from_rows(&[] as &[KwicLine]),
+                },
+                model,
+            );
+        }
+        assert_eq!(model.cache.kwic.len(), 1);
+        assert!(model.cache.kwic.contains(&(RequestId(2), pattern)));
+    }
+
+    #[test]
+    fn editing_the_playground_discards_the_pending_result() {
+        let mut model = make_model();
+        model.mode = AppMode::Viewing {
+            tab: Tab::Playground,
+        };
+        model.playground.pattern = "p := [text=猫].".into();
+        model.playground.sample = "猫。".into();
+        let (model, _) = update(ExplorerMessage::Ui(UiMsg::SubmitPlayground), model);
+        let request_id = model.playground_request_id.unwrap();
+        let key = KeyEvent::new(KeyCode::Char('x'), KeyModifiers::NONE);
+        let (model, _) = update(ExplorerMessage::Ui(UiMsg::KeyPress(key)), model);
+
+        let (model, _) = update(
+            ExplorerMessage::PlaygroundComplete {
+                request_id,
+                matches: vec![crate::tui::model::PlaygroundMatch {
+                    start_token: 0,
+                    end_token: 1,
+                    matched_text: "猫".into(),
+                    pattern_name: None,
+                }],
+            },
+            model,
+        );
+
+        assert!(model.playground_matches.is_empty());
+    }
+
+    #[test]
+    fn scrolling_back_to_the_resident_window_supersedes_the_pending_load() {
+        let model = paged_kwic_model(300, 0);
+        let (model, down) = update(ExplorerMessage::Ui(UiMsg::ScrollDown), model);
+        assert!(matches!(down, Some(Command::LoadKwicWindow { .. })));
+
+        let (model, up) = update(ExplorerMessage::Ui(UiMsg::ScrollUp), model);
+
+        assert!(up.is_none());
+        assert_eq!(model.tasks.kwic.page_request_id, None);
     }
 
     #[test]

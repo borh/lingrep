@@ -209,8 +209,15 @@ fn run_command(
             request_id,
             pattern_text,
         } => {
-            if let Some(h) = handles.pattern.take() {
-                h.cancel.cancel();
+            for handle in [
+                handles.pattern.take(),
+                handles.surface.take(),
+                handles.kwic.take(),
+            ]
+            .into_iter()
+            .flatten()
+            {
+                handle.cancel.cancel();
             }
 
             let handle = crate::tui::workers::PatternWorker::spawn(
@@ -457,7 +464,7 @@ fn get_header_text(model: &Model) -> String {
             }
         }
         LoadStatus::Complete => {
-            let base = format!("{} patterns loaded", model.pattern_names.len());
+            let base = format!("{} patterns loaded", model.ordered_patterns().len());
             if let Some(ref reload) = model.reload_status {
                 format!("{} | {}", base, sanitize_terminal(reload))
             } else {
@@ -712,10 +719,9 @@ fn view_context_widget(f: &mut Frame, model: &Model, area: Rect) {
 
                 Row::new(vec![
                     Cell::new(Span::styled(
-                        format!(
-                            "{:>width$}",
-                            sanitize_terminal(&kwic.pre),
-                            width = vm.kwic_before_width as usize
+                        right_aligned_tail(
+                            &sanitize_terminal(&kwic.pre),
+                            vm.kwic_before_width as usize,
                         ),
                         base_style.fg(Color::DarkGray),
                     )),
@@ -807,6 +813,23 @@ fn view_context_widget(f: &mut Frame, model: &Model, area: Rect) {
     f.render_widget(para, area);
 }
 
+/// Returns the trailing part of `text` that fits `width` terminal columns,
+/// left-padded to exactly `width`, so the text nearest the match stays visible.
+fn right_aligned_tail(text: &str, width: usize) -> String {
+    use unicode_width::UnicodeWidthChar;
+    let mut columns = 0;
+    let mut start = text.len();
+    for (index, character) in text.char_indices().rev() {
+        let character_columns = character.width().unwrap_or(0);
+        if columns + character_columns > width {
+            break;
+        }
+        columns += character_columns;
+        start = index;
+    }
+    format!("{}{}", " ".repeat(width - columns), &text[start..])
+}
+
 fn view_parsed_widget(f: &mut Frame, model: &Model, area: Rect) {
     let text = if model.pattern_draft.is_empty() {
         "No pattern loaded".into()
@@ -869,6 +892,16 @@ mod tests {
     use crate::tui::workers::TaskHandles;
     use crossterm::event::{KeyEvent, KeyModifiers};
     use ratatui::backend::TestBackend;
+
+    #[test]
+    fn kwic_left_context_keeps_the_columns_nearest_the_match() {
+        // Each CJK character occupies two columns.
+        assert_eq!(right_aligned_tail("吾輩は猫である", 6), "である");
+        assert_eq!(right_aligned_tail("吾輩は猫である", 5), " ある");
+        assert_eq!(right_aligned_tail("abcdef", 4), "cdef");
+        assert_eq!(right_aligned_tail("猫", 4), "  猫");
+        assert_eq!(right_aligned_tail("猫", 0), "");
+    }
 
     #[test]
     fn input_modes_route_printable_keys_to_the_editor() {
