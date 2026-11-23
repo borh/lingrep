@@ -670,7 +670,12 @@ fn relaxation_text(relaxation: &crate::protocol::check::Relaxation) -> String {
             if shown.len() < test.len() {
                 shown.push('…');
             }
-            format!("the test {attribute} {shown} at {at}")
+            let separator = if shown.starts_with(char::is_alphabetic) {
+                " "
+            } else {
+                ""
+            };
+            format!("the test {attribute}{separator}{shown} at {at}")
         }
         _ => format!("the {} at {at}", relaxation.kind),
     }

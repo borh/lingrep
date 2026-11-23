@@ -122,6 +122,9 @@ impl NoMatchExplainer {
         };
         let mut findings = Vec::new();
         for definition in &program.definitions {
+            if crate::fsm::policy::is_hidden(&definition.name) {
+                continue;
+            }
             let Some(expr) = definition.expr() else {
                 continue;
             };

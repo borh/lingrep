@@ -523,12 +523,12 @@ impl<S: TokenSequence + ?Sized> Run<'_, S> {
                 for count in 1..=maximum {
                     let mut next = BTreeSet::new();
                     for position in frontier {
-                        next.extend(
-                            self.ends(node, position)
-                                .iter()
-                                .copied()
-                                .filter(|end| *end != position),
-                        );
+                        let ends = self.ends(node, position);
+                        // Empty iterations can supply the rest of `min`.
+                        if ends.contains(&position) {
+                            accepted.insert(position);
+                        }
+                        next.extend(ends.iter().copied().filter(|end| *end != position));
                     }
                     if next.is_empty() {
                         break;
