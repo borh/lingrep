@@ -1,4 +1,4 @@
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::sync::{Arc, LazyLock};
 
 use axum::{
@@ -194,12 +194,18 @@ struct StoredSentence {
 }
 
 pub(crate) fn token_rows(sentence: &BoundTokenSentence, schema: &TokenSchema) -> Vec<TokenRow> {
+    token_rows_for_keys(sentence, schema.keys())
+}
+
+pub(crate) fn token_rows_for_keys(
+    sentence: &BoundTokenSentence,
+    keys: &[lingrep_core::token_match::AttributeKey],
+) -> Vec<TokenRow> {
     (0..sentence.len())
         .map(|index| TokenRow {
             index,
             space_before: lingrep_core::token_match::display_space_before(sentence, index),
-            attributes: schema
-                .keys()
+            attributes: keys
                 .iter()
                 .filter_map(|key| {
                     let value = match sentence.value_key(index, key)? {
@@ -315,14 +321,25 @@ impl MetadataQuery {
         Ok(())
     }
 }
-#[derive(Serialize)]
-struct Field {
+#[derive(Clone, Serialize)]
+pub(crate) struct Field {
     key: String,
     list: bool,
     numeric: bool,
     min: Option<f64>,
     max: Option<f64>,
     present: u64,
+}
+/// Immutable, corpus-scoped summary of document metadata fields.
+///
+/// Bounded by `MAX_FIELDS` (256) entries regardless of corpus size, and keyed
+/// in [`ReadyCorpus`] by `Arc<CorpusArtifact>` pointer identity so rebuilding
+/// a corrupt artifact automatically invalidates it.
+#[derive(Clone)]
+pub(crate) struct CachedMetadataSummary {
+    fields: Arc<[Field]>,
+    documents: u64,
+    oversized_fields: Arc<BTreeSet<String>>,
 }
 #[derive(Debug, PartialEq, Serialize)]
 struct MetadataChoice {
@@ -340,6 +357,7 @@ struct MetadataResult {
 #[derive(Default)]
 struct MetadataSummary {
     fields: BTreeMap<String, crate::provenance_view::MetadataFieldSummary>,
+    oversized_fields: BTreeSet<String>,
     documents: u64,
 }
 
@@ -369,8 +387,30 @@ fn value_label(field: &str, value: &str) -> String {
     }
 }
 
+fn has_oversized_scalar(value: &Value) -> bool {
+    let members = if let Value::Array(values) = value {
+        values.as_slice()
+    } else {
+        std::slice::from_ref(value)
+    };
+    for member in members {
+        if member.is_array() || member.is_object() {
+            continue;
+        }
+        // Only JSON strings can exceed MAX_VALUE_BYTES (4096); numbers, booleans,
+        // and null serialize to at most a few dozen bytes.
+        if member
+            .as_str()
+            .is_some_and(|raw| raw.len() > MAX_VALUE_BYTES)
+        {
+            return true;
+        }
+    }
+    false
+}
+
 impl MetadataSummary {
-    fn observe(&mut self, metadata: Value, query: &MetadataQuery) -> Result<(), &'static str> {
+    fn observe_document(&mut self, metadata: Value) -> Result<(), &'static str> {
         let metadata = metadata
             .as_object()
             .ok_or("Document metadata is not an object.")?;
@@ -387,29 +427,25 @@ impl MetadataSummary {
                 .entry(key.clone())
                 .or_insert_with(crate::provenance_view::MetadataFieldSummary::new);
             field.observe_json(value);
-            if query.field.as_deref() != Some(key) {
-                continue;
-            }
-            let members = if let Value::Array(values) = value {
-                values.as_slice()
-            } else {
-                std::slice::from_ref(value)
-            };
-            for value in members {
-                if value.is_array() || value.is_object() {
-                    continue;
-                }
-                let raw = value
-                    .as_str()
-                    .map_or_else(|| value.to_string(), str::to_owned);
-                if raw.len() > MAX_VALUE_BYTES {
-                    return Err("A metadata value exceeds the display limit.");
-                }
+            if !self.oversized_fields.contains(key) && has_oversized_scalar(value) {
+                self.oversized_fields.insert(key.clone());
             }
         }
         Ok(())
     }
-    fn finish(self) -> MetadataResult {
+
+    #[cfg(test)]
+    fn observe(&mut self, metadata: Value, query: &MetadataQuery) -> Result<(), &'static str> {
+        self.observe_document(metadata)?;
+        if let Some(field) = query.field.as_deref()
+            && self.oversized_fields.contains(field)
+        {
+            return Err("A metadata value exceeds the display limit.");
+        }
+        Ok(())
+    }
+
+    fn into_cached(self) -> CachedMetadataSummary {
         let mut fields = self
             .fields
             .into_iter()
@@ -423,9 +459,19 @@ impl MetadataSummary {
             })
             .collect::<Vec<_>>();
         fields.sort_by(|a, b| b.present.cmp(&a.present).then_with(|| a.key.cmp(&b.key)));
-        MetadataResult {
-            fields,
+        CachedMetadataSummary {
+            fields: fields.into(),
             documents: self.documents,
+            oversized_fields: Arc::new(self.oversized_fields),
+        }
+    }
+
+    #[cfg(test)]
+    fn finish(self) -> MetadataResult {
+        let cached = self.into_cached();
+        MetadataResult {
+            fields: cached.fields.to_vec(),
+            documents: cached.documents,
             values: Vec::new(),
             next: None,
         }
@@ -520,6 +566,60 @@ async fn collect_distribution(
     Ok((values, None))
 }
 
+enum MetadataScanFailure {
+    Corrupt,
+    Invalid(&'static str),
+}
+
+async fn load_metadata_summary(
+    ready: &ReadyCorpus,
+    provenance: &lingrep_corpus::ProvenanceView,
+) -> Result<Arc<CachedMetadataSummary>, MetadataScanFailure> {
+    let cache = ready.metadata_summary_cache();
+    let mut guard = cache.lock().await;
+    if let Some((cached_artifact, summary)) = guard.as_ref()
+        && Arc::ptr_eq(cached_artifact, &ready.artifact)
+    {
+        return Ok(Arc::clone(summary));
+    }
+    let mut summary = MetadataSummary::default();
+    let mut cursor = 0u64;
+    loop {
+        let before = cursor;
+        let page = provenance
+            .document_metadata_page(cursor)
+            .await
+            .map_err(|_| MetadataScanFailure::Corrupt)?;
+        let Some(last) = page.last() else {
+            break;
+        };
+        cursor = last.first_sentence.saturating_add(last.sentence_count);
+        let (updated, status) = tokio::task::spawn_blocking(move || {
+            for row in page {
+                let value = match serde_json::from_str(row.metadata_json.as_deref().unwrap_or("{}"))
+                {
+                    Ok(value) => value,
+                    Err(_) => return (summary, Err(MetadataScanFailure::Corrupt)),
+                };
+                if let Err(message) = summary.observe_document(value) {
+                    return (summary, Err(MetadataScanFailure::Invalid(message)));
+                }
+            }
+            (summary, Ok(()))
+        })
+        .await
+        .map_err(|_| MetadataScanFailure::Corrupt)?;
+        status?;
+        summary = updated;
+        if cursor <= before {
+            return Err(MetadataScanFailure::Corrupt);
+        }
+    }
+    let cached = Arc::new(summary.into_cached());
+    *guard = Some((Arc::clone(&ready.artifact), Arc::clone(&cached)));
+    Ok(cached)
+}
+
 async fn metadata(
     State(store): State<RequestStore>,
     Path(corpus): Path<String>,
@@ -540,35 +640,27 @@ async fn metadata(
         Ok(view) => view,
         Err(_) => return corrupt(&runtime, &ready).await,
     };
-    enum MetadataScanFailure {
-        Corrupt,
-        Invalid(&'static str),
-    }
-    let mut summary = MetadataSummary::default();
-    if let Err(failure) = crate::provenance_view::for_each_document_metadata_page(
-        &provenance,
-        |_| MetadataScanFailure::Corrupt,
-        |page| {
-            for row in page {
-                let value = serde_json::from_str(row.metadata_json.as_deref().unwrap_or("{}"))
-                    .map_err(|_| MetadataScanFailure::Corrupt)?;
-                summary
-                    .observe(value, &query)
-                    .map_err(MetadataScanFailure::Invalid)?;
-            }
-            Ok(std::ops::ControlFlow::<()>::Continue(()))
-        },
-    )
-    .await
+    let cached = match load_metadata_summary(&ready, &provenance).await {
+        Ok(summary) => summary,
+        Err(MetadataScanFailure::Corrupt) => return corrupt(&runtime, &ready).await,
+        Err(MetadataScanFailure::Invalid(message)) => {
+            return error(StatusCode::UNPROCESSABLE_ENTITY, message);
+        }
+    };
+    if let Some(field) = query.field.as_deref()
+        && cached.oversized_fields.contains(field)
     {
-        return match failure {
-            MetadataScanFailure::Corrupt => corrupt(&runtime, &ready).await,
-            MetadataScanFailure::Invalid(message) => {
-                error(StatusCode::UNPROCESSABLE_ENTITY, message)
-            }
-        };
+        return error(
+            StatusCode::UNPROCESSABLE_ENTITY,
+            "A metadata value exceeds the display limit.",
+        );
     }
-    let mut result = summary.finish();
+    let mut result = MetadataResult {
+        fields: cached.fields.to_vec(),
+        documents: cached.documents,
+        values: Vec::new(),
+        next: None,
+    };
     if let Some(field) = query.field.as_deref() {
         match collect_distribution(
             provenance.document_metadata_distribution(field),
@@ -1249,5 +1341,171 @@ mod tests {
             serde_json::from_slice(&response.into_body().collect().await.unwrap().to_bytes())
                 .unwrap();
         assert_eq!(body["error"], "The corpus is not ready. Try again shortly.");
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn metadata_summary_memoizes_per_artifact_and_enforces_per_field_oversized_limit() {
+        use std::path::PathBuf;
+
+        use lingrep_core::corpus::{
+            AdmittedCorpusEvent, AdmittedSentence, DiscoveryReport, DocumentId, InventoryStats,
+            MetadataScalar, MetadataValue, SourceDocument, TraversalHighWater, TraversalLimits,
+        };
+        use lingrep_core::spill::TempBudget;
+        use lingrep_core::token_match::TokenInfo;
+        use lingrep_corpus::{
+            AdmissionIdentity, AnalysisInputs, BuildConfig, CorpusBuilder, DictionaryFingerprint,
+            ReaderIdentity, TrustClass,
+        };
+
+        let directory = tempfile::tempdir().unwrap();
+        let destination = directory.path().join("meta-cache.lingcorpus");
+        let mut builder = CorpusBuilder::begin(
+            BuildConfig {
+                analysis: AnalysisInputs::new(
+                    ReaderIdentity::from_bytes([1; 32]),
+                    AdmissionIdentity::from_bytes([2; 32]),
+                    &lingrep_corpus::vibrato_fixture_descriptor(),
+                ),
+                analyzer: lingrep_corpus::AnalyzerRecord::vibrato_fixture(),
+                dictionary: DictionaryFingerprint::from_bytes([3; 32]),
+                trust: TrustClass::LocallyExecuted,
+                temp_budget: Arc::new(TempBudget::new(16 * 1024 * 1024)),
+                sentence_metadata_keys: Vec::new(),
+            },
+            &destination,
+        )
+        .unwrap();
+        let logical = "doc.md".to_owned();
+        let mut inv_digest = blake3::Hasher::new();
+        inv_digest.update(&(logical.len() as u64).to_le_bytes());
+        inv_digest.update(logical.as_bytes());
+        builder
+            .register_source_document(&SourceDocument {
+                ordinal: 0,
+                logical_name: logical.clone(),
+                path: PathBuf::from("/unused/doc.md"),
+                target_group_ordinal: 0,
+                external_target: false,
+            })
+            .unwrap();
+        let observation = builder.source_observation();
+        observation.begin_source(&logical).unwrap();
+        observation.update_source_bytes(b"doc").unwrap();
+        observation.end_source().unwrap();
+        builder
+            .push_corpus_event(&AdmittedCorpusEvent::DocumentStart {
+                id: DocumentId::new(0),
+                source_name: logical.clone(),
+                metadata: vec![
+                    (
+                        "author".into(),
+                        MetadataValue::Scalar(MetadataScalar::String("夏目漱石".into())),
+                    ),
+                    (
+                        "huge".into(),
+                        MetadataValue::Scalar(MetadataScalar::String(
+                            "x".repeat(MAX_VALUE_BYTES + 1),
+                        )),
+                    ),
+                ]
+                .into_boxed_slice(),
+            })
+            .unwrap();
+        let loc = builder
+            .push_corpus_event(&AdmittedCorpusEvent::Sentence(AdmittedSentence {
+                annotations: Box::new([]),
+                structure: Default::default(),
+                id: lingrep_core::corpus::SentenceId::new(0),
+                document_id: DocumentId::new(0),
+                document_sentence_ordinal: 0,
+                text: String::new(),
+                words: None,
+                enhanced_graph: None,
+                active_labels: Box::new([]),
+                metadata: Box::new([]),
+            }))
+            .unwrap()
+            .unwrap();
+        builder
+            .push_tokenized_sentence(&loc, &[TokenInfo::default().with_orth("猫")])
+            .unwrap();
+        builder
+            .push_corpus_event(&AdmittedCorpusEvent::DocumentEnd {
+                id: DocumentId::new(0),
+            })
+            .unwrap();
+        let artifact = builder
+            .finish(DiscoveryReport {
+                inventory: InventoryStats {
+                    documents: 1,
+                    distinct_targets: 1,
+                    alias_documents: 0,
+                    max_target_multiplicity: 1,
+                    external_targets: 0,
+                },
+                configured_limits: TraversalLimits::default(),
+                observed: TraversalHighWater::default(),
+                ordered_inventory_digest: *inv_digest.finalize().as_bytes(),
+            })
+            .unwrap();
+        let store = RequestStore::default();
+        let identity = lingrep_corpus::format_identity(artifact.analysis_identity().as_bytes());
+        let runtime = Arc::new(CorpusRuntime::from_ready(
+            crate::corpus_runtime::CorpusIdentity::new(&identity),
+            artifact,
+            Arc::clone(&store.context),
+        ));
+        let ready = runtime.ready().await.unwrap();
+        let app = routes().with_state(RequestStore::with_runtime(store.config.clone(), runtime));
+
+        // First call populates cache; querying `author` succeeds even though `huge` has >4 KiB value.
+        let r1 = app
+            .clone()
+            .oneshot(
+                axum::http::Request::builder()
+                    .uri("/data/default/metadata?field=author")
+                    .body(axum::body::Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(r1.status(), StatusCode::OK);
+        let b1 = r1.into_body().collect().await.unwrap().to_bytes();
+        let cached_ptr = {
+            let guard = ready.metadata_summary_cache().lock().await;
+            Arc::clone(&guard.as_ref().expect("summary must be cached").1)
+        };
+
+        // Second call reuses the exact same cached Arc and returns identical bytes.
+        let r2 = app
+            .clone()
+            .oneshot(
+                axum::http::Request::builder()
+                    .uri("/data/default/metadata?field=author")
+                    .body(axum::body::Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(r2.status(), StatusCode::OK);
+        let b2 = r2.into_body().collect().await.unwrap().to_bytes();
+        assert_eq!(b1, b2);
+        {
+            let guard = ready.metadata_summary_cache().lock().await;
+            assert!(Arc::ptr_eq(&cached_ptr, &guard.as_ref().unwrap().1));
+        }
+
+        // Querying the oversized field still returns 422 from the cached oversized_fields set.
+        let r3 = app
+            .oneshot(
+                axum::http::Request::builder()
+                    .uri("/data/default/metadata?field=huge")
+                    .body(axum::body::Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(r3.status(), StatusCode::UNPROCESSABLE_ENTITY);
     }
 }

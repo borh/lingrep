@@ -165,7 +165,16 @@ impl ProvenanceCache {
         })
         .await
     }
+
+    async fn seed(&self, artifact: Arc<CorpusArtifact>, view: Arc<ProvenanceView>) {
+        *self.view.lock().await = Some((artifact, view));
+    }
 }
+
+pub(crate) type MetadataSummaryMemo = crate::corpus_context::Memo<
+    Arc<CorpusArtifact>,
+    Arc<crate::question_corpus::CachedMetadataSummary>,
+>;
 
 #[derive(Clone)]
 pub struct ReadyCorpus {
@@ -174,6 +183,7 @@ pub struct ReadyCorpus {
     pub pool: Arc<ThreadPool>,
     tokens: Arc<PreparedTokenReader>,
     provenance: Arc<ProvenanceCache>,
+    metadata_summary: MetadataSummaryMemo,
 }
 
 impl std::fmt::Debug for ReadyCorpus {
@@ -199,7 +209,12 @@ impl ReadyCorpus {
             pool,
             tokens,
             provenance: Arc::new(ProvenanceCache::default()),
+            metadata_summary: MetadataSummaryMemo::default(),
         })
+    }
+
+    pub(crate) fn metadata_summary_cache(&self) -> &MetadataSummaryMemo {
+        &self.metadata_summary
     }
 
     pub fn sentence_count(&self) -> Result<u64, CorpusError> {
@@ -335,6 +350,8 @@ struct RuntimeInner {
     /// Shared with every [`ReadyCorpus`] this runtime hands out, so one open
     /// serves every request against the same artifact.
     provenance: Arc<ProvenanceCache>,
+    /// Shared per-artifact document metadata summary cache (bounded by MAX_FIELDS).
+    metadata_summary: MetadataSummaryMemo,
 }
 
 #[derive(Clone)]
@@ -384,6 +401,7 @@ impl CorpusRuntime {
                 }),
                 readiness_tx,
                 provenance: Arc::new(ProvenanceCache::default()),
+                metadata_summary: MetadataSummaryMemo::default(),
             }),
         })
     }
@@ -416,6 +434,7 @@ impl CorpusRuntime {
                 }),
                 readiness_tx,
                 provenance: Arc::new(ProvenanceCache::default()),
+                metadata_summary: MetadataSummaryMemo::default(),
             }),
         }
     }
@@ -464,6 +483,7 @@ impl CorpusRuntime {
                 lifecycle: Mutex::new(CacheLifecycle::Idle),
                 readiness_tx,
                 provenance: Arc::new(ProvenanceCache::default()),
+                metadata_summary: MetadataSummaryMemo::default(),
             }),
         })
     }
@@ -498,6 +518,7 @@ impl CorpusRuntime {
                 pool: self.inner.context.pool(),
                 tokens: Arc::clone(tokens),
                 provenance: Arc::clone(&self.inner.provenance),
+                metadata_summary: Arc::clone(&self.inner.metadata_summary),
             }),
             _ => None,
         }
@@ -525,7 +546,7 @@ impl CorpusRuntime {
             let result = worker.await.unwrap_or(Err(CacheFailureCategory::Task));
             let mut lifecycle = inner.lifecycle.lock().await;
             match result {
-                Ok((identity, artifact, artifact_path)) => {
+                Ok((identity, artifact, provenance, artifact_path)) => {
                     let tokens = if let Ok(reader) = artifact.token_reader() {
                         Arc::new(reader)
                     } else {
@@ -535,10 +556,15 @@ impl CorpusRuntime {
                         });
                         return;
                     };
+                    let artifact = Arc::new(artifact);
+                    inner
+                        .provenance
+                        .seed(Arc::clone(&artifact), Arc::new(provenance))
+                        .await;
                     let rebuild = matches!(*lifecycle, CacheLifecycle::Building { rebuild: true });
                     *lifecycle = CacheLifecycle::Ready {
                         identity: identity.clone(),
-                        artifact: Arc::new(artifact),
+                        artifact,
                         on_corruption: match artifact_path {
                             None => OnCorruption::Keep,
                             Some(path) if rebuild => OnCorruption::Discard(path),
@@ -878,7 +904,15 @@ fn finish_source_stream(
 fn prepare_artifact(
     inner: &RuntimeInner,
     handle: &tokio::runtime::Handle,
-) -> Result<(CorpusIdentity, CorpusArtifact, Option<PathBuf>), CacheFailureCategory> {
+) -> Result<
+    (
+        CorpusIdentity,
+        CorpusArtifact,
+        ProvenanceView,
+        Option<PathBuf>,
+    ),
+    CacheFailureCategory,
+> {
     if lingrep_corpus::is_prepared_artifact(&inner.corpus_path) {
         return adopt_declared_artifact(inner, handle);
     }
@@ -922,7 +956,9 @@ fn prepare_artifact(
 
     if destination.exists() {
         match open_published(&destination, &observed, &analysis_identity, handle) {
-            Ok(artifact) => return Ok((identity, artifact, Some(destination))),
+            Ok((artifact, provenance)) => {
+                return Ok((identity, artifact, provenance, Some(destination)));
+            }
             Err(PublishedArtifactFailure::Unusable | PublishedArtifactFailure::Corrupt) => {
                 return Err(CacheFailureCategory::Corruption);
             }
@@ -944,13 +980,13 @@ fn prepare_artifact(
     );
     drop(permit);
     let artifact = artifact?;
-    handle
+    let provenance = handle
         .block_on(artifact.provenance_view())
         .map_err(classify(
             CacheFailureCategory::Corruption,
             "open V1 provenance view",
         ))?;
-    Ok((identity, artifact, Some(destination)))
+    Ok((identity, artifact, provenance, Some(destination)))
 }
 
 enum PublishedArtifactFailure {
@@ -966,7 +1002,7 @@ fn open_published(
     observed: &ObservedSources,
     analysis_identity: &AnalysisIdentity,
     handle: &tokio::runtime::Handle,
-) -> Result<CorpusArtifact, PublishedArtifactFailure> {
+) -> Result<(CorpusArtifact, ProvenanceView), PublishedArtifactFailure> {
     let failure = |context: &'static str| {
         move |error: CorpusError| {
             let corrupt = error.is_artifact_corruption();
@@ -986,10 +1022,10 @@ fn open_published(
         tracing::warn!("published corpus artifact records another identity than its path");
         return Err(PublishedArtifactFailure::Corrupt);
     }
-    handle
+    let provenance = handle
         .block_on(artifact.provenance_view())
         .map_err(failure("open V1 provenance view"))?;
-    Ok(artifact)
+    Ok((artifact, provenance))
 }
 
 /// Adopt an artifact the operator named directly, instead of building one.
@@ -1008,12 +1044,20 @@ fn open_published(
 fn adopt_declared_artifact(
     inner: &RuntimeInner,
     handle: &tokio::runtime::Handle,
-) -> Result<(CorpusIdentity, CorpusArtifact, Option<PathBuf>), CacheFailureCategory> {
+) -> Result<
+    (
+        CorpusIdentity,
+        CorpusArtifact,
+        ProvenanceView,
+        Option<PathBuf>,
+    ),
+    CacheFailureCategory,
+> {
     let artifact = CorpusArtifact::open(&inner.corpus_path).map_err(classify(
         CacheFailureCategory::Corruption,
         "open declared V1 artifact",
     ))?;
-    handle
+    let provenance = handle
         .block_on(artifact.provenance_view())
         .map_err(classify(
             CacheFailureCategory::Corruption,
@@ -1021,7 +1065,7 @@ fn adopt_declared_artifact(
         ))?;
     let identity = CorpusIdentity::new(format_identity(artifact.analysis_identity().as_bytes()));
     // `None`: declared, not built here, and so never this runtime's to delete.
-    Ok((identity, artifact, None))
+    Ok((identity, artifact, provenance, None))
 }
 
 fn build_artifact(
@@ -1515,6 +1559,36 @@ mod tests {
         })
         .await
         .expect("rebuilt corpus should become ready after offloaded deletion");
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn startup_seeds_provenance_cache_for_first_ready_caller() {
+        use lingrep_core::token_match::TokenInfo;
+
+        let (directory, _) = test_ready_corpus(vec![vec![TokenInfo::default().with_orth("猫")]]);
+        let artifact_path = directory.path().join("unit.lingcorpus");
+        let context = Arc::new(ServerContext::new("/unused/dict").unwrap());
+        let runtime = CorpusRuntime::new(context, &artifact_path).unwrap();
+        runtime.start_or_observe().await;
+        let mut readiness = runtime.readiness();
+        readiness
+            .wait_for(|state| matches!(state, CacheReadiness::Ready { .. }))
+            .await
+            .unwrap();
+        let ready = runtime.ready().await.unwrap();
+        let seeded = {
+            let guard = runtime.inner.provenance.view.lock().await;
+            guard
+                .as_ref()
+                .map(|(art, view)| (Arc::clone(art), Arc::clone(view)))
+        };
+        let (seeded_artifact, seeded_view) = seeded.expect("startup must seed ProvenanceCache");
+        assert!(Arc::ptr_eq(&seeded_artifact, &ready.artifact));
+        let first_view = ready.provenance().await.unwrap();
+        assert!(
+            Arc::ptr_eq(&first_view, &seeded_view),
+            "first ready.provenance() must reuse the startup-validated view without reopening"
+        );
     }
 }
 
