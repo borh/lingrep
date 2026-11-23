@@ -1031,6 +1031,31 @@ async fn export_links_follow_locale_changes_and_new_result_swaps() -> WebDriverR
     result
 }
 
+async fn hover_lint_warning(driver: &WebDriver) -> WebDriverResult<()> {
+    use thirtyfour::error::WebDriverErrorInner;
+
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+    loop {
+        let marker = driver
+            .query(By::Css(".cm-lint-marker-warning"))
+            .first()
+            .await?;
+        match driver
+            .action_chain()
+            .move_to_element_center(&marker)
+            .perform()
+            .await
+        {
+            Err(error)
+                if matches!(
+                    error.as_inner(),
+                    WebDriverErrorInner::StaleElementReference(_)
+                ) && std::time::Instant::now() < deadline => {}
+            result => return result,
+        }
+    }
+}
+
 #[tokio::test]
 async fn command_summaries_keep_kwic_wide_and_cluster_controls_preserve_focus()
 -> WebDriverResult<()> {
@@ -1077,13 +1102,11 @@ async fn command_summaries_keep_kwic_wide_and_cluster_controls_preserve_focus()
         assert_eq!(driver.execute("return document.activeElement.id", vec![]).await?.json(), &json!("cluster-minimum"));
         let note = driver.find(By::Css("[data-cluster-below-minimum]")).await?.text().await?;
         assert!(note.starts_with("2 patterns"), "{note}");
-        let marker = driver.find(By::Css(".cm-lint-marker-warning")).await?;
-        driver.action_chain().move_to_element_center(&marker).perform().await?;
+        hover_lint_warning(&driver).await?;
         wait_for(&driver, "return document.querySelector('.cm-tooltip-lint')?.textContent.includes('A fragment is never referenced.')", "the English lint diagnostic").await?;
         driver.find(By::Css("[data-locale-toggle]")).await?.click().await?;
         wait_for(&driver, "return document.documentElement.lang === 'ja' && !!document.querySelector('.cm-lint-marker-warning')", "the Japanese lint marker").await?;
-        let marker = driver.find(By::Css(".cm-lint-marker-warning")).await?;
-        driver.action_chain().move_to_element_center(&marker).perform().await?;
+        hover_lint_warning(&driver).await?;
         wait_for(&driver, "return document.querySelector('.cm-tooltip-lint')?.textContent.includes('参照されていない fragment')", "the Japanese lint diagnostic").await?;
         Ok::<(), thirtyfour::error::WebDriverError>(())
     }).catch_unwind().await;

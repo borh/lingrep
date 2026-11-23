@@ -1,6 +1,6 @@
 //! Browser-driven lingrep-web tests. Require chromedriver and a Chrome or
 //! Chromium of the same major version.
-//! Run via scripts/run_lingrep_web_layout_e2e.sh, which pins --test-threads=1.
+//! Run via scripts/run_lingrep_web_layout_e2e.sh.
 
 mod compare_e2e_test;
 mod corpus_context_e2e_test;

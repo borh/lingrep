@@ -195,6 +195,8 @@ scripts/run_lingrep_web_layout_e2e.sh
 Run the layout tests inside `nix develop`. On Linux, the runner requires
 `chromium` and `chromedriver` on `PATH`; on macOS, it requires `chromedriver`.
 Missing executables cause exit status 2.
+The runner uses two browser test threads on Linux and one on macOS. Set
+`RUST_TEST_THREADS=1` to run the Linux browser tests serially.
 
 The macOS shell packages ChromeDriver beside the matching Google Chrome, which
 ChromeDriver selects before an installation in `/Applications`. To use another

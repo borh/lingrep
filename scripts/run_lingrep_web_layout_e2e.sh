@@ -4,7 +4,8 @@ set -euo pipefail
 repo_root=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
 cd "$repo_root"
 
-if [ "$(uname -s)" = Darwin ]; then
+platform=$(uname -s)
+if [ "$platform" = Darwin ]; then
     if ! command -v chromedriver >/dev/null; then
         echo "browser checks on macOS require chromedriver; run them in \`nix develop\`, whose chromedriver brings its Chrome" >&2
         exit 2
@@ -41,6 +42,11 @@ if [ -z "$driver_port" ]; then
     exit 1
 fi
 
+test_threads=1
+if [ "$platform" = Linux ] && [ "${RUST_TEST_THREADS:-}" != 1 ]; then
+    test_threads=2
+fi
+
 export LINGREP_WEB_LAYOUT_CHROMEDRIVER_URL="http://127.0.0.1:$driver_port"
 export LINGREP_WEB_LAYOUT_REQUIRE_DRIVER=1
-"$repo_root/scripts/cargo-test-selected.py" --config .cargo/test.toml --workspace --test browser -- --test-threads=1 --nocapture
+"$repo_root/scripts/cargo-test-selected.py" --config .cargo/test.toml --workspace --test browser -- --test-threads="$test_threads" --nocapture
