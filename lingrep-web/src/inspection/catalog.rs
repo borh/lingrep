@@ -89,8 +89,8 @@ pub const fn field_meta(attribute: TokenAttributeIndex) -> TokenFieldMeta {
         Orth => meta(
             attribute,
             "text",
-            "照合形",
-            "Match form",
+            "テキスト",
+            "Text",
             Surface,
             1,
             true,
@@ -139,12 +139,12 @@ pub const fn field_meta(attribute: TokenAttributeIndex) -> TokenFieldMeta {
         LexType => meta(
             attribute,
             "lextype",
-            "語彙素種別",
-            "Lexeme type",
+            "辞書種別",
+            "Dictionary source",
             Lexeme,
             6,
             false,
-            "Lexeme classification",
+            "System dictionary, user dictionary, or unknown word",
         ),
         Goshu => meta(
             attribute,
@@ -159,7 +159,7 @@ pub const fn field_meta(attribute: TokenAttributeIndex) -> TokenFieldMeta {
         Type => meta(
             attribute,
             "type",
-            "語彙素類型",
+            "語彙素類",
             "Lexeme class",
             Lexeme,
             8,
@@ -249,7 +249,7 @@ pub const fn field_meta(attribute: TokenAttributeIndex) -> TokenFieldMeta {
         Form => meta(
             attribute,
             "form",
-            "語形",
+            "語形出現形",
             "Word form",
             Forms,
             17,
@@ -269,7 +269,7 @@ pub const fn field_meta(attribute: TokenAttributeIndex) -> TokenFieldMeta {
         Kana => meta(
             attribute,
             "kana",
-            "仮名形",
+            "仮名形出現形",
             "Kana",
             Reading,
             19,
@@ -289,7 +289,7 @@ pub const fn field_meta(attribute: TokenAttributeIndex) -> TokenFieldMeta {
         Pron => meta(
             attribute,
             "pron",
-            "発音形",
+            "発音形出現形",
             "Pronunciation",
             Reading,
             21,

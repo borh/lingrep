@@ -648,7 +648,10 @@ test("completion and hover help reads in Japanese when the page is in Japanese",
   const ja = { definitions: [], captures: [], locale: "ja" };
   const info = (context, label) => patternCompletionOptions(contextAt(context), ja).find((option) => option.label === label).info;
   assert.equal(info("verb := [|", "lemma"), "辞書形（見出し語）");
-  assert.equal(info("verb := [|", "unidic.cform"), "UniDic 活用形（終止形, 連用形-一般, …）");
+  assert.equal(info("verb := [|", "text"), "テキスト（表記をそろえた形）");
+  assert.equal(patternHoverInfo("p := [unidic.cform=連用形-撥音便].", 12, "ja")?.title, "unidic.cform");
+  assert.equal(patternHoverInfo("p := [unidic.cform=連用形-撥音便].", 25, "en")?.detail, "Continuative form (nasal sound change)");
+  assert.equal(info("verb := [|", "unidic.cform"), "UniDic 活用形（終止形-一般、連用形-一般など）");
   assert.equal(info("verb := [upos=|", "ADP"), "格助詞など（格・係・副助詞）");
   assert.equal(info("verb := [dep.rel=|", "nsubj"), "主語");
   assert.equal(info("p|", "not_followed_by"), "直後に続かないことを確かめる（幅ゼロ）");

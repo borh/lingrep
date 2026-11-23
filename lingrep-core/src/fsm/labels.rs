@@ -130,11 +130,12 @@ const PENN_XPOS: &[&str] = &[
     "WDT", "WP", "WP$", "WRB", "XX", "_SP", "``",
 ];
 
-/// Japanese and English display names of the named label sets' values, as
+/// Japanese and English display names of token-attribute values, as
 /// JSON: `sets.<label set>.<attribute>.<value>` is `{"en": …, "ja": …}`,
 /// with `"unidic"` naming the UniDic categories a `upos` tag covers. A
 /// value without an entry under its own set shares the same value's `ud-v2`
 /// entry, and a `ud-v2` relation subtype without an entry shares its base's.
+/// The `unidic` display set covers selected dictionary categories.
 pub const LABEL_NAMES_JSON: &str = include_str!("label_names.json");
 
 pub(crate) const NAMED_LABEL_SETS: &[NamedLabelSet] = &[
@@ -438,11 +439,27 @@ mod tests {
     }
 
     #[test]
-    fn named_values_belong_to_their_label_set() {
+    fn display_values_use_supported_label_sets_and_attributes() {
         let names: serde_json::Value = serde_json::from_str(LABEL_NAMES_JSON).unwrap();
         for (set, attributes) in names["sets"].as_object().unwrap() {
             for (attribute, values) in attributes.as_object().unwrap() {
                 let key = AttributeKey::new(attribute).unwrap();
+                if set == "unidic" {
+                    assert!(attribute.starts_with("unidic."));
+                    assert!(
+                        crate::token_match::TokenSchema::unidic_morphology()
+                            .keys()
+                            .contains(&key)
+                    );
+                    let values = values.as_object().unwrap();
+                    for value in values.keys() {
+                        assert!(
+                            named(values, value, "en") && named(values, value, "ja"),
+                            "{attribute} {value}"
+                        );
+                    }
+                    continue;
+                }
                 let declared = named_label_set(set, &key)
                     .unwrap_or_else(|error| panic!("{set} {attribute}: {error}"));
                 for (value, name) in values.as_object().unwrap() {

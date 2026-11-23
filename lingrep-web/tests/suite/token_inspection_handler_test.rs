@@ -198,7 +198,8 @@ async fn selected_token_returns_grouped_fields_not_a_full_sentence_table() {
             .html
             .contains("class=\"copy-status\" role=\"status\"")
     );
-    assert!(response.html.contains(">Match form</span>"));
+    assert!(response.html.contains(">Text</span>"));
+    assert!(response.html.contains(">テキスト</span>"));
     assert!(!response.html.contains("<script>fixture</script>"));
     assert!(
         response

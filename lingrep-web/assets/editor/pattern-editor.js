@@ -625,7 +625,7 @@ export function shouldSelectDiagnostic(reason) { return reason === "blur" || rea
 // ---------------------------------------------------------------------------
 
 export const PATTERN_ATTRIBUTES = [
-  ["text", "Match form: the surface with variant spellings folded"],
+  ["text", "Text with variant spellings folded"],
   ["surface", "Exact source text"],
   ["lemma", "Dictionary lemma"],
   ["norm", "Normalized form"],
@@ -635,28 +635,28 @@ export const PATTERN_ATTRIBUTES = [
   ["unidic.pos2", "UniDic POS level 2"],
   ["unidic.pos3", "UniDic POS level 3"],
   ["unidic.pos4", "UniDic POS level 4"],
-  ["unidic.ctype", "UniDic conjugation type (カ変, 五段, …)"],
-  ["unidic.cform", "UniDic conjugation form (終止形, 連用形-一般, …)"],
-  ["unidic.lform", "UniDic lemma form"],
+  ["unidic.ctype", "UniDic conjugation type (カ行変格, 五段-カ行, …)"],
+  ["unidic.cform", "UniDic conjugation form (終止形-一般, 連用形-一般, …)"],
+  ["unidic.lform", "UniDic lexeme reading"],
   ["unidic.pron", "UniDic pronunciation"],
-  ["unidic.orthbase", "UniDic base surface form"],
+  ["unidic.orthbase", "UniDic base written form"],
   ["unidic.pronbase", "UniDic base pronunciation"],
-  ["unidic.goshu", "UniDic word origin class (和, 漢, 洋, …)"],
-  ["unidic.itype", "UniDic initial inflection type"],
-  ["unidic.iform", "UniDic initial inflection form"],
-  ["unidic.ftype", "UniDic final inflection type"],
-  ["unidic.fform", "UniDic final inflection form"],
+  ["unidic.goshu", "UniDic word origin class (和, 漢, 外, …)"],
+  ["unidic.itype", "UniDic initial variation type"],
+  ["unidic.iform", "UniDic initial variation form"],
+  ["unidic.ftype", "UniDic final variation type"],
+  ["unidic.fform", "UniDic final variation form"],
   ["unidic.icontype", "UniDic initial connection type"],
   ["unidic.fcontype", "UniDic final connection type"],
-  ["unidic.type", "UniDic token type"],
+  ["unidic.type", "UniDic lexeme class"],
   ["unidic.kana", "UniDic reading in kana"],
   ["unidic.kanabase", "UniDic base reading in kana"],
-  ["unidic.form", "UniDic form field"],
-  ["unidic.formbase", "UniDic base form"],
+  ["unidic.form", "UniDic word form"],
+  ["unidic.formbase", "UniDic base word form"],
   ["unidic.atype", "UniDic accent type"],
   ["unidic.acontype", "UniDic accent connection type"],
   ["unidic.amodtype", "UniDic accent modification type"],
-  ["unidic.lextype", "UniDic lexical type"],
+  ["unidic.lextype", "UniDic dictionary source"],
 ];
 
 const SCHEMA_ATTRIBUTES = {
@@ -677,38 +677,38 @@ export function patternAttributes(tokenKeys) {
 }
 
 const HELP_JA = {
-  "Match form: the surface with variant spellings folded": "照合形（異体の表記をそろえた表層形）",
+  "Text with variant spellings folded": "テキスト（表記をそろえた形）",
   "Exact source text": "表層形（原文のとおり）",
   "Dictionary lemma": "辞書形（見出し語）",
-  "Normalized form": "正規化した形",
+  "Normalized form": "正規化形",
   "Portable coarse POS tag (VERB, NOUN, …)": "共通の品詞タグ（VERB, NOUN, …）",
   "Provider-native POS tag": "解析器固有の品詞タグ",
-  "UniDic POS level 1 (major category)": "UniDic 品詞 大分類",
-  "UniDic POS level 2": "UniDic 品詞 中分類",
-  "UniDic POS level 3": "UniDic 品詞 小分類",
-  "UniDic POS level 4": "UniDic 品詞 細分類",
-  "UniDic conjugation type (カ変, 五段, …)": "UniDic 活用型（カ変, 五段, …）",
-  "UniDic conjugation form (終止形, 連用形-一般, …)": "UniDic 活用形（終止形, 連用形-一般, …）",
-  "UniDic lemma form": "UniDic 語彙素読み",
+  "UniDic POS level 1 (major category)": "UniDic 品詞大分類",
+  "UniDic POS level 2": "UniDic 品詞中分類",
+  "UniDic POS level 3": "UniDic 品詞小分類",
+  "UniDic POS level 4": "UniDic 品詞細分類",
+  "UniDic conjugation type (カ行変格, 五段-カ行, …)": "UniDic 活用型（カ行変格、五段-カ行など）",
+  "UniDic conjugation form (終止形-一般, 連用形-一般, …)": "UniDic 活用形（終止形-一般、連用形-一般など）",
+  "UniDic lexeme reading": "UniDic 語彙素読み",
   "UniDic pronunciation": "UniDic 発音形出現形",
-  "UniDic base surface form": "UniDic 書字形基本形",
+  "UniDic base written form": "UniDic 書字形基本形",
   "UniDic base pronunciation": "UniDic 発音形基本形",
-  "UniDic word origin class (和, 漢, 洋, …)": "UniDic 語種（和, 漢, 洋, …）",
-  "UniDic initial inflection type": "UniDic 語頭変化化型",
-  "UniDic initial inflection form": "UniDic 語頭変化形",
-  "UniDic final inflection type": "UniDic 語末変化化型",
-  "UniDic final inflection form": "UniDic 語末変化形",
+  "UniDic word origin class (和, 漢, 外, …)": "UniDic 語種（和、漢、外など）",
+  "UniDic initial variation type": "UniDic 語頭変化型",
+  "UniDic initial variation form": "UniDic 語頭変化形",
+  "UniDic final variation type": "UniDic 語末変化型",
+  "UniDic final variation form": "UniDic 語末変化形",
   "UniDic initial connection type": "UniDic 語頭変化結合型",
   "UniDic final connection type": "UniDic 語末変化結合型",
-  "UniDic token type": "UniDic 語彙素類",
+  "UniDic lexeme class": "UniDic 語彙素類",
   "UniDic reading in kana": "UniDic 仮名形出現形",
   "UniDic base reading in kana": "UniDic 仮名形基本形",
-  "UniDic form field": "UniDic 語形出現形",
-  "UniDic base form": "UniDic 語形基本形",
+  "UniDic word form": "UniDic 語形出現形",
+  "UniDic base word form": "UniDic 語形基本形",
   "UniDic accent type": "UniDic アクセント型",
   "UniDic accent connection type": "UniDic アクセント結合型",
   "UniDic accent modification type": "UniDic アクセント修飾型",
-  "UniDic lexical type": "UniDic 辞書の種別",
+  "UniDic dictionary source": "UniDic 辞書種別",
   "Number of the word this one attaches to (0 at the root)": "係り先の語番号（文の中心は 0）",
   "Dependency relation to the head": "係り先との関係",
   "Enhanced dependencies": "拡張係り受け",
@@ -767,7 +767,7 @@ const HELP_JA = {
   "Negated zero-width lookahead: the expression must NOT start here.": "否定の先読み（幅ゼロ）: 式がここから始まらないこと。",
   "Compare portable surface forms, exactly as written.": "表層形を書かれたとおりに比べます。",
   "Compare dictionary lemmas (inflection-insensitive).": "辞書形を比べます（活用の違いを無視）。",
-  "Compare normalized forms.": "正規化した形を比べます。",
+  "Compare normalized forms.": "正規化形を比べます。",
   "Compare portable coarse POS tags.": "共通の品詞タグを比べます。",
   "Compare provider-native POS tags.": "解析器固有の品詞タグを比べます。",
   "Compare UniDic kana readings.": "UniDic の仮名の読みを比べます。",
@@ -805,7 +805,7 @@ const VALUE_SETS = { upos: ["ud-v2", "spacy"], "dep.rel": ["ud-v2", "clearnlp"] 
 const capitalized = (text) => text.charAt(0).toUpperCase() + text.slice(1);
 /** The values of `attribute` the label sets name, as `[value, description]`: the name in `locale` (English where a value has no Japanese name), with the UniDic categories a upos tag covers, and the label set for a value only ClearNLP has. */
 export function attributeValueNames(attribute, locale = "en") {
-  const sets = VALUE_SETS[attribute] ?? [];
+  const sets = VALUE_SETS[attribute] ?? (attribute.startsWith("unidic.") ? ["unidic"] : []);
   const seen = new Map();
   for (const set of sets) {
     for (const [value, name] of Object.entries(valueNames?.[set]?.[attribute] ?? {})) {
@@ -1311,17 +1311,16 @@ export function patternHoverInfo(source, pos, locale = currentLocale()) {
   if (pos < 0 || pos > source.length) return null;
   const lineStart = source.lastIndexOf("\n", Math.max(0, pos - 1)) + 1;
   if (source.slice(lineStart, pos).includes("#")) return null;
-  let from = pos;
-  while (from > 0 && WORD_CHAR.test(source[from - 1])) from--;
-  let to = pos;
-  while (to < source.length && WORD_CHAR.test(source[to])) to++;
-  const word = source.slice(from, to);
-  if (!word) return null;
-
-  const hoverLineStart = source.lastIndexOf("\n", Math.max(0, from - 1)) + 1;
-  const inKeyProjection = /^\s*key\s*:\s*\[[^\]]*$/u.test(
-    source.slice(hoverLineStart, from),
-  );
+  const lineEnd = source.indexOf("\n", pos);
+  const line = source.slice(lineStart, lineEnd < 0 ? source.length : lineEnd);
+  const offset = pos - lineStart;
+  const token = [...line.matchAll(/(?:unidic\.|dep\.|conllu\.|feat\.)?[\p{L}\p{N}_]+(?:[:-][\p{L}\p{N}_]+)*/gu)]
+    .find(({ 0: word, index }) => index <= offset && offset <= index + word.length);
+  if (!token) return null;
+  const [word] = token;
+  const from = lineStart + token.index;
+  const to = from + word.length;
+  const inKeyProjection = /^\s*key\s*:\s*\[[^\]]*$/u.test(source.slice(lineStart, from));
 
   const marker = source[from - 1];
   if (marker === "@") {
@@ -1358,10 +1357,10 @@ export function patternHoverInfo(source, pos, locale = currentLocale()) {
 
   // Attribute value: the word directly follows `attr=`.
   const before = source.slice(Math.max(0, from - 40), from);
-  const valueOf = before.match(/([\p{L}\p{N}_.]+)\s*=$/u);
+  const valueOf = before.match(/([\p{L}\p{N}_.]+)\s*=\s*$/u);
   if (valueOf) {
     const attribute = valueOf[1].toLowerCase();
-    if (attribute === "upos" || attribute === "dep.rel") {
+    if (Object.hasOwn(VALUE_SETS, attribute) || attribute.startsWith("unidic.")) {
       const named = attributeValueNames(attribute, locale).find(([name]) => name === word);
       return named ? { from, to, title: `${attribute}=${word}`, detail: named[1] } : null;
     }

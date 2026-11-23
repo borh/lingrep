@@ -76,12 +76,13 @@ export function keyFieldLabel(field) {
   return capture ? t("frequency.capture_field", { capture, field: word }) : word;
 }
 
-const LABEL_SETS = ["ud-v2", "spacy", "clearnlp", "penn"];
-/** `value` of `attribute` in plain words from `names`, the frequency meta's `value_names`, by the question page's rule (question-ui dependency.ts `valueName`); null when no label set names it. */
+const LABEL_SETS = ["ud-v2", "spacy", "clearnlp", "penn", "unidic"];
+/** `value` of `attribute` in plain words from `names`, the frequency meta's `value_names`, by the question page's rule (question-ui dependency.ts `valueName`); null for missing or identical glosses. */
 export function valueName(names, attribute, value, locale) {
   const entry = (v) => LABEL_SETS.map((set) => names?.[set]?.[attribute]?.[v]).find(Boolean);
   const found = entry(value) ?? (attribute === "dep.rel" && value.includes(":") ? entry(value.slice(0, value.indexOf(":"))) : undefined);
-  return found?.[locale] ?? found?.en ?? null;
+  const gloss = found?.[locale] ?? found?.en ?? null;
+  return gloss === value ? null : gloss;
 }
 
 /** The plain-word names of a key entry's scalar fields whose values a label set names, such as 名詞 for `upos` NOUN. */

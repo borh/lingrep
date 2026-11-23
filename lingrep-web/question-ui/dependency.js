@@ -139,14 +139,51 @@ export function headLabel(tokens, index) {
     const head = headIndex(tokens[index]);
     return head === null || !tokens[head] ? null : `${surfaceOf(tokens[head])}·${head + 1}`;
 }
-const LABEL_SETS = ['ud-v2', 'spacy', 'clearnlp', 'penn'];
-/** `value` of `attribute` in plain words, from the first label set that names it, or its base relation's name for a `dep.rel` subtype; English where a name has no Japanese; null when no set names it. */
+const LABEL_SETS = ['ud-v2', 'spacy', 'clearnlp', 'penn', 'unidic'];
+/** `value` of `attribute` in plain words, from the first label set that names it, or its base relation's name for a `dep.rel` subtype. Uses English if Japanese is unavailable and returns null for missing or identical glosses. */
 export function valueName(names, attribute, value, locale) {
     const entry = (value) => LABEL_SETS.map(set => names?.[set]?.[attribute]?.[value]).find(Boolean);
     const found = entry(value) ?? (attribute === 'dep.rel' && value.includes(':') ? entry(value.slice(0, value.indexOf(':'))) : undefined);
-    return found?.[locale] ?? found?.en ?? null;
+    const gloss = found?.[locale] ?? found?.en ?? null;
+    return gloss === value ? null : gloss;
 }
-const KEY_NAMES = { text: { ja: '照合形', en: 'match form' }, surface: { ja: '表層形', en: 'surface' }, lemma: { ja: '辞書形', en: 'dictionary form' }, upos: { ja: '品詞', en: 'part of speech' }, 'dep.head': { ja: '係り先', en: 'attaches to' }, 'dep.rel': { ja: '関係', en: 'relation' } };
+const KEY_NAMES = {
+    'text': { ja: 'テキスト', en: 'Text' },
+    'surface': { ja: '表層形', en: 'Surface' },
+    'lemma': { ja: '辞書形', en: 'Dictionary form' },
+    'norm': { ja: '正規化形', en: 'Normalized form' },
+    'upos': { ja: '品詞', en: 'Part of speech' },
+    'xpos': { ja: '解析器の品詞', en: 'Analyzer POS tag' },
+    'dep.head': { ja: '係り先', en: 'Attaches to' },
+    'dep.rel': { ja: '関係', en: 'Relation' },
+    'dep.enhanced': { ja: '拡張係り受け', en: 'Enhanced dependencies' },
+    'unidic.pos1': { ja: '品詞大分類', en: 'POS level 1' },
+    'unidic.pos2': { ja: '品詞中分類', en: 'POS level 2' },
+    'unidic.pos3': { ja: '品詞小分類', en: 'POS level 3' },
+    'unidic.pos4': { ja: '品詞細分類', en: 'POS level 4' },
+    'unidic.ctype': { ja: '活用型', en: 'Conjugation type' },
+    'unidic.cform': { ja: '活用形', en: 'Conjugation form' },
+    'unidic.lform': { ja: '語彙素読み', en: 'Lexeme reading' },
+    'unidic.orthbase': { ja: '書字形基本形', en: 'Base written form' },
+    'unidic.form': { ja: '語形出現形', en: 'Inflected word form' },
+    'unidic.formbase': { ja: '語形基本形', en: 'Base word form' },
+    'unidic.kana': { ja: '仮名形出現形', en: 'Kana form' },
+    'unidic.kanabase': { ja: '仮名形基本形', en: 'Base kana form' },
+    'unidic.pron': { ja: '発音形出現形', en: 'Pronunciation' },
+    'unidic.pronbase': { ja: '発音形基本形', en: 'Base pronunciation' },
+    'unidic.goshu': { ja: '語種', en: 'Word origin' },
+    'unidic.type': { ja: '語彙素類', en: 'Lexeme class' },
+    'unidic.lextype': { ja: '辞書種別', en: 'Dictionary source' },
+    'unidic.itype': { ja: '語頭変化型', en: 'Initial variation type' },
+    'unidic.iform': { ja: '語頭変化形', en: 'Initial variation form' },
+    'unidic.icontype': { ja: '語頭変化結合型', en: 'Initial variation connection type' },
+    'unidic.ftype': { ja: '語末変化型', en: 'Final variation type' },
+    'unidic.fform': { ja: '語末変化形', en: 'Final variation form' },
+    'unidic.fcontype': { ja: '語末変化結合型', en: 'Final variation connection type' },
+    'unidic.atype': { ja: 'アクセント型', en: 'Accent type' },
+    'unidic.acontype': { ja: 'アクセント結合型', en: 'Accent connection type' },
+    'unidic.amodtype': { ja: 'アクセント修飾型', en: 'Accent modification type' },
+};
 /** Token `index`'s details as the evidence table words them: `dep.head` as the head's word and number (`root` at the root) and other values by their names in `names`. */
 export function tokenDetails(tokens, index, row, names, locale, root) {
     const attributes = tokens[index].attributes, word = evidenceWords(row, tokens.length).find(word => word.index === index);

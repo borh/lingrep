@@ -150,7 +150,7 @@ test('token details gloss values as the evidence table does, say how a word outs
   assert.deepEqual([verb.place,verb.roles],['bound',['v']]);
   const {valueName}=await import('./dependency.js');
   assert.deepEqual(verb.basics.map(({key,name,values})=>[key,name,values.map(({value,gloss})=>[value,gloss])]),[
-    ['text','照合形',[['上る',null]]],['lemma','辞書形',[['上る',null]]],['upos','品詞',[['VERB','動詞']]],['dep.head','係り先',[['0','文の中心']]],['dep.rel','関係',[['root',valueName(names,'dep.rel','root','ja')]]],
+    ['text','テキスト',[['上る',null]]],['lemma','辞書形',[['上る',null]]],['upos','品詞',[['VERB','動詞']]],['dep.head','係り先',[['0','文の中心']]],['dep.rel','関係',[['root',valueName(names,'dep.rel','root','ja')]]],
   ]);
   assert.deepEqual(verb.all.map(item=>item.key),['text','lemma','upos','dep.head','dep.rel','conllu.misc']);
   const noun=tokenDetails(tokens,0,row,names,'en','heads the sentence');
@@ -158,9 +158,35 @@ test('token details gloss values as the evidence table does, say how a word outs
   assert.deepEqual(noun.basics.find(item=>item.key==='dep.head').values,[{value:'3',gloss:'上る·3'}]);
   assert.deepEqual(noun.basics.find(item=>item.key==='dep.rel').values,[{value:'obj',gloss:'object'}]);
   assert.equal(noun.all,null);
+  const unidic = [{index:0,attributes:{text:'読ん',norm:'読む',xpos:'動詞-一般',
+    'unidic.pos1':'動詞','unidic.cform':'連用形-撥音便','unidic.orthbase':'読む','unidic.lextype':'system'}}];
+  const details = locale => tokenDetails(unidic,0,row,names,locale,'root').basics.map(
+    ({key,name,values:[{value,gloss}]}) => [key,name,value,gloss]);
+  assert.deepEqual(details('ja'),[
+    ['text','テキスト','読ん',null],['norm','正規化形','読む',null],['xpos','解析器の品詞','動詞-一般',null],
+    ['unidic.cform','活用形','連用形-撥音便',null],['unidic.orthbase','書字形基本形','読む',null],
+    ['unidic.pos1','品詞大分類','動詞',null],['unidic.lextype','辞書種別','system','システム辞書'],
+  ]);
+  assert.deepEqual(details('en').slice(3),[
+    ['unidic.cform','Conjugation form','連用形-撥音便','continuative form (nasal sound change)'],
+    ['unidic.orthbase','Base written form','読む',null],
+    ['unidic.pos1','POS level 1','動詞','verb'],['unidic.lextype','Dictionary source','system','system dictionary'],
+  ]);
   assert.equal(tokenDetails(tokens,2,{span:{start:0,end:2}},names,'ja','文の中心').place,'outside');
   const variant=[token(0,'ガラス','NOUN',0,'root',{surface:'ｶﾞﾗｽ'})];
-  assert.deepEqual(tokenDetails(variant,0,row,names,'ja','文の中心').basics.slice(0,2).map(({key,name,values})=>[key,name,values.map(({value})=>value)]),[['surface','表層形',['ｶﾞﾗｽ']],['text','照合形',['ガラス']]]);
+  assert.deepEqual(tokenDetails(variant,0,row,names,'ja','文の中心').basics.slice(0,2).map(({key,name,values})=>[key,name,values.map(({value})=>value)]),[['surface','表層形',['ｶﾞﾗｽ']],['text','テキスト',['ガラス']]]);
+});
+
+test('every UniDic field has a Japanese and an English token-detail label', async () => {
+  const { tokenDetails } = await import('./dependency.js');
+  const { PATTERN_ATTRIBUTES } = await import('../assets/editor/pattern-editor.js');
+  const keys = PATTERN_ATTRIBUTES.map(([key]) => key).filter(key => key.startsWith('unidic.'));
+  const attributes = Object.fromEntries(keys.map(key => [key, '*']));
+  for (const locale of ['en', 'ja']) {
+    const details = tokenDetails([{ index: 0, attributes }], 0, { span: { start: 0, end: 1 } }, undefined, locale, '');
+    assert.deepEqual(details.all.map(({ key }) => key), keys);
+    for (const { key, name } of details.all) assert.ok(name, `${locale} ${key}`);
+  }
 });
 
 test('stored bunsetsu governors address the sentence span table across layers', async () => {
