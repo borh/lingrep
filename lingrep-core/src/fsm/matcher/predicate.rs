@@ -365,8 +365,7 @@ struct LocalRegexes {
 
 thread_local! {
     static LOCAL_REGEXES: RefCell<LocalRegexes> = RefCell::new(LocalRegexes::default());
-    static PREDICATE_SCRATCH: RefCell<PredicateScratch> =
-        RefCell::new(PredicateScratch::default());
+    static PREDICATE_SCRATCH: RefCell<Option<Rc<PredicateScratch>>> = const { RefCell::new(None) };
 }
 
 impl PredicateScratch {
@@ -406,11 +405,15 @@ impl PredicateScratch {
 
 impl<'catalog> PredicateSession<'catalog> {
     pub(crate) fn new(catalog: &'catalog PredicateCatalog) -> Self {
-        let mut scratch = PREDICATE_SCRATCH.with(|cell| std::mem::take(&mut *cell.borrow_mut()));
-        scratch.begin_call(catalog.len());
+        let mut scratch = PREDICATE_SCRATCH
+            .with(|cell| cell.borrow_mut().take())
+            .unwrap_or_else(|| Rc::new(PredicateScratch::default()));
+        Rc::get_mut(&mut scratch)
+            .expect("pooled PredicateScratch has sole ownership")
+            .begin_call(catalog.len());
         Self {
             catalog,
-            scratch: Rc::new(scratch),
+            scratch,
             memoize: true,
         }
     }
@@ -958,9 +961,11 @@ impl<'catalog> PredicateSession<'catalog> {
 
 impl Drop for PredicateSession<'_> {
     fn drop(&mut self) {
-        if let Some(scratch) = Rc::get_mut(&mut self.scratch) {
-            let scratch = std::mem::take(scratch);
-            PREDICATE_SCRATCH.with(|cell| *cell.borrow_mut() = scratch);
+        if Rc::strong_count(&self.scratch) == 1 {
+            let pooled = Rc::clone(&self.scratch);
+            let _ = PREDICATE_SCRATCH.try_with(|cell| {
+                *cell.borrow_mut() = Some(pooled);
+            });
         }
     }
 }
@@ -1420,16 +1425,17 @@ pub(crate) fn clear_local_regexes() {
 
 pub(crate) fn clear_predicate_scratch() {
     PREDICATE_SCRATCH.with(|cell| {
-        let mut scratch = cell.borrow_mut();
-        scratch.cells.clear();
-        scratch.cells.shrink_to_fit();
-        scratch.call_generation = 0;
+        *cell.borrow_mut() = None;
     });
 }
 
 #[cfg(test)]
 pub(crate) fn predicate_scratch_capacity() -> usize {
-    PREDICATE_SCRATCH.with(|cell| cell.borrow().cells.capacity())
+    PREDICATE_SCRATCH.with(|cell| {
+        cell.borrow()
+            .as_ref()
+            .map_or(0, |scratch| scratch.cells.capacity())
+    })
 }
 
 impl PredicateId {

@@ -9,7 +9,6 @@ use crate::fsm::types::*;
 use crate::token_match::{AttributeKey, SequenceToken, TokenInfoTrait, TokenSequence};
 use compact_str::CompactString;
 use log::{debug, trace};
-use std::sync::Arc;
 
 pub(crate) struct Matcher;
 
@@ -199,17 +198,12 @@ impl Matcher {
         predicates: &PredicateSession<'_>,
         tokens: &S,
     ) -> Vec<Match> {
-        Self::try_find_matches_dense(
-            &Arc::new(OutputBudget::default()),
-            dense,
-            predicates,
-            tokens,
-        )
-        .expect("matching exceeded its resource budget")
+        Self::try_find_matches_dense(&OutputBudget::default(), dense, predicates, tokens)
+            .expect("matching exceeded its resource budget")
     }
 
     pub(crate) fn try_find_matches_dense<S: TokenSequence + ?Sized>(
-        output: &Arc<OutputBudget>,
+        output: &OutputBudget,
         dense: &DenseMachine,
         predicates: &PredicateSession<'_>,
         tokens: &S,
@@ -232,7 +226,7 @@ impl Matcher {
     }
 
     pub(crate) fn try_find_matches_dense_with_assertions<S: TokenSequence + ?Sized>(
-        output: &Arc<OutputBudget>,
+        output: &OutputBudget,
         dense: &DenseMachine,
         predicates: &PredicateSession<'_>,
         tokens: &S,
@@ -261,17 +255,12 @@ impl Matcher {
         predicates: &PredicateSession<'_>,
         tokens: &S,
     ) -> Trace {
-        Self::try_find_matches_with_trace_dense(
-            &Arc::new(OutputBudget::default()),
-            dense,
-            predicates,
-            tokens,
-        )
-        .expect("matching exceeded its resource budget")
+        Self::try_find_matches_with_trace_dense(&OutputBudget::default(), dense, predicates, tokens)
+            .expect("matching exceeded its resource budget")
     }
 
     pub(crate) fn try_find_matches_with_trace_dense<S: TokenSequence + ?Sized>(
-        output: &Arc<OutputBudget>,
+        output: &OutputBudget,
         dense: &DenseMachine,
         predicates: &PredicateSession<'_>,
         tokens: &S,
@@ -289,7 +278,7 @@ impl Matcher {
     }
 
     pub(crate) fn try_find_matches_with_trace_dense_with_assertions<S: TokenSequence + ?Sized>(
-        output: &Arc<OutputBudget>,
+        output: &OutputBudget,
         dense: &DenseMachine,
         predicates: &PredicateSession<'_>,
         tokens: &S,
@@ -311,13 +300,16 @@ impl Matcher {
         )
     }
 
-    fn try_find_matches_with_trace_dense_by<S: TokenSequence + ?Sized>(
-        output: &Arc<OutputBudget>,
+    fn try_find_matches_with_trace_dense_by<S: TokenSequence + ?Sized, F>(
+        output: &OutputBudget,
         dense: &DenseMachine,
         predicates: &PredicateSession<'_>,
         tokens: &S,
-        assertion_holds: &mut dyn FnMut(&CompiledPositionAssertion, usize) -> bool,
-    ) -> Result<Trace, MatchResourceError> {
+        assertion_holds: &mut F,
+    ) -> Result<Trace, MatchResourceError>
+    where
+        F: FnMut(&CompiledPositionAssertion, usize) -> bool,
+    {
         let mut trace = Trace {
             input: (0..tokens.len())
                 .map(|index| {
@@ -362,15 +354,18 @@ impl Matcher {
         Ok(trace)
     }
 
-    fn find_matches_internal<S: TokenSequence + ?Sized>(
-        output: &Arc<OutputBudget>,
+    fn find_matches_internal<S: TokenSequence + ?Sized, F>(
+        output: &OutputBudget,
         dense: &DenseMachine,
         predicates: &PredicateSession<'_>,
         tokens: &S,
         mut trace_collector: Option<&mut dyn FnMut(usize, usize, bool, usize, &[CompactString])>,
-        assertion_holds: &mut dyn FnMut(&CompiledPositionAssertion, usize) -> bool,
-    ) -> Result<Vec<Match>, MatchResourceError> {
-        let start_time = std::time::Instant::now();
+        assertion_holds: &mut F,
+    ) -> Result<Vec<Match>, MatchResourceError>
+    where
+        F: FnMut(&CompiledPositionAssertion, usize) -> bool,
+    {
+        let start_time = log::log_enabled!(log::Level::Debug).then(std::time::Instant::now);
 
         // Skip empty token sets
         if tokens.is_empty() {
@@ -578,14 +573,16 @@ impl Matcher {
         #[cfg(test)]
         trace!("Filtered matches: {filtered:?}");
 
-        let elapsed = start_time.elapsed();
-        if elapsed > std::time::Duration::from_millis(100) {
-            debug!(
-                "Slow match: {:?} for {} tokens, {} matches",
-                elapsed,
-                tokens.len(),
-                filtered.len()
-            );
+        if let Some(start_time) = start_time {
+            let elapsed = start_time.elapsed();
+            if elapsed > std::time::Duration::from_millis(100) {
+                debug!(
+                    "Slow match: {:?} for {} tokens, {} matches",
+                    elapsed,
+                    tokens.len(),
+                    filtered.len()
+                );
+            }
         }
 
         debug!("Filtered matches: {filtered:?}");
@@ -642,12 +639,13 @@ impl Matcher {
     pub(crate) fn epsilon_closure_into<
         S: TokenSequence + ?Sized,
         I: IntoIterator<Item = StateInfo>,
+        F: FnMut(&CompiledPositionAssertion, usize) -> bool,
     >(
         dense: &DenseMachine,
         states: I,
         tokens: Option<(&S, usize)>,
         scratch: &mut ExecScratch,
-        assertion_holds: &mut dyn FnMut(&CompiledPositionAssertion, usize) -> bool,
+        assertion_holds: &mut F,
         closure: &mut Vec<StateInfo>,
     ) {
         // Owned for the call so grouping can borrow the seeds while stamping

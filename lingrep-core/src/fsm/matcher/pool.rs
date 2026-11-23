@@ -34,6 +34,7 @@ pub fn clear_pools() {
     });
     super::predicate::clear_local_regexes();
     super::predicate::clear_predicate_scratch();
+    super::assertion::clear_assertion_scratch();
     super::exec::clear_exec_scratch();
     super::lexicon::clear_scratch();
 }

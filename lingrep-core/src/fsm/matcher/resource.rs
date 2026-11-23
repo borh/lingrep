@@ -36,21 +36,15 @@ const MAX_GRAPH_WORK: usize = 1_000_000;
 const MAX_ALLOCATION_BYTES: usize = 64 * 1024 * 1024;
 pub(super) const MAX_RELATION_DEPTH: usize = 128;
 
-pub(crate) struct MatchBudget {
+pub(crate) struct MatchBudget<'a> {
     assignments: usize,
     steps: usize,
     bytes: usize,
-    pub(super) output: std::sync::Arc<OutputBudget>,
+    pub(super) output: &'a OutputBudget,
 }
 
-impl Default for MatchBudget {
-    fn default() -> Self {
-        Self::with_output(std::sync::Arc::new(OutputBudget::default()))
-    }
-}
-
-impl MatchBudget {
-    pub(crate) fn with_output(output: std::sync::Arc<OutputBudget>) -> Self {
+impl<'a> MatchBudget<'a> {
+    pub(crate) fn with_output(output: &'a OutputBudget) -> Self {
         Self {
             assignments: MAX_ASSIGNMENTS,
             steps: MAX_GRAPH_WORK,

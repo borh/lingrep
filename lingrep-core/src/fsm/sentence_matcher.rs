@@ -6,7 +6,6 @@ use crate::fsm::{BoundCatalog, BoundExecutionError};
 use crate::token_match::TokenInfoTrait;
 use rayon::prelude::*;
 use std::ops::Range;
-use std::sync::Arc;
 
 /// Schedules independent sentence matches on a caller-owned Rayon pool.
 ///
@@ -43,7 +42,7 @@ impl<'a> BoundSentenceMatcher<'a> {
         pool: &rayon::ThreadPool,
         sentences: &[BoundSentenceInput],
     ) -> Result<Vec<Vec<Match>>, BoundExecutionError> {
-        let output = Arc::new(OutputBudget::default().with_cancellation(self.cancel));
+        let output = OutputBudget::default().with_cancellation(self.cancel);
         output
             .reserve_buffer::<Result<Vec<Match>, BoundExecutionError>>(
                 sentences.len().saturating_mul(4),
@@ -87,7 +86,7 @@ impl<'a> BoundSentenceMatcher<'a> {
         }
         let stride = reach.len();
         debug_assert_eq!(links.len(), sentences.len() * stride);
-        let output = Arc::new(OutputBudget::default().with_cancellation(self.cancel));
+        let output = OutputBudget::default().with_cancellation(self.cancel);
         output
             .reserve_buffer::<Result<Vec<Match>, BoundExecutionError>>(
                 targets.len().saturating_mul(4),
@@ -141,7 +140,7 @@ impl<'a> SentenceMatcher<'a> {
         pool: &rayon::ThreadPool,
         sentences: &[Vec<T>],
     ) -> Result<Vec<Vec<Match>>, crate::fsm::MatchResourceError> {
-        let output = Arc::new(OutputBudget::default());
+        let output = OutputBudget::default();
         output.reserve_buffer::<Result<Vec<Match>, crate::fsm::MatchResourceError>>(
             sentences.len().saturating_mul(4),
         )?;

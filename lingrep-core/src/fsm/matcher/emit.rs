@@ -1,7 +1,6 @@
 //! Match emission: construction, dedup, and the terminal overlap filter.
 
 use super::resource::{MatchResourceError, OutputBudget, compact_heap_bytes, match_heap_bytes};
-use std::sync::Arc;
 
 use super::pool::FastBuild;
 use crate::fsm::Match;
@@ -11,23 +10,18 @@ use std::collections::{HashMap, HashSet};
 type MatchKey = (CompactString, usize, usize);
 
 /// Constructs and deduplicates matches before applying the overlap filter.
-pub(crate) struct MatchSink {
+pub(crate) struct MatchSink<'a> {
     dedup: HashSet<MatchKey, FastBuild>,
     out: Vec<Match>,
-    output: Arc<OutputBudget>,
+    output: &'a OutputBudget,
 }
 
-impl MatchSink {
-    #[cfg(test)]
-    pub(crate) fn new() -> Self {
-        Self::with_output(&Arc::new(OutputBudget::default()))
-    }
-
-    pub(crate) fn with_output(output: &Arc<OutputBudget>) -> Self {
+impl<'a> MatchSink<'a> {
+    pub(crate) fn with_output(output: &'a OutputBudget) -> Self {
         Self {
             dedup: HashSet::default(),
             out: Vec::new(),
-            output: Arc::clone(output),
+            output,
         }
     }
 
@@ -61,7 +55,7 @@ impl MatchSink {
     }
 
     pub(crate) fn finish(self) -> Result<Vec<Match>, MatchResourceError> {
-        filter_and_collect_matches(&self.out, &self.output)
+        filter_and_collect_matches(&self.out, self.output)
     }
 }
 
@@ -160,7 +154,8 @@ mod tests {
 
     #[test]
     fn emit_dedups_identical_pattern_span_and_pushes_once() {
-        let mut sink = MatchSink::new();
+        let output = super::OutputBudget::default();
+        let mut sink = MatchSink::with_output(&output);
         sink.emit(&key("p"), 2, 4).unwrap();
         sink.emit(&key("p"), 2, 4).unwrap();
         sink.emit(&key("p"), 3, 5).unwrap();
@@ -170,7 +165,8 @@ mod tests {
 
     #[test]
     fn emit_produces_a_capture_free_match() {
-        let mut sink = MatchSink::new();
+        let output = super::OutputBudget::default();
+        let mut sink = MatchSink::with_output(&output);
         sink.emit(&key("p"), 0, 1).unwrap();
         let out = sink.finish().unwrap();
         assert_eq!((out[0].start, out[0].end), (0, 1));
@@ -180,7 +176,8 @@ mod tests {
     #[test]
     fn finish_applies_the_longest_per_start_overlap_policy() {
         // Two matches at start 0 with ends 1 and 2: only the longer survives.
-        let mut sink = MatchSink::new();
+        let output = super::OutputBudget::default();
+        let mut sink = MatchSink::with_output(&output);
         sink.emit(&key("p"), 0, 1).unwrap();
         sink.emit(&key("p"), 0, 2).unwrap();
         let out = sink.finish().unwrap();

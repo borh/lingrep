@@ -1,7 +1,6 @@
 use super::matcher::resource::OutputBudget;
 use compact_str::CompactString;
 use std::fmt;
-use std::sync::Arc;
 
 use super::{CompiledCatalog, PredicateDigest};
 use crate::execution::{BoundSentenceInput, EnhancedGraphInput};
@@ -217,13 +216,13 @@ impl BoundCatalog {
         &self,
         input: &BoundSentenceInput,
     ) -> Result<Vec<Match>, BoundExecutionError> {
-        self.find_matches_input_with(input, None, &Arc::new(OutputBudget::default()))
+        self.find_matches_input_with(input, None, &OutputBudget::default())
     }
 
     pub(crate) fn find_matches_input_with_output(
         &self,
         input: &BoundSentenceInput,
-        output: &Arc<OutputBudget>,
+        output: &OutputBudget,
     ) -> Result<Vec<Match>, BoundExecutionError> {
         self.find_matches_input_with(input, None, output)
     }
@@ -240,7 +239,7 @@ impl BoundCatalog {
         self.find_matches_input_with(
             input,
             Some(&window_context(&tokens)),
-            &Arc::new(OutputBudget::default()),
+            &OutputBudget::default(),
         )
     }
 
@@ -248,7 +247,7 @@ impl BoundCatalog {
         &self,
         input: &BoundSentenceInput,
         windows: &[ScopeWindow<'_>],
-        output: &Arc<OutputBudget>,
+        output: &OutputBudget,
     ) -> Result<Vec<Match>, BoundExecutionError> {
         let tokens = self.window_tokens(windows)?;
         self.find_matches_input_with(input, Some(&window_context(&tokens)), output)
@@ -315,7 +314,7 @@ impl BoundCatalog {
         &self,
         input: &BoundSentenceInput,
         context: Option<&crate::fsm::LookaroundContext<'_, BoundExecutionTokens<'_>>>,
-        output: &Arc<OutputBudget>,
+        output: &OutputBudget,
     ) -> Result<Vec<Match>, BoundExecutionError> {
         self.validate_tokens(input.words())?;
         let tokens = BoundExecutionTokens {

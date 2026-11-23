@@ -676,6 +676,25 @@ impl Frontier {
     }
 }
 
+#[derive(Default)]
+struct AssertionScratch {
+    rows: Vec<Option<BoundaryBits>>,
+    work: Vec<usize>,
+    frontier: Frontier,
+    next_frontier: Frontier,
+}
+
+thread_local! {
+    static ASSERTION_SCRATCH: std::cell::RefCell<AssertionScratch> =
+        std::cell::RefCell::new(AssertionScratch::default());
+}
+
+pub(crate) fn clear_assertion_scratch() {
+    ASSERTION_SCRATCH.with(|cell| {
+        *cell.borrow_mut() = AssertionScratch::default();
+    });
+}
+
 pub(crate) struct AssertionSession<'catalog, 'tokens, S: TokenSequence + ?Sized> {
     catalog: &'catalog CompiledAssertionCatalog,
     predicates: PredicateSession<'catalog>,
@@ -694,8 +713,31 @@ pub(crate) struct AssertionSession<'catalog, 'tokens, S: TokenSequence + ?Sized>
     /// `Fact` edge in `close` reads `self.rows` and never re-enters a pass.
     frontier: Frontier,
     next_frontier: Frontier,
+    /// Whether this top-level session returns its scratch buffers to
+    /// `ASSERTION_SCRATCH` on drop. Nested window sessions hand their buffers
+    /// back to the outer session explicitly.
+    pooled: bool,
     #[cfg(feature = "bench-instrumentation")]
     metrics: AssertionMetricCells,
+}
+
+impl<S: TokenSequence + ?Sized> Drop for AssertionSession<'_, '_, S> {
+    fn drop(&mut self) {
+        if !self.pooled {
+            return;
+        }
+        self.rows.clear();
+        self.work.clear();
+        let scratch = AssertionScratch {
+            rows: std::mem::take(&mut self.rows),
+            work: std::mem::take(&mut self.work),
+            frontier: std::mem::take(&mut self.frontier),
+            next_frontier: std::mem::take(&mut self.next_frontier),
+        };
+        let _ = ASSERTION_SCRATCH.try_with(|cell| {
+            *cell.borrow_mut() = scratch;
+        });
+    }
 }
 
 impl<'catalog, 'tokens, S: TokenSequence + ?Sized> AssertionSession<'catalog, 'tokens, S> {
@@ -704,16 +746,21 @@ impl<'catalog, 'tokens, S: TokenSequence + ?Sized> AssertionSession<'catalog, 't
         predicates: &PredicateSession<'catalog>,
         tokens: &'tokens S,
     ) -> Self {
+        let mut scratch = ASSERTION_SCRATCH.with(|cell| std::mem::take(&mut *cell.borrow_mut()));
+        scratch.rows.clear();
+        scratch.rows.resize_with(catalog.programs.len(), || None);
+        scratch.work.clear();
         Self {
             catalog,
             predicates: predicates.clone(),
             tokens,
             context: None,
             sentence_marks: None,
-            rows: vec![None; catalog.programs.len()],
-            work: Vec::new(),
-            frontier: Frontier::default(),
-            next_frontier: Frontier::default(),
+            rows: scratch.rows,
+            work: scratch.work,
+            frontier: scratch.frontier,
+            next_frontier: scratch.next_frontier,
+            pooled: true,
             #[cfg(feature = "bench-instrumentation")]
             metrics: AssertionMetricCells::default(),
         }
@@ -852,13 +899,14 @@ impl<'catalog, 'tokens, S: TokenSequence + ?Sized> AssertionSession<'catalog, 't
                 work: std::mem::take(&mut self.work),
                 frontier: std::mem::take(&mut self.frontier),
                 next_frontier: std::mem::take(&mut self.next_frontier),
+                pooled: false,
                 #[cfg(feature = "bench-instrumentation")]
                 metrics: AssertionMetricCells::default(),
             };
             let joined_row = session.evaluate_local(id);
-            self.work = session.work;
-            self.frontier = session.frontier;
-            self.next_frontier = session.next_frontier;
+            self.work = std::mem::take(&mut session.work);
+            self.frontier = std::mem::take(&mut session.frontier);
+            self.next_frontier = std::mem::take(&mut session.next_frontier);
             let mut row = BoundaryBits::new(self.tokens.len() + 1);
             for boundary in 0..=self.tokens.len() {
                 if joined_row.get(offset + boundary) {

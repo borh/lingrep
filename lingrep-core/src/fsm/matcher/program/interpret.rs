@@ -15,8 +15,8 @@ struct State {
     events: Vec<Event>,
 }
 
-struct Replay<'a, 'p, S: ?Sized> {
-    budget: &'a mut MatchBudget,
+struct Replay<'a, 'b, 'p, S: ?Sized> {
+    budget: &'a mut MatchBudget<'b>,
     program: &'a Program,
     recipe: &'a InterpretationRecipe,
     predicates: &'a PredicateSession<'p>,
@@ -24,7 +24,7 @@ struct Replay<'a, 'p, S: ?Sized> {
     end: usize,
 }
 
-impl<S: TokenSequence + ?Sized> Replay<'_, '_, S> {
+impl<S: TokenSequence + ?Sized> Replay<'_, '_, '_, S> {
     fn charge(&mut self, steps: usize, bytes: usize) -> Result<(), MatchResourceError> {
         self.budget
             .interpretation(&self.program.definition.name, steps, bytes)
@@ -257,7 +257,7 @@ impl Program {
     pub(in crate::fsm::matcher) fn interpreted_captures<S: TokenSequence + ?Sized>(
         &self,
         recipe: &InterpretationRecipe,
-        budget: &mut MatchBudget,
+        budget: &mut MatchBudget<'_>,
         predicates: &PredicateSession<'_>,
         tokens: &S,
         range: std::ops::Range<usize>,
@@ -268,11 +268,11 @@ impl Program {
     pub(super) fn interpreted_candidates<S: TokenSequence + ?Sized>(
         &self,
         recipe: &InterpretationRecipe,
-        budget: &mut MatchBudget,
+        budget: &mut MatchBudget<'_>,
         predicates: &PredicateSession<'_>,
         tokens: &S,
         range: std::ops::Range<usize>,
-        mut accept: impl FnMut(&Candidate, &mut MatchBudget) -> Result<bool, MatchResourceError>,
+        mut accept: impl FnMut(&Candidate, &mut MatchBudget<'_>) -> Result<bool, MatchResourceError>,
     ) -> Result<(Box<[Capture]>, Box<[Interpretation]>), MatchResourceError> {
         let (start, end) = (range.start, range.end);
         let mut replay = Replay {

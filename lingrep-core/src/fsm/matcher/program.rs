@@ -447,7 +447,7 @@ impl Program {
 
     pub(crate) fn matches<S: TokenSequence + ?Sized>(
         &self,
-        budget: &mut MatchBudget,
+        budget: &mut MatchBudget<'_>,
         predicates: &PredicateSession<'_>,
         tokens: &S,
         session: &mut AssertionSession<'_, '_, S>,
@@ -457,7 +457,7 @@ impl Program {
 
     pub(crate) fn matches_with_graph<S: TokenSequence + ?Sized>(
         &self,
-        budget: &mut MatchBudget,
+        budget: &mut MatchBudget<'_>,
         predicates: &PredicateSession<'_>,
         tokens: &S,
         session: &mut AssertionSession<'_, '_, S>,
@@ -509,7 +509,7 @@ impl Program {
 
     fn matches_with<S: TokenSequence + ?Sized, A: AssertionLookup>(
         &self,
-        budget: &mut MatchBudget,
+        budget: &mut MatchBudget<'_>,
         predicates: &PredicateSession<'_>,
         tokens: &S,
         assertions: &mut A,
@@ -864,7 +864,7 @@ impl Program {
         observations: &mut measure::Observations<'a>,
         predicates: &PredicateSession<'_>,
         tokens: &S,
-        budget: &mut MatchBudget,
+        budget: &mut MatchBudget<'_>,
     ) -> Result<Vec<GraphBinding>, MatchResourceError> {
         budget.allocate(
             &self.definition.name,
@@ -901,7 +901,7 @@ impl Program {
 
     fn enhanced_assignments<S: TokenSequence + ?Sized>(
         &self,
-        budget: &mut MatchBudget,
+        budget: &mut MatchBudget<'_>,
         candidate: &Candidate,
         tokens: &S,
         graph: Option<&EnhancedGraph>,
@@ -1017,7 +1017,7 @@ impl Program {
 
     pub(crate) fn matches_without_assertions<S: TokenSequence + ?Sized>(
         &self,
-        budget: &mut MatchBudget,
+        budget: &mut MatchBudget<'_>,
         predicates: &PredicateSession<'_>,
         tokens: &S,
     ) -> Result<Vec<ProgramMatch>, MatchResourceError> {
@@ -1026,7 +1026,7 @@ impl Program {
 
     pub(crate) fn matches_without_assertions_with_graph<S: TokenSequence + ?Sized>(
         &self,
-        budget: &mut MatchBudget,
+        budget: &mut MatchBudget<'_>,
         predicates: &PredicateSession<'_>,
         tokens: &S,
         graph: &EnhancedGraph,
@@ -1193,7 +1193,7 @@ impl Program {
 
     fn public_graph_bytes<S: TokenSequence + ?Sized>(
         &self,
-        budget: &mut MatchBudget,
+        budget: &mut MatchBudget<'_>,
         assignment: &GraphAssignment,
         tokens: &S,
         graph: Option<&EnhancedGraph>,
@@ -1370,7 +1370,7 @@ fn compile_enhanced_endpoint(endpoint: &ExecutionEnhancedEndpoint) -> RuntimeEnh
 
 #[allow(clippy::too_many_arguments)]
 fn enhanced_assignments_from<S: TokenSequence + ?Sized>(
-    budget: &mut MatchBudget,
+    budget: &mut MatchBudget<'_>,
     pattern: &str,
     relations: &[RuntimeEnhancedRelation],
     index: usize,
@@ -1565,7 +1565,7 @@ fn layer_edges<'a, S: TokenSequence + ?Sized>(
 
 #[allow(clippy::too_many_arguments)]
 fn enhanced_negative_relations_hold<S: TokenSequence + ?Sized>(
-    budget: &mut MatchBudget,
+    budget: &mut MatchBudget<'_>,
     pattern: &str,
     relations: &[RuntimeEnhancedRelation],
     candidate: &Candidate,
@@ -1630,7 +1630,7 @@ fn relation_label_matches(labels: &RelationLabels<RelationLabel>, actual: &str) 
 
 #[allow(clippy::too_many_arguments)]
 fn enhanced_endpoint_accepts<S: TokenSequence + ?Sized>(
-    budget: &mut MatchBudget,
+    budget: &mut MatchBudget<'_>,
     pattern: &str,
     endpoint: &RuntimeEnhancedEndpoint,
     node: EnhancedNodeId,

@@ -322,7 +322,7 @@ impl CompiledLexiconDefinition {
 trait MatchAssertionMode<S: TokenSequence + ?Sized> {
     fn run_dense(
         &mut self,
-        output: &Arc<OutputBudget>,
+        output: &OutputBudget,
         dense: &DenseMachine,
         predicates: &PredicateSession<'_>,
         tokens: &S,
@@ -330,7 +330,7 @@ trait MatchAssertionMode<S: TokenSequence + ?Sized> {
 
     fn run_dense_with_trace(
         &mut self,
-        output: &Arc<OutputBudget>,
+        output: &OutputBudget,
         dense: &DenseMachine,
         predicates: &PredicateSession<'_>,
         tokens: &S,
@@ -339,7 +339,7 @@ trait MatchAssertionMode<S: TokenSequence + ?Sized> {
     fn extract_capture(
         &mut self,
         plan: &CapturePlan,
-        budget: &mut MatchBudget,
+        budget: &mut MatchBudget<'_>,
         predicates: &PredicateSession<'_>,
         tokens: &S,
         matched: &mut Match,
@@ -348,7 +348,7 @@ trait MatchAssertionMode<S: TokenSequence + ?Sized> {
     fn run_evaluated(
         &mut self,
         plan: &EvaluatedPlan,
-        budget: &mut MatchBudget,
+        budget: &mut MatchBudget<'_>,
         predicates: &PredicateSession<'_>,
         tokens: &S,
         graph: Option<&EnhancedGraph>,
@@ -361,7 +361,7 @@ impl<S: TokenSequence + ?Sized> MatchAssertionMode<S> for NoAssertions {
     #[inline(always)]
     fn run_dense(
         &mut self,
-        output: &Arc<OutputBudget>,
+        output: &OutputBudget,
         dense: &DenseMachine,
         predicates: &PredicateSession<'_>,
         tokens: &S,
@@ -372,7 +372,7 @@ impl<S: TokenSequence + ?Sized> MatchAssertionMode<S> for NoAssertions {
     #[inline(always)]
     fn run_dense_with_trace(
         &mut self,
-        output: &Arc<OutputBudget>,
+        output: &OutputBudget,
         dense: &DenseMachine,
         predicates: &PredicateSession<'_>,
         tokens: &S,
@@ -384,7 +384,7 @@ impl<S: TokenSequence + ?Sized> MatchAssertionMode<S> for NoAssertions {
     fn extract_capture(
         &mut self,
         plan: &CapturePlan,
-        budget: &mut MatchBudget,
+        budget: &mut MatchBudget<'_>,
         predicates: &PredicateSession<'_>,
         tokens: &S,
         matched: &mut Match,
@@ -396,7 +396,7 @@ impl<S: TokenSequence + ?Sized> MatchAssertionMode<S> for NoAssertions {
     fn run_evaluated(
         &mut self,
         plan: &EvaluatedPlan,
-        budget: &mut MatchBudget,
+        budget: &mut MatchBudget<'_>,
         predicates: &PredicateSession<'_>,
         tokens: &S,
         graph: Option<&EnhancedGraph>,
@@ -415,7 +415,7 @@ impl<S: TokenSequence + ?Sized> MatchAssertionMode<S> for WithAssertions<'_, '_,
     #[inline(always)]
     fn run_dense(
         &mut self,
-        output: &Arc<OutputBudget>,
+        output: &OutputBudget,
         dense: &DenseMachine,
         predicates: &PredicateSession<'_>,
         tokens: &S,
@@ -432,7 +432,7 @@ impl<S: TokenSequence + ?Sized> MatchAssertionMode<S> for WithAssertions<'_, '_,
     #[inline(always)]
     fn run_dense_with_trace(
         &mut self,
-        output: &Arc<OutputBudget>,
+        output: &OutputBudget,
         dense: &DenseMachine,
         predicates: &PredicateSession<'_>,
         tokens: &S,
@@ -450,7 +450,7 @@ impl<S: TokenSequence + ?Sized> MatchAssertionMode<S> for WithAssertions<'_, '_,
     fn extract_capture(
         &mut self,
         plan: &CapturePlan,
-        budget: &mut MatchBudget,
+        budget: &mut MatchBudget<'_>,
         predicates: &PredicateSession<'_>,
         tokens: &S,
         matched: &mut Match,
@@ -462,7 +462,7 @@ impl<S: TokenSequence + ?Sized> MatchAssertionMode<S> for WithAssertions<'_, '_,
     fn run_evaluated(
         &mut self,
         plan: &EvaluatedPlan,
-        budget: &mut MatchBudget,
+        budget: &mut MatchBudget<'_>,
         predicates: &PredicateSession<'_>,
         tokens: &S,
         graph: Option<&EnhancedGraph>,
@@ -542,8 +542,8 @@ impl MatchObserver for ExecutionMetricsObserver {
     }
 }
 
-struct MatchRun<'a, 'p, O> {
-    budget: &'a mut MatchBudget,
+struct MatchRun<'a, 'b, 'p, O> {
+    budget: &'a mut MatchBudget<'b>,
     predicates: &'a PredicateSession<'p>,
     graph: Option<&'a EnhancedGraph>,
     observer: &'a mut O,
@@ -1146,18 +1146,14 @@ impl CompiledCatalog {
         tokens: &'t S,
         context: Option<&'t super::LookaroundContext<'t, S>>,
     ) -> Result<Vec<Match>, MatchResourceError> {
-        self.try_find_matches_with_context_and_output(
-            tokens,
-            context,
-            &Arc::new(OutputBudget::default()),
-        )
+        self.try_find_matches_with_context_and_output(tokens, context, &OutputBudget::default())
     }
 
     #[inline(always)]
     fn run_match_pipeline_with_mode<S, M, O>(
         &self,
         tokens: &S,
-        run: &mut MatchRun<'_, '_, O>,
+        run: &mut MatchRun<'_, '_, '_, O>,
         mode: &mut M,
     ) -> Result<Vec<Match>, MatchResourceError>
     where
@@ -1166,7 +1162,7 @@ impl CompiledCatalog {
         O: MatchObserver,
     {
         let nfa_timer = run.observer.begin_phase();
-        let matches = mode.run_dense(&run.budget.output, &self.dense, run.predicates, tokens)?;
+        let matches = mode.run_dense(run.budget.output, &self.dense, run.predicates, tokens)?;
         run.observer.finish_nfa(nfa_timer, matches.len());
         self.complete_dense_matches(tokens, run, mode, matches)
     }
@@ -1175,7 +1171,7 @@ impl CompiledCatalog {
     fn complete_dense_matches<S, M, O>(
         &self,
         tokens: &S,
-        run: &mut MatchRun<'_, '_, O>,
+        run: &mut MatchRun<'_, '_, '_, O>,
         mode: &mut M,
         mut matches: Vec<Match>,
     ) -> Result<Vec<Match>, MatchResourceError>
@@ -1202,7 +1198,7 @@ impl CompiledCatalog {
         }
         run.observer.finish_evaluated(evaluated_timer);
 
-        self.finish_catalog_matches(tokens, canonical_matches(matches), &run.budget.output)
+        self.finish_catalog_matches(tokens, canonical_matches(matches), run.budget.output)
     }
 
     #[inline(always)]
@@ -1211,7 +1207,7 @@ impl CompiledCatalog {
         tokens: &'t S,
         graph: Option<&EnhancedGraph>,
         context: Option<&'t super::LookaroundContext<'t, S>>,
-        output: &Arc<OutputBudget>,
+        output: &OutputBudget,
         observer: &mut O,
     ) -> Result<Vec<Match>, MatchResourceError>
     where
@@ -1219,7 +1215,7 @@ impl CompiledCatalog {
         O: MatchObserver,
     {
         output.check()?;
-        let mut budget = MatchBudget::with_output(Arc::clone(output));
+        let mut budget = MatchBudget::with_output(output);
         let predicates = PredicateSession::new(&self.predicates);
         let mut run = MatchRun {
             budget: &mut budget,
@@ -1241,7 +1237,7 @@ impl CompiledCatalog {
     fn run_trace_with_mode<S, M>(
         &self,
         tokens: &S,
-        run: &mut MatchRun<'_, '_, NoObserver>,
+        run: &mut MatchRun<'_, '_, '_, NoObserver>,
         mode: &mut M,
     ) -> Result<Trace, MatchResourceError>
     where
@@ -1249,7 +1245,7 @@ impl CompiledCatalog {
         M: MatchAssertionMode<S>,
     {
         let mut trace =
-            mode.run_dense_with_trace(&run.budget.output, &self.dense, run.predicates, tokens)?;
+            mode.run_dense_with_trace(run.budget.output, &self.dense, run.predicates, tokens)?;
         let matches = std::mem::take(&mut trace.matches);
         trace.matches = self.complete_dense_matches(tokens, run, mode, matches)?;
         Ok(trace)
@@ -1259,7 +1255,7 @@ impl CompiledCatalog {
         &self,
         tokens: &'t S,
         context: Option<&'t super::LookaroundContext<'t, S>>,
-        output: &Arc<OutputBudget>,
+        output: &OutputBudget,
     ) -> Result<Vec<Match>, MatchResourceError> {
         self.try_find_matches_core(tokens, None, context, output, &mut NoObserver)
     }
@@ -1320,7 +1316,7 @@ impl CompiledCatalog {
             tokens,
             graph,
             context,
-            &Arc::new(OutputBudget::default()),
+            &OutputBudget::default(),
         )
     }
 
@@ -1329,7 +1325,7 @@ impl CompiledCatalog {
         tokens: &'t S,
         graph: &EnhancedGraph,
         context: Option<&'t super::LookaroundContext<'t, S>>,
-        output: &Arc<OutputBudget>,
+        output: &OutputBudget,
     ) -> Result<Vec<Match>, MatchResourceError> {
         self.try_find_matches_core(tokens, Some(graph), context, output, &mut NoObserver)
     }
@@ -1350,7 +1346,8 @@ impl CompiledCatalog {
             return (self.find_matches(tokens), AssertionMetrics::default());
         }
 
-        let mut budget = MatchBudget::default();
+        let output = OutputBudget::default();
+        let mut budget = MatchBudget::with_output(&output);
         let predicates = PredicateSession::new(&self.predicates);
         let mut mode = WithAssertions(AssertionSession::new(
             &self.shared.assertion_catalog,
@@ -1408,7 +1405,8 @@ impl CompiledCatalog {
         tokens: &S,
         spawn: Option<&mut SpawnCandidateAccumulator>,
     ) -> (Vec<Match>, ExecutionMetrics) {
-        let mut budget = MatchBudget::default();
+        let output = OutputBudget::default();
+        let mut budget = MatchBudget::with_output(&output);
         let predicates = PredicateSession::new(&self.predicates);
         if spawn.is_some() {
             let (group_count, shape_count) = self.dense.spawn_table.spawn_candidate_dimensions();
@@ -1454,7 +1452,8 @@ impl CompiledCatalog {
         &self,
         tokens: &S,
     ) -> Result<Trace, MatchResourceError> {
-        let mut budget = MatchBudget::default();
+        let output = OutputBudget::default();
+        let mut budget = MatchBudget::with_output(&output);
         let predicates = PredicateSession::new(&self.predicates);
         let mut observer = NoObserver;
         let mut run = MatchRun {
@@ -1583,7 +1582,7 @@ impl CompiledCatalog {
         &self,
         tokens: &S,
         ordinary: Vec<Match>,
-        output: &Arc<OutputBudget>,
+        output: &OutputBudget,
     ) -> Result<Vec<Match>, MatchResourceError> {
         let Some(lexicons) = &self.shared.lexicons else {
             return Ok(ordinary);
@@ -1819,7 +1818,7 @@ mod tests {
             )
             .unwrap()
             .matcher;
-            let output = std::sync::Arc::new(super::OutputBudget::new(0));
+            let output = super::OutputBudget::new(0);
             assert!(matches!(
                 matcher.try_find_matches_with_context_and_output(&[token.clone()], None, &output),
                 Err(super::MatchResourceError::BatchOutput { limit: 0 })
@@ -1845,18 +1844,17 @@ mod tests {
         assert!(plain.token_windows().is_some());
         assert!(interpreted.token_windows().is_none());
         let input = [TokenInfo::default()];
-        let output = std::sync::Arc::new(super::OutputBudget::new(1_000_000));
+        let output = super::OutputBudget::new(1_000_000);
         plain
             .try_find_matches_with_context_and_output(&input, None, &output)
             .unwrap();
-        let small = std::sync::Arc::new(super::OutputBudget::new(output.allocated_bytes()));
+        let small = super::OutputBudget::new(output.allocated_bytes());
         assert!(matches!(
             interpreted.try_find_matches_with_context_and_output(&input, None, &small),
             Err(super::MatchResourceError::BatchOutput { .. })
         ));
         let cancel = CancellationFlag::new();
-        let cancellable =
-            std::sync::Arc::new(super::OutputBudget::default().with_cancellation(Some(&cancel)));
+        let cancellable = super::OutputBudget::default().with_cancellation(Some(&cancel));
         cancel.cancel();
         assert_eq!(
             plain.try_find_matches_with_context_and_output(&input, None, &cancellable),
@@ -1878,7 +1876,7 @@ mod tests {
         )
         .unwrap()
         .matcher;
-        let output = std::sync::Arc::new(super::OutputBudget::new(1_000_000));
+        let output = super::OutputBudget::new(1_000_000);
         plain
             .try_find_matches_with_context_and_output(&[token.clone()], None, &output)
             .unwrap();
@@ -1889,7 +1887,7 @@ mod tests {
         )
         .unwrap()
         .matcher;
-        let output = std::sync::Arc::new(super::OutputBudget::new(plain_bytes));
+        let output = super::OutputBudget::new(plain_bytes);
         assert!(matches!(
             captured.try_find_matches_with_context_and_output(&[token.clone()], None, &output),
             Err(super::MatchResourceError::BatchOutput { .. })

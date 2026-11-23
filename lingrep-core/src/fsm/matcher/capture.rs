@@ -11,7 +11,7 @@ pub(crate) struct CapturePlan(pub(crate) Program);
 impl CapturePlan {
     pub(crate) fn extract_without_assertions<S: TokenSequence + ?Sized>(
         &self,
-        budget: &mut MatchBudget,
+        budget: &mut MatchBudget<'_>,
         predicates: &PredicateSession<'_>,
         tokens: &S,
         matched: &mut Match,
@@ -28,7 +28,7 @@ impl CapturePlan {
             matched.captures = self
                 .0
                 .extract_without_assertions(
-                    &budget.output,
+                    budget.output,
                     predicates,
                     tokens,
                     matched.start,
@@ -41,7 +41,7 @@ impl CapturePlan {
 
     pub(crate) fn extract<S: TokenSequence + ?Sized>(
         &self,
-        budget: &mut MatchBudget,
+        budget: &mut MatchBudget<'_>,
         predicates: &PredicateSession<'_>,
         tokens: &S,
         matched: &mut Match,

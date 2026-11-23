@@ -29,19 +29,19 @@ pub(crate) struct EvaluatedPlan(pub(crate) Program);
 impl EvaluatedPlan {
     pub(crate) fn try_find_matches_without_assertions<S: TokenSequence + ?Sized>(
         &self,
-        budget: &mut MatchBudget,
+        budget: &mut MatchBudget<'_>,
         predicates: &PredicateSession<'_>,
         tokens: &S,
     ) -> Result<Vec<Match>, MatchResourceError> {
         let matches = self
             .0
             .matches_without_assertions(budget, predicates, tokens)?;
-        self.to_matches(&budget.output, matches)
+        self.to_matches(budget.output, matches)
     }
 
     pub(crate) fn try_find_matches_without_assertions_with_graph<S: TokenSequence + ?Sized>(
         &self,
-        budget: &mut MatchBudget,
+        budget: &mut MatchBudget<'_>,
         predicates: &PredicateSession<'_>,
         tokens: &S,
         graph: &EnhancedGraph,
@@ -49,23 +49,23 @@ impl EvaluatedPlan {
         let matches = self
             .0
             .matches_without_assertions_with_graph(budget, predicates, tokens, graph)?;
-        self.to_matches(&budget.output, matches)
+        self.to_matches(budget.output, matches)
     }
 
     pub(crate) fn try_find_matches<S: TokenSequence + ?Sized>(
         &self,
-        budget: &mut MatchBudget,
+        budget: &mut MatchBudget<'_>,
         predicates: &PredicateSession<'_>,
         tokens: &S,
         session: &mut AssertionSession<'_, '_, S>,
     ) -> Result<Vec<Match>, MatchResourceError> {
         let matches = self.0.matches(budget, predicates, tokens, session)?;
-        self.to_matches(&budget.output, matches)
+        self.to_matches(budget.output, matches)
     }
 
     pub(crate) fn try_find_matches_with_graph<S: TokenSequence + ?Sized>(
         &self,
-        budget: &mut MatchBudget,
+        budget: &mut MatchBudget<'_>,
         predicates: &PredicateSession<'_>,
         tokens: &S,
         session: &mut AssertionSession<'_, '_, S>,
@@ -74,7 +74,7 @@ impl EvaluatedPlan {
         let matches = self
             .0
             .matches_with_graph(budget, predicates, tokens, session, graph)?;
-        self.to_matches(&budget.output, matches)
+        self.to_matches(budget.output, matches)
     }
 
     fn to_matches(

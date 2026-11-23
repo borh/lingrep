@@ -429,15 +429,17 @@ fn inject_group<S: TokenSequence + ?Sized>(
 /// consuming transitions accepts the current token. Closure states left
 /// out by the prefilter would emit nothing and produce no successors,
 /// so the frontier difference is unobservable.
-pub(crate) fn inject_spawns<S: TokenSequence + ?Sized>(
+pub(crate) fn inject_spawns<S: TokenSequence + ?Sized, F>(
     dense: &DenseMachine,
     predicates: &PredicateSession<'_>,
     tokens: &S,
     index: usize,
     frontier: &mut Vec<StateInfo>,
     scratch: &mut ExecScratch,
-    assertion_holds: &mut dyn FnMut(&CompiledPositionAssertion, usize) -> bool,
-) {
+    assertion_holds: &mut F,
+) where
+    F: FnMut(&CompiledPositionAssertion, usize) -> bool,
+{
     let spawn = StateInfo {
         state: 0,
         start_token: index,

@@ -233,7 +233,7 @@ impl<'a> Observations<'a> {
         m: &RuntimeMeasure,
         words: usize,
         tokens: &S,
-        budget: &mut MatchBudget,
+        budget: &mut MatchBudget<'_>,
         pattern: &str,
     ) -> Result<(), MatchResourceError> {
         let word_layer = TreeLayer::Word;
