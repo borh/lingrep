@@ -1,8 +1,5 @@
 :root {
   --surface: var(--ground);
-  /* Colours and typefaces come from the shared stylesheet,
-     assets/questions/site.css. A match uses the quiet wash and rule of the
-     question page; a capture inside a match is amber so that it reads apart. */
   --text: var(--ink);
   --text-muted: var(--soft);
   --border-light: var(--rule);
@@ -45,6 +42,8 @@
   --space-6: 2rem;
   --font-size-h2: 1.25rem;
   --font-size-h3: 1.02rem;
+  /* Shared colours and typefaces come from assets/questions/site.css.
+     Matches use the Question page's wash and rule. Amber marks captures. */
 }
 
 html,
