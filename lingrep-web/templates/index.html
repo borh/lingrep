@@ -61,7 +61,7 @@
       </div>
       <fieldset><legend data-i18n="scope.include">Include sections</legend>
         <div class="scope-options" data-search-scope-options>
-          {% for section in corpus_context.sections %}<label class="section-scope-option"><input type="checkbox" data-scope-include value="{{ section.label }}"><span>{{ section.label }}</span></label>{% endfor %}
+          {% for section in corpus_context.sections() %}<label class="section-scope-option"><input type="checkbox" data-scope-include value="{{ section.label }}"><span>{{ section.label }}</span></label>{% endfor %}
         </div>
       </fieldset>
       <label class="section-scope-option"><input type="checkbox" data-scope-unlabelled checked><span data-i18n="scope.unlabelled">Include unlabelled text</span></label>

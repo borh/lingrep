@@ -9,7 +9,7 @@ use lingrep_core::fsm::policy_program::Overlaps;
 use lingrep_corpus::word_vectors::VectorTable;
 
 use crate::{
-    corpus_context::{CorpusContextView, UNNAMED_CORPUS, slot_context_view},
+    corpus_context::{CorpusContextState, CorpusContextView, UNNAMED_CORPUS, slot_context_view},
     corpus_set::CorpusName,
     permalink::{self, MAX_REQUEST_TARGET_LEN, WIRE_VERSION},
     revision::WorkbenchId,
@@ -260,12 +260,18 @@ enum Readiness<'a> {
 
 impl<'a> Readiness<'a> {
     fn of(context: &'a CorpusContextView) -> Self {
-        match (context.identity_digest.as_deref(), context.polling) {
-            (Some(digest), _) => Self::Ready(digest),
-            // Only the preparing states self-refresh; `failed` is terminal and
-            // is the one not-ready view that does not poll.
-            (None, true) => Self::Preparing,
-            (None, false) => Self::Failed,
+        match &context.state {
+            CorpusContextState::Ready {
+                identity_digest, ..
+            }
+            | CorpusContextState::DetailsUnavailable {
+                identity_digest, ..
+            }
+            | CorpusContextState::SentenceOnly {
+                identity_digest, ..
+            } => Self::Ready(identity_digest),
+            CorpusContextState::Preparing { .. } => Self::Preparing,
+            CorpusContextState::Failed => Self::Failed,
         }
     }
 }

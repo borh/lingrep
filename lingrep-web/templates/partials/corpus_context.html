@@ -1,6 +1,6 @@
 {% import "macros.html" as macros -%}
-<section class="corpus-context" aria-label="Corpus context" data-i18n-aria-label="corpus.section_label"{% match corpus_context.identity_digest %}{% when Some with (digest) %} data-corpus-digest="{{ digest }}"{% when None %}{% endmatch %}{% if !corpus_context.token_keys.is_empty() %} data-token-keys="{{ corpus_context.token_keys.join(" ") }}"{% endif %}{% if corpus_context.polling %} hx-get="api/corpus-context?k={{ corpus_context.corpus_key }}" hx-trigger="load delay:2s, every 3s" hx-swap="outerHTML"{% endif %}>
-  {% call macros::corpus_name(corpus_context.name, corpus_context.identity_digest.as_deref().unwrap_or(""), "") %}{% endcall %}
+<section class="corpus-context" aria-label="Corpus context" data-i18n-aria-label="corpus.section_label"{% match corpus_context.identity_digest() %}{% when Some with (digest) %} data-corpus-digest="{{ digest }}"{% when None %}{% endmatch %}{% if !corpus_context.token_keys.is_empty() %} data-token-keys="{{ corpus_context.token_keys.join(" ") }}"{% endif %}{% if corpus_context.is_polling() %} hx-get="api/corpus-context?k={{ corpus_context.corpus_key }}" hx-trigger="load delay:2s, every 3s" hx-swap="outerHTML"{% endif %}>
+  {% call macros::corpus_name(corpus_context.name, corpus_context.identity_digest().unwrap_or(""), "") %}{% endcall %}
   {% if corpora.len() > 1 %}
   <label class="corpus-select-label" for="corpus-select">
     <select id="corpus-select" data-corpus-select
@@ -14,28 +14,28 @@
     </select>
   </label>
   {% endif %}
-  {% match corpus_context.sentence_count %}{% when Some with (sentences) %}
-  {% match corpus_context.document_count %}{% when Some with (documents) %}
+  {% match corpus_context.sentence_count_label() %}{% when Some with (sentences) %}
+  {% match corpus_context.document_count_label() %}{% when Some with (documents) %}
   <p class="corpus-context-counts" data-i18n="corpus.counts"
-     data-i18n-args='{"sentences": "{{ corpus_context.sentence_count_label.as_deref().unwrap_or("") }}", "documents": "{{ corpus_context.document_count_label.as_deref().unwrap_or("") }}"}'>{{ corpus_context.sentence_count_label.as_deref().unwrap_or("") }} sentences · {{ corpus_context.document_count_label.as_deref().unwrap_or("") }} documents</p>
+     data-i18n-args='{"sentences": "{{ sentences }}", "documents": "{{ documents }}"}'>{{ sentences }} sentences · {{ documents }} documents</p>
   {% when None %}
   <p class="corpus-context-counts" data-i18n="corpus.counts_sentences_only"
-     data-i18n-args='{"sentences": "{{ corpus_context.sentence_count_label.as_deref().unwrap_or("") }}"}'>{{ corpus_context.sentence_count_label.as_deref().unwrap_or("") }} sentences</p>
+     data-i18n-args='{"sentences": "{{ sentences }}"}'>{{ sentences }} sentences</p>
   {% endmatch %}
   {% when None %}{% endmatch %}
   <div id="corpus-analysis-scope" class="corpus-context-sections">
-    {% if !corpus_context.sections.is_empty() %}
+    {% if !corpus_context.sections().is_empty() %}
     <details class="corpus-analysis-scope">
       <summary><span data-i18n="corpus.sections">Sections:</span>
-        <span class="scope-count">{{ corpus_context.sections.len() }}</span>
+        <span class="scope-count">{{ corpus_context.sections().len() }}</span>
       </summary>
       <div class="section-scope-form">
         <div class="scope-options">
-          {% for section in corpus_context.sections %}<span class="corpus-section" data-corpus-section-label="{{ section.label }}">{{ section.label }} <small>{{ section.count_label }}</small></span>{% endfor %}
+          {% for section in corpus_context.sections() %}<span class="corpus-section" data-corpus-section-label="{{ section.label }}">{{ section.label }} <small>{{ section.count_label }}</small></span>{% endfor %}
         </div>
       </div>
     </details>
     {% endif %}
   </div>
-  {% match corpus_context.note %}{% when Some with (note) %}<p class="corpus-context-note muted"{% match corpus_context.note_key %}{% when Some with (key) %} data-i18n="{{ key }}"{% when None %}{% endmatch %}{% match corpus_context.note_args %}{% when Some with (args) %} data-i18n-args='{{ args }}'{% when None %}{% endmatch %}>{{ note }}</p>{% when None %}{% endmatch %}
+  {% match corpus_context.note() %}{% when Some with (note) %}<p class="corpus-context-note muted" data-i18n="{{ note.key }}"{% match note.args %}{% when Some with (args) %} data-i18n-args='{{ args }}'{% when None %}{% endmatch %}>{{ note.text }}</p>{% when None %}{% endmatch %}
 </section>

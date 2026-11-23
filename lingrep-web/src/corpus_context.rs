@@ -59,16 +59,86 @@ pub fn identity_digest(identity: &CorpusIdentity) -> String {
 }
 
 /// One section ready for the template.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SectionRow {
     pub label: String,
     pub count_label: String,
 }
 
-/// Precomputed, template-ready corpus context. Field population expresses the six
-/// rendering states (see spec): the template branches only on `Option`/emptiness,
-/// never on a custom enum.
-#[derive(Debug, Clone)]
+/// A raw count paired with its formatted display label so the two cannot
+/// diverge.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct FormattedCount {
+    raw: u64,
+    label: String,
+}
+
+impl FormattedCount {
+    #[must_use]
+    pub fn new(raw: u64) -> Self {
+        Self {
+            raw,
+            label: format_count(raw),
+        }
+    }
+
+    #[must_use]
+    pub fn raw(&self) -> u64 {
+        self.raw
+    }
+
+    #[must_use]
+    pub fn label(&self) -> &str {
+        &self.label
+    }
+}
+
+/// Status note rendered below the corpus context panel, paired with its i18n
+/// key and optional JSON interpolation arguments.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ContextNote {
+    pub text: String,
+    pub key: &'static str,
+    pub args: Option<String>,
+}
+
+/// Algebraic rendering state for [`CorpusContextView`].
+///
+/// Expresses the six panel states directly (`Ready` with non-empty vs empty
+/// `sections` accounts for states 1 and 6), making impossible combinations of
+/// identity digest, polling, counts, sections, and status notes
+/// unrepresentable.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum CorpusContextState {
+    /// State 1 / 6: ready with provenance and successful aggregates.
+    Ready {
+        identity_digest: String,
+        sentences: FormattedCount,
+        documents: FormattedCount,
+        /// Every section the corpus records, in coverage order. Not truncated:
+        /// the row scrolls horizontally, so an overflow disclosure hid labels
+        /// behind a click that the reader could already have reached by
+        /// scrolling.
+        sections: Vec<SectionRow>,
+    },
+    /// State 2: ready with provenance, but aggregate composition failed.
+    DetailsUnavailable {
+        identity_digest: String,
+        sentences: FormattedCount,
+    },
+    /// State 3: ready with sentence count only.
+    SentenceOnly {
+        identity_digest: String,
+        sentences: FormattedCount,
+    },
+    /// State 4: corpus is preparing; polls until ready or failed.
+    Preparing { lines_processed: Option<u64> },
+    /// State 5: corpus failed. Terminal — no polling.
+    Failed,
+}
+
+/// Precomputed, template-ready corpus context.
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct CorpusContextView {
     pub name: String,
     /// Protocol key of the corpus this panel describes, stamped by
@@ -78,32 +148,24 @@ pub struct CorpusContextView {
     /// This is what the poll and the search form carry back, so the *selected*
     /// corpus — never the server's default — drives the next request.
     pub corpus_key: String,
-    pub identity_digest: Option<String>,
-    pub polling: bool,
-    pub note: Option<String>,
-    /// i18n interpolation args for `note` (JSON, empty when the note has no
-    /// parameters), rendered as `data-i18n-args` by the template.
-    pub note_args: Option<String>,
-    /// i18n key for `note`; absent means the note is free-text.
-    pub note_key: Option<&'static str>,
-    pub sentence_count_label: Option<String>,
-    pub document_count_label: Option<String>,
-    /// Raw counts for i18n interpolation of the counts line; always Some
-    /// exactly when the corresponding label is.
-    pub sentence_count: Option<u64>,
-    pub document_count: Option<u64>,
-    /// Every section the corpus records, in coverage order. Not truncated: the
-    /// row scrolls horizontally, so an overflow disclosure hid labels behind a
-    /// click that the reader could already have reached by scrolling.
-    pub sections: Vec<SectionRow>,
     /// The token attribute keys the corpus carries, which the pattern editor
     /// completes; empty until the corpus is ready.
     pub token_keys: Vec<String>,
+    pub state: CorpusContextState,
 }
 
 impl CorpusContextView {
+    fn new(name: String, state: CorpusContextState) -> Self {
+        Self {
+            name,
+            corpus_key: String::new(),
+            token_keys: Vec::new(),
+            state,
+        }
+    }
+
     /// State 1 / 6: ready with provenance and successful aggregates. Zero sections
-    /// leaves both section vecs empty, which the template renders as state 6.
+    /// leaves `sections` empty, which the template renders as state 6.
     pub fn ready(
         name: String,
         digest: String,
@@ -118,106 +180,154 @@ impl CorpusContextView {
                 count_label: format_abbrev(s.coverage),
             })
             .collect();
-        Self {
+        Self::new(
             name,
-            corpus_key: String::new(),
-            identity_digest: Some(digest),
-            polling: false,
-            note: None,
-            note_args: None,
-            note_key: None,
-            sentence_count_label: Some(format_count(sentence_count)),
-            document_count_label: Some(format_count(document_count)),
-            sentence_count: Some(sentence_count),
-            document_count: Some(document_count),
-            sections: rows,
-            token_keys: Vec::new(),
-        }
+            CorpusContextState::Ready {
+                identity_digest: digest,
+                sentences: FormattedCount::new(sentence_count),
+                documents: FormattedCount::new(document_count),
+                sections: rows,
+            },
+        )
     }
 
     /// State 2: ready with provenance, but aggregate composition failed.
     pub fn details_unavailable(name: String, digest: String, sentence_count: u64) -> Self {
-        Self {
+        Self::new(
             name,
-            corpus_key: String::new(),
-            identity_digest: Some(digest),
-            polling: false,
-            note: Some("Corpus details unavailable.".into()),
-            note_args: None,
-            note_key: Some("corpus.details_unavailable"),
-            sentence_count_label: Some(format_count(sentence_count)),
-            document_count_label: None,
-            sentence_count: Some(sentence_count),
-            document_count: None,
-            sections: Vec::new(),
-            token_keys: Vec::new(),
-        }
+            CorpusContextState::DetailsUnavailable {
+                identity_digest: digest,
+                sentences: FormattedCount::new(sentence_count),
+            },
+        )
     }
 
     /// State 3: ready with sentence count only.
     pub fn sentence_only(name: String, digest: String, sentence_count: u64) -> Self {
-        Self {
+        Self::new(
             name,
-            corpus_key: String::new(),
-            identity_digest: Some(digest),
-            polling: false,
-            note: None,
-            note_args: None,
-            note_key: None,
-            sentence_count_label: Some(format_count(sentence_count)),
-            document_count_label: None,
-            sentence_count: Some(sentence_count),
-            document_count: None,
-            sections: Vec::new(),
-            token_keys: Vec::new(),
-        }
+            CorpusContextState::SentenceOnly {
+                identity_digest: digest,
+                sentences: FormattedCount::new(sentence_count),
+            },
+        )
     }
 
     /// Shows preparation progress, including a record count when the runtime supplies one.
     pub fn preparing(name: String, lines_processed: Option<u64>) -> Self {
-        let (note, note_args) = match lines_processed {
-            Some(processed) => (
-                format!(
-                    "Corpus is preparing… {} records read",
-                    format_count(processed)
-                ),
-                Some(format!("{{\"n\": {processed}}}")),
-            ),
-            None => ("Corpus is preparing…".into(), None),
-        };
-        Self {
-            name,
-            corpus_key: String::new(),
-            identity_digest: None,
-            polling: true,
-            note: Some(note),
-            note_args,
-            note_key: Some("corpus.preparing"),
-            sentence_count_label: None,
-            document_count_label: None,
-            sentence_count: None,
-            document_count: None,
-            sections: Vec::new(),
-            token_keys: Vec::new(),
-        }
+        Self::new(name, CorpusContextState::Preparing { lines_processed })
     }
 
     /// State 5: corpus failed. Terminal — no polling.
     pub fn failed(name: String) -> Self {
-        Self {
-            name,
-            corpus_key: String::new(),
-            identity_digest: None,
-            polling: false,
-            note: Some("Corpus unavailable.".into()),
-            note_args: None,
-            note_key: Some("corpus.unavailable"),
-            sentence_count_label: None,
-            document_count_label: None,
-            sentence_count: None,
-            document_count: None,
-            sections: Vec::new(),
-            token_keys: Vec::new(),
+        Self::new(name, CorpusContextState::Failed)
+    }
+
+    #[must_use]
+    pub fn identity_digest(&self) -> Option<&str> {
+        match &self.state {
+            CorpusContextState::Ready {
+                identity_digest, ..
+            }
+            | CorpusContextState::DetailsUnavailable {
+                identity_digest, ..
+            }
+            | CorpusContextState::SentenceOnly {
+                identity_digest, ..
+            } => Some(identity_digest),
+            CorpusContextState::Preparing { .. } | CorpusContextState::Failed => None,
+        }
+    }
+
+    #[must_use]
+    pub fn is_polling(&self) -> bool {
+        matches!(self.state, CorpusContextState::Preparing { .. })
+    }
+
+    #[must_use]
+    pub fn sentence_count(&self) -> Option<u64> {
+        match &self.state {
+            CorpusContextState::Ready { sentences, .. }
+            | CorpusContextState::DetailsUnavailable { sentences, .. }
+            | CorpusContextState::SentenceOnly { sentences, .. } => Some(sentences.raw()),
+            CorpusContextState::Preparing { .. } | CorpusContextState::Failed => None,
+        }
+    }
+
+    #[must_use]
+    pub fn sentence_count_label(&self) -> Option<&str> {
+        match &self.state {
+            CorpusContextState::Ready { sentences, .. }
+            | CorpusContextState::DetailsUnavailable { sentences, .. }
+            | CorpusContextState::SentenceOnly { sentences, .. } => Some(sentences.label()),
+            CorpusContextState::Preparing { .. } | CorpusContextState::Failed => None,
+        }
+    }
+
+    #[must_use]
+    pub fn document_count(&self) -> Option<u64> {
+        match &self.state {
+            CorpusContextState::Ready { documents, .. } => Some(documents.raw()),
+            CorpusContextState::DetailsUnavailable { .. }
+            | CorpusContextState::SentenceOnly { .. }
+            | CorpusContextState::Preparing { .. }
+            | CorpusContextState::Failed => None,
+        }
+    }
+
+    #[must_use]
+    pub fn document_count_label(&self) -> Option<&str> {
+        match &self.state {
+            CorpusContextState::Ready { documents, .. } => Some(documents.label()),
+            CorpusContextState::DetailsUnavailable { .. }
+            | CorpusContextState::SentenceOnly { .. }
+            | CorpusContextState::Preparing { .. }
+            | CorpusContextState::Failed => None,
+        }
+    }
+
+    #[must_use]
+    pub fn sections(&self) -> &[SectionRow] {
+        match &self.state {
+            CorpusContextState::Ready { sections, .. } => sections,
+            CorpusContextState::DetailsUnavailable { .. }
+            | CorpusContextState::SentenceOnly { .. }
+            | CorpusContextState::Preparing { .. }
+            | CorpusContextState::Failed => &[],
+        }
+    }
+
+    #[must_use]
+    pub fn note(&self) -> Option<ContextNote> {
+        match self.state {
+            CorpusContextState::Ready { .. } | CorpusContextState::SentenceOnly { .. } => None,
+            CorpusContextState::DetailsUnavailable { .. } => Some(ContextNote {
+                text: "Corpus details unavailable.".into(),
+                key: "corpus.details_unavailable",
+                args: None,
+            }),
+            CorpusContextState::Preparing { lines_processed } => {
+                let (text, args) = match lines_processed {
+                    Some(processed) => (
+                        format!(
+                            "Corpus is preparing… {} records read",
+                            format_count(processed)
+                        ),
+                        Some(format!("{{\"n\": {processed}}}")),
+                    ),
+                    None => ("Corpus is preparing…".into(), None),
+                };
+                Some(ContextNote {
+                    text,
+                    key: "corpus.preparing",
+                    args,
+                })
+            }
+            CorpusContextState::Failed => Some(ContextNote {
+                text: "Corpus unavailable.".into(),
+                key: "corpus.unavailable",
+                args: None,
+            }),
         }
     }
 }
@@ -480,50 +590,91 @@ mod tests {
             8_300,
             sections,
         );
-        assert_eq!(v.sentence_count_label.as_deref(), Some("1,240,000"));
-        assert_eq!(v.document_count_label.as_deref(), Some("8,300"));
-        assert_eq!(v.sections.len(), 10);
-        assert_eq!(v.sections[0].count_label, "10k");
-        assert!(v.note.is_none());
-        assert!(!v.polling);
-        assert!(v.identity_digest.is_some());
+        assert_eq!(v.sentence_count(), Some(1_240_000));
+        assert_eq!(v.sentence_count_label(), Some("1,240,000"));
+        assert_eq!(v.document_count(), Some(8_300));
+        assert_eq!(v.document_count_label(), Some("8,300"));
+        assert_eq!(v.sections().len(), 10);
+        assert_eq!(v.sections()[0].count_label, "10k");
+        assert!(v.note().is_none());
+        assert!(!v.is_polling());
+        assert_eq!(v.identity_digest(), Some("abc123abc123"));
     }
 
     #[test]
     fn ready_with_no_sections_lists_none() {
         let v = CorpusContextView::ready("corp".into(), "abc123abc123".into(), 5, 1, vec![]);
-        assert!(v.sections.is_empty());
-        assert_eq!(v.document_count_label.as_deref(), Some("1"));
+        assert!(v.sections().is_empty());
+        assert_eq!(v.document_count_label(), Some("1"));
     }
 
     #[test]
     fn degraded_states_populate_the_right_fields() {
         let d = CorpusContextView::details_unavailable("c".into(), "abc123abc123".into(), 42);
-        assert_eq!(d.sentence_count_label.as_deref(), Some("42"));
-        assert!(d.document_count_label.is_none());
-        assert!(d.sections.is_empty());
-        assert_eq!(d.note.as_deref(), Some("Corpus details unavailable."));
+        assert!(matches!(
+            d.state,
+            CorpusContextState::DetailsUnavailable { .. }
+        ));
+        assert_eq!(d.sentence_count_label(), Some("42"));
+        assert!(d.document_count_label().is_none());
+        assert!(d.sections().is_empty());
+        assert_eq!(
+            d.note(),
+            Some(ContextNote {
+                text: "Corpus details unavailable.".into(),
+                key: "corpus.details_unavailable",
+                args: None,
+            })
+        );
 
         let s = CorpusContextView::sentence_only("c".into(), "abc123abc123".into(), 42);
-        assert_eq!(s.sentence_count_label.as_deref(), Some("42"));
-        assert!(s.note.is_none());
+        assert!(matches!(s.state, CorpusContextState::SentenceOnly { .. }));
+        assert_eq!(s.sentence_count_label(), Some("42"));
+        assert!(s.document_count_label().is_none());
+        assert!(s.note().is_none());
 
         let p = CorpusContextView::preparing("c".into(), None);
-        assert!(p.sentence_count_label.is_none());
-        assert!(p.identity_digest.is_none());
-        assert!(p.polling);
-        assert_eq!(p.note.as_deref(), Some("Corpus is preparing…"));
+        assert!(matches!(
+            p.state,
+            CorpusContextState::Preparing {
+                lines_processed: None
+            }
+        ));
+        assert!(p.sentence_count_label().is_none());
+        assert!(p.identity_digest().is_none());
+        assert!(p.is_polling());
+        assert_eq!(
+            p.note(),
+            Some(ContextNote {
+                text: "Corpus is preparing…".into(),
+                key: "corpus.preparing",
+                args: None,
+            })
+        );
 
         let p = CorpusContextView::preparing("c".into(), Some(12_345));
-        assert!(p.polling);
+        assert!(p.is_polling());
         assert_eq!(
-            p.note.as_deref(),
-            Some("Corpus is preparing… 12,345 records read")
+            p.note(),
+            Some(ContextNote {
+                text: "Corpus is preparing… 12,345 records read".into(),
+                key: "corpus.preparing",
+                args: Some("{\"n\": 12345}".into()),
+            })
         );
 
         let f = CorpusContextView::failed("c".into());
-        assert!(!f.polling);
-        assert_eq!(f.note.as_deref(), Some("Corpus unavailable."));
+        assert_eq!(f.state, CorpusContextState::Failed);
+        assert!(!f.is_polling());
+        assert!(f.identity_digest().is_none());
+        assert_eq!(
+            f.note(),
+            Some(ContextNote {
+                text: "Corpus unavailable.".into(),
+                key: "corpus.unavailable",
+                args: None,
+            })
+        );
     }
 
     use std::sync::Arc;

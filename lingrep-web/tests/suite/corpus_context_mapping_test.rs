@@ -113,8 +113,7 @@ async fn corpus_context_view_maps_ready_corpus_to_state_one() {
 
     // Identity digest: present, 12 lowercase-hex chars.
     let digest = view
-        .identity_digest
-        .as_deref()
+        .identity_digest()
         .expect("state 1 exposes the identity digest");
     assert_eq!(digest.len(), 12);
     assert!(
@@ -124,15 +123,15 @@ async fn corpus_context_view_maps_ready_corpus_to_state_one() {
         "digest must be lowercase hex, got {digest:?}"
     );
 
-    assert_eq!(view.sentence_count_label.as_deref(), Some("3"));
-    assert_eq!(view.document_count_label.as_deref(), Some("1"));
+    assert_eq!(view.sentence_count_label(), Some("3"));
+    assert_eq!(view.document_count_label(), Some("1"));
 
     // State 1 (not a degraded state): no note, not polling.
-    assert!(view.note.is_none(), "state 1 carries no note");
-    assert!(!view.polling, "a ready corpus does not poll");
+    assert!(view.note().is_none(), "state 1 carries no note");
+    assert!(!view.is_polling(), "a ready corpus does not poll");
 
     assert_eq!(
-        view.sections
+        view.sections()
             .iter()
             .map(|section| (section.label.as_str(), section.count_label.as_str()))
             .collect::<Vec<_>>(),
@@ -176,6 +175,6 @@ async fn corpus_context_counts_admitted_jsonl_documents_not_physical_sources() {
 
     let view = corpus_context_view(&store, None).await;
 
-    assert_eq!(view.sentence_count_label.as_deref(), Some("2"));
-    assert_eq!(view.document_count_label.as_deref(), Some("2"));
+    assert_eq!(view.sentence_count_label(), Some("2"));
+    assert_eq!(view.document_count_label(), Some("2"));
 }
