@@ -11,7 +11,8 @@
 //! [`DEFAULT_MAX_INPUT_RECORD_BYTES`](super::DEFAULT_MAX_INPUT_RECORD_BYTES).
 
 use std::io::{self, BufRead, Read};
-use std::sync::{Arc, Mutex};
+use std::sync::Arc;
+use std::sync::atomic::{AtomicUsize, Ordering};
 
 /// A physical input record proved larger than its configured bound.
 ///
@@ -41,17 +42,14 @@ pub struct BoundedRecordError {
 /// without borrowing the reader itself.
 #[derive(Clone, Default)]
 pub struct BoundedRecordStats {
-    max_retained_bytes: Arc<Mutex<usize>>,
+    max_retained_bytes: Arc<AtomicUsize>,
 }
 
 impl BoundedRecordStats {
-    /// Returns the largest record buffer observed so far, or `0` if the
-    /// statistics lock was poisoned.
+    /// Returns the largest record buffer observed so far.
     #[must_use]
     pub fn max_retained_bytes(&self) -> usize {
-        self.max_retained_bytes
-            .lock()
-            .map_or(0, |retained| *retained)
+        self.max_retained_bytes.load(Ordering::Relaxed)
     }
 }
 
@@ -65,6 +63,7 @@ pub struct BoundedRecordReader<R> {
     source_name: String,
     next_record_ordinal: u64,
     terminal_error: Option<BoundedRecordError>,
+    local_max_retained: usize,
     stats: BoundedRecordStats,
 }
 
@@ -88,6 +87,7 @@ impl<R: BufRead> BoundedRecordReader<R> {
                 source_name: source_name.into(),
                 next_record_ordinal: 0,
                 terminal_error: None,
+                local_max_retained: 0,
                 stats: stats.clone(),
             },
             stats,
@@ -130,7 +130,7 @@ impl<R: BufRead> BoundedRecordReader<R> {
             let available = self.reader.fill_buf()?;
             self.record.extend_from_slice(&available[..copy]);
             self.reader.consume(copy + usize::from(newline));
-            self.observe_retained()?;
+            self.observe_retained();
             if oversized {
                 let error = BoundedRecordError {
                     source_name: self.source_name.clone(),
@@ -143,7 +143,7 @@ impl<R: BufRead> BoundedRecordReader<R> {
             }
             if newline {
                 self.record.push(b'\n');
-                self.observe_retained()?;
+                self.observe_retained();
                 self.finish_record()?;
                 return Ok(());
             }
@@ -158,14 +158,15 @@ impl<R: BufRead> BoundedRecordReader<R> {
         Ok(())
     }
 
-    fn observe_retained(&self) -> io::Result<()> {
-        let mut max_retained = self
-            .stats
-            .max_retained_bytes
-            .lock()
-            .map_err(|_| io::Error::other("bounded record statistics lock poisoned"))?;
-        *max_retained = (*max_retained).max(self.record.len());
-        Ok(())
+    #[inline]
+    fn observe_retained(&mut self) {
+        let len = self.record.len();
+        if len > self.local_max_retained {
+            self.local_max_retained = len;
+            self.stats
+                .max_retained_bytes
+                .fetch_max(len, Ordering::Relaxed);
+        }
     }
 }
 

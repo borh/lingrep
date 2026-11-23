@@ -627,6 +627,9 @@ pub struct AdmittedCorpus<I> {
     scope: Option<Scoped>,
     /// The current document's outcome, recomputed once per `DocumentStart`.
     outcome: DocumentOutcome,
+    /// Memoized structural snapshot invalidated whenever `observations` or
+    /// `active_divisions` changes, avoiding a per-sentence `BTreeMap` clone.
+    cached_structure: Option<Arc<StructuralContext>>,
 }
 
 struct Scoped {
@@ -661,6 +664,7 @@ impl<I> AdmittedCorpus<I> {
             finished: false,
             scope: None,
             outcome: DocumentOutcome::Decided(Verdict::Admitted),
+            cached_structure: None,
         }
     }
 
@@ -797,6 +801,7 @@ impl<I> AdmittedCorpus<I> {
         });
         self.active_divisions
             .insert(division.id, (Arc::clone(&division), bytes));
+        self.cached_structure = None;
         Ok(division)
     }
 
@@ -811,6 +816,7 @@ impl<I> AdmittedCorpus<I> {
         self.active_divisions
             .remove(&id)
             .ok_or_else(|| Self::invalid("division closed twice"))?;
+        self.cached_structure = None;
         self.pending_events
             .push_back(AdmittedCorpusEvent::DivisionEnd { id });
         Ok(())
@@ -859,6 +865,7 @@ impl<I> AdmittedCorpus<I> {
                 self.observations.clear();
                 self.reader_divisions.clear();
                 self.last_reader_division = None;
+                self.cached_structure = None;
                 if let Some(scoped) = &mut self.scope {
                     self.outcome = scoped.clause.evaluate_document(&metadata);
                     // A document that reaches sentence evaluation is admitted
@@ -936,6 +943,7 @@ impl<I> AdmittedCorpus<I> {
                     return Err(Self::invalid("too many observed division kinds"));
                 }
                 self.observations.insert(kind.clone(), observation.clone());
+                self.cached_structure = None;
                 Ok(Some(AdmittedCorpusEvent::DivisionObservation {
                     document_id,
                     kind,
@@ -999,14 +1007,16 @@ impl<I> AdmittedCorpus<I> {
                         "active section labels exceed their byte budget",
                     ));
                 }
-                let structure = Arc::new(StructuralContext {
-                    observations: self.observations.clone(),
-                    divisions: self
-                        .active_divisions
-                        .values()
-                        .map(|(division, _)| Arc::clone(division))
-                        .collect(),
-                });
+                let structure = Arc::clone(self.cached_structure.get_or_insert_with(|| {
+                    Arc::new(StructuralContext {
+                        observations: self.observations.clone(),
+                        divisions: self
+                            .active_divisions
+                            .values()
+                            .map(|(division, _)| Arc::clone(division))
+                            .collect(),
+                    })
+                }));
                 let next_ordinal = document_ordinal
                     .checked_add(1)
                     .ok_or_else(|| Self::invalid("document sentence ordinal overflow"))?;
