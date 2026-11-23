@@ -305,3 +305,46 @@ fn consumed_tokens_name_the_element_and_the_reference_that_reached_it() {
     let tokens = [word("猫", "猫"), word("だ", "だ")];
     assert_eq!(output.consumed_tokens("p", &tokens[..], 0, 1), None);
 }
+
+#[test]
+fn consumed_tokens_report_each_attribute_test_with_the_token_value() {
+    let output = compile("pattern p := [lemma=猫 & text!=犬] [text=だ].\n");
+    let tokens = [word("ねこ", "猫"), word("だ", "だ")];
+    let tests = output
+        .consumed_tokens("p", &tokens[..], 0, 2)
+        .expect("the body derives the span")
+        .into_iter()
+        .map(|consumed| {
+            consumed
+                .tests
+                .into_iter()
+                .map(|test| (test.attribute, test.test, test.actual, test.held))
+                .collect::<Vec<_>>()
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(
+        tests,
+        vec![
+            vec![
+                (
+                    "lemma".to_owned(),
+                    "=猫".to_owned(),
+                    Some("猫".to_owned()),
+                    true
+                ),
+                (
+                    "text".to_owned(),
+                    "not in {犬}".to_owned(),
+                    Some("ねこ".to_owned()),
+                    true
+                ),
+            ],
+            vec![(
+                "text".to_owned(),
+                "=だ".to_owned(),
+                Some("だ".to_owned()),
+                true
+            )],
+        ]
+    );
+}

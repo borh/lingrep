@@ -1725,7 +1725,7 @@ async function checkSource(state, source, reason = "input") {
       state.textarea.dispatchEvent(
         new CustomEvent("pattern:valid", {
           bubbles: true,
-          detail: { source, stats: result.stats ?? null },
+          detail: { source, stats: result.stats ?? null, tokenKeys: result.token_keys ?? null },
         }),
       );
       return diagnostics;
@@ -1757,6 +1757,7 @@ async function checkSource(state, source, reason = "input") {
       }
       const diagnostics = serverDiagnosticMapping(state, source, result.diagnostics ?? []);
       state.lastCheck = { source, diagnostics };
+      announceInvalid(state, state.diagnosticRange?.start ?? diagnostics[0]?.from ?? 0);
       return diagnostics;
     }
     status(state, () => t("editor.status_unavailable"), true);
@@ -1780,6 +1781,7 @@ function patternLintSource(state) {
       const first = local[0];
       const line = view.state.doc.lineAt(first.from);
       status(state, () => t("editor.status_local_syntax", { line: line.number, column: first.from - line.from + 1, message: first.message }), true);
+      announceInvalid(state, first.from);
       return local;
     }
     if (state.lastCheck?.source === source) return state.lastCheck.diagnostics;
@@ -2050,7 +2052,15 @@ async function enhance(textarea, grammar, cm, options = {}) {
     state.sampleSource = event.detail?.ranges ?? [];
     if (!state.view) return;
     const [first] = state.sampleSource;
-    state.view.dispatch(first ? { effects: cm.EditorView.scrollIntoView(first[0]) } : {});
+    state.view.dispatch({});
+    if (!first) return;
+    // Scroll the editor's own scroller, never the window: the selection was
+    // made in the results, and the page must stay where the reader is.
+    const scroller = state.view.scrollDOM;
+    const line = state.view.lineBlockAt(Math.min(first[0], state.view.state.doc.length));
+    if (line.top < scroller.scrollTop || line.bottom > scroller.scrollTop + scroller.clientHeight) {
+      scroller.scrollTop = Math.max(0, line.top - scroller.clientHeight / 2);
+    }
   });
 
   const view = new cm.EditorView({
@@ -2148,6 +2158,24 @@ async function enhance(textarea, grammar, cm, options = {}) {
     if (options.formatOnBlur !== false) void formatCurrent(textarea);
     void checkSource(state, state.source(), "blur").then(() => cm.forceLinting(view));
   });
+}
+
+/** Tells the page the pattern does not compile; `from` is the UTF-16 offset of the first error. */
+function announceInvalid(state, from) {
+  state.textarea.dispatchEvent(new CustomEvent("pattern:invalid", { bubbles: true, detail: { from } }));
+}
+
+/** Replaces the selection in `textarea`'s editor, or in the textarea itself when it has none, with `text`, and focuses it. */
+export function insertAtCursor(textarea, text) {
+  const state = states.get(textarea);
+  if (!state?.view) {
+    textarea.setRangeText(text, textarea.selectionStart, textarea.selectionEnd, "end");
+    textarea.dispatchEvent(new Event("input", { bubbles: true }));
+    textarea.focus();
+    return;
+  }
+  state.view.dispatch(state.view.state.replaceSelection(text));
+  state.view.focus();
 }
 
 /** Rechecks `textarea`'s source, as when the corpus it is checked against changes. */

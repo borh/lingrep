@@ -37,44 +37,34 @@ fn overlap_diagnostics_include_nested_and_crossing_candidates_but_exclude_adjace
 }
 
 #[test]
-fn matched_carries_document_global_spans_and_capture_values() {
+fn matched_carries_sentence_local_spans_and_capture_values() {
     let lines = vec![
         vec![tok("猫", "名詞"), tok("が", "助詞")],
         vec![tok("は", "助詞"), tok("走る", "動詞")],
     ];
     // Named capture so we can assert complete capture values, not just the span.
     let result = analyze_tokens("pattern v := (?<verb> [upos=動詞]).", &lines);
-    let SampleAnalysis::Matched {
-        tokens,
-        matches,
-        constellations,
-    } = result
-    else {
+    let SampleAnalysis::Matched { sentences } = result else {
         panic!("expected Matched");
     };
-    assert_eq!(tokens.len(), 4, "tokens flattened document-wide");
-    assert_eq!(tokens[3].index, 3, "document-global index, not per-line");
-    assert_eq!(matches.len(), 1);
-    let m = &matches[0];
+    assert_eq!(sentences.len(), 2, "one sentence per non-empty line");
     assert_eq!(
-        (m.start, m.end),
-        (3, 4),
-        "span in document-global coordinates"
+        sentences[1].tokens[1].index, 3,
+        "token indices count across the sample, so each names one token"
     );
+    assert!(sentences[0].matches.is_empty());
+    assert_eq!(sentences[1].matches.len(), 1);
+    let m = &sentences[1].matches[0];
+    assert_eq!((m.start, m.end), (1, 2), "span within its sentence");
     assert_eq!(m.pattern_name, "v");
     assert_eq!(m.captures.len(), 1, "the named capture is present");
     assert_eq!(m.captures[0].name, "verb");
     assert_eq!(
         (m.captures[0].start, m.captures[0].end),
-        (3, 4),
-        "capture span is document-global"
+        (1, 2),
+        "capture span within its sentence"
     );
-    assert_eq!(
-        constellations.len(),
-        2,
-        "one constellation per non-empty line"
-    );
-    assert_eq!(constellations[1].groups[0].span, 3..4);
+    assert_eq!(sentences[1].groups[0].span, 1..2);
 }
 
 #[test]
@@ -88,27 +78,26 @@ fn multiple_patterns_and_empty_lines_are_handled() {
         "pattern n := [upos=名詞]. pattern v := [upos=動詞].",
         &lines,
     );
-    let SampleAnalysis::Matched {
-        tokens,
-        matches,
-        constellations,
-    } = result
-    else {
+    let SampleAnalysis::Matched { sentences } = result else {
         panic!("expected Matched")
     };
-    assert_eq!(tokens.len(), 2, "empty line adds nothing");
-    let names: Vec<_> = matches.iter().map(|m| m.pattern_name.as_str()).collect();
-    assert!(
-        names.contains(&"n") && names.contains(&"v"),
-        "both patterns match"
-    );
-    // The verb is at document-global index 1 (empty line did not shift it to 2).
-    let verb = matches.iter().find(|m| m.pattern_name == "v").unwrap();
-    assert_eq!((verb.start, verb.end), (1, 2));
+    assert_eq!(sentences.len(), 2, "an empty line is not a sentence");
+    let names: Vec<_> = sentences
+        .iter()
+        .map(|sentence| sentence.matches[0].pattern_name.as_str())
+        .collect();
+    assert_eq!(names, ["n", "v"], "each pattern matches on its own line");
     assert_eq!(
-        constellations.len(),
-        2,
-        "empty lines create no constellation"
+        sentences[1].tokens[0].index, 1,
+        "the empty line did not shift the verb's index to 2"
+    );
+    assert_eq!(
+        (
+            sentences[1].matches[0].render_index,
+            sentences[1].matches[0].start
+        ),
+        (1, 0),
+        "matches are numbered across the sample and located in their sentence"
     );
 }
 
@@ -122,10 +111,10 @@ fn sf_experimental_aro_u_is_a_modal_leaf_not_a_mono_dearu_match() {
     ]];
 
     let result = analyze_tokens(source, &lines);
-    let SampleAnalysis::Matched { constellations, .. } = result else {
+    let SampleAnalysis::Matched { sentences } = result else {
         panic!("expected a visible modal candidate")
     };
-    let aro_u = constellations[0]
+    let aro_u = sentences[0]
         .groups
         .iter()
         .flat_map(|group| group.alternatives.iter())
@@ -134,7 +123,7 @@ fn sf_experimental_aro_u_is_a_modal_leaf_not_a_mono_dearu_match() {
 
     assert_eq!(aro_u.classes.as_ref(), ["S2C"]);
     assert!(
-        constellations[0]
+        sentences[0]
             .groups
             .iter()
             .flat_map(|group| group.alternatives.iter())
@@ -148,7 +137,7 @@ fn fragments_only_document_is_its_own_variant() {
     let lines = vec![vec![tok("走る", "動詞")]];
     assert!(matches!(
         analyze_tokens("fragment F := [upos=動詞].", &lines),
-        SampleAnalysis::FragmentsOnly { .. }
+        SampleAnalysis::FragmentsOnly
     ));
 }
 
@@ -174,7 +163,7 @@ fn compile_error_is_failed() {
 // Published composition reaches the sample view model.
 // ---------------------------------------------------------------------------
 
-fn composition_shape(constellation: &lingrep_web::sample::SampleConstellation) -> Vec<String> {
+fn composition_shape(constellation: &lingrep_web::sample::SampleSentence) -> Vec<String> {
     constellation
         .composition
         .iter()
@@ -193,9 +182,9 @@ fn composition_shape(constellation: &lingrep_web::sample::SampleConstellation) -
 fn matched_constellations(
     source: &str,
     lines: &[Vec<TokenInfo>],
-) -> Option<Vec<lingrep_web::sample::SampleConstellation>> {
+) -> Option<Vec<lingrep_web::sample::SampleSentence>> {
     match analyze_tokens(source, lines) {
-        SampleAnalysis::Matched { constellations, .. } => Some(constellations),
+        SampleAnalysis::Matched { sentences } => Some(sentences),
         _ => None,
     }
 }
@@ -486,13 +475,16 @@ fn a_sample_line_without_a_match_is_explained_for_each_definition() {
         &plan,
         "test".into(),
     );
-    let unmatched = report.run.expect("the pattern compiles").unmatched;
+    let SampleAnalysis::Matched { sentences } = report.analysis else {
+        panic!("猫鳥 and 猫犬 match");
+    };
 
-    let summary = unmatched
+    let summary = sentences
         .iter()
+        .filter(|line| !line.why_not.is_empty())
         .map(|line| {
             let definitions = line
-                .definitions
+                .why_not
                 .iter()
                 .map(|why| {
                     let WhyNotOutcome::Stopped(stop) = &why.outcome else {
@@ -506,12 +498,20 @@ fn a_sample_line_without_a_match_is_explained_for_each_definition() {
                     )
                 })
                 .collect::<Vec<_>>();
-            (line.text.as_str(), definitions)
+            let text = line
+                .tokens
+                .iter()
+                .map(|token| token.orth.as_str())
+                .collect::<String>();
+            (text, definitions)
         })
         .collect::<Vec<_>>();
     assert_eq!(
         summary,
-        vec![("鳥", vec![("a", 0, Some("鳥")), ("b", 0, Some("鳥"))])],
+        vec![(
+            "鳥".to_owned(),
+            vec![("a", 0, Some("鳥")), ("b", 0, Some("鳥"))]
+        )],
         "猫鳥 is matched by b and 猫犬 by both, so only 鳥 is unmatched"
     );
 }
@@ -527,13 +527,12 @@ fn a_sample_sentence_can_be_inserted_into_a_definitions_claims_once() {
         .expect("the plan builds");
     let edits = |source: &str| {
         let report = lingrep_web::sample::analyze_sample(source, "猫\n鳥", &plan, "test".into());
-        let SampleAnalysis::Matched { matches, .. } = report.analysis else {
+        let SampleAnalysis::Matched { sentences } = report.analysis else {
             panic!("猫 matches");
         };
-        let unmatched = report.run.expect("the pattern compiles").unmatched;
         (
-            matches[0].add_example.clone(),
-            unmatched[0].definitions[0].add_counterexample.clone(),
+            sentences[0].matches[0].add_example.clone(),
+            sentences[1].why_not[0].add_counterexample.clone(),
         )
     };
     let apply = |source: &str, edit: &ClaimInsert| {
@@ -585,9 +584,10 @@ fn a_match_token_carries_the_source_ranges_of_the_element_and_reference_that_con
         .expect("the plan builds");
     let source = "fragment 動物 := [text=猫].\npattern p := @動物 [text=と] [text=犬].\n";
     let report = lingrep_web::sample::analyze_sample(source, "猫と犬", &plan, "test".into());
-    let SampleAnalysis::Matched { matches, .. } = report.analysis else {
+    let SampleAnalysis::Matched { sentences } = report.analysis else {
         panic!("猫と犬 matches");
     };
+    let matches = &sentences[0].matches;
     let utf16 = source.encode_utf16().collect::<Vec<_>>();
     let texts = matches[0]
         .tokens
@@ -668,14 +668,13 @@ fn a_stored_dependency_sentence_matches_a_where_clause_the_sample_tokenizer_cann
             unavailable: Vec::new()
         }
     );
-    let SampleAnalysis::Matched {
-        tokens, matches, ..
-    } = report.analysis
-    else {
+    let SampleAnalysis::Matched { sentences } = report.analysis else {
         panic!("the where clause holds on the stored dependency edge");
     };
+    let matches = &sentences[0].matches;
     assert_eq!(
-        tokens
+        sentences[0]
+            .tokens
             .iter()
             .map(|token| token.orth.as_str())
             .collect::<Vec<_>>(),
@@ -685,10 +684,11 @@ fn a_stored_dependency_sentence_matches_a_where_clause_the_sample_tokenizer_cann
     assert_eq!(matches[0].captures.len(), 2);
 
     let report = analyze_stored_sentence(source, &schema, &stored("obj"), "conllu".into());
-    assert!(matches!(report.analysis, SampleAnalysis::NoMatches { .. }));
-    let unmatched = report.run.expect("the pattern compiles").unmatched;
+    let SampleAnalysis::NoMatches { sentences } = report.analysis else {
+        panic!("the where clause rejects the stored dependency edge");
+    };
     assert_eq!(
-        unmatched[0].definitions[0].outcome,
+        sentences[0].why_not[0].outcome,
         WhyNotOutcome::WhereRejected {
             spans: "0..2".into()
         }

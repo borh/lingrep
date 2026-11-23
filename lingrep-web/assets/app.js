@@ -500,7 +500,8 @@ if (typeof document !== "undefined") {
                 const parsed = new DOMParser().parseFromString(html, "text/html");
                 target.replaceChildren(...parsed.body.childNodes);
                 localize(target);
-                if (status) status.textContent = "";
+                if (status) status.textContent = target.querySelector("[data-sample-summary]")?.textContent.trim() ?? "";
+                target.dispatchEvent(new CustomEvent("sample:rendered", { bubbles: true }));
             } catch (error) {
                 if (error?.name === "AbortError") return;
                 if (status) status.textContent = t("sample.run_failed");

@@ -1,5 +1,4 @@
 use crate::support::tok;
-use askama::Template;
 use lingrep_core::token_match::TokenInfo;
 use lingrep_web::sample::{SampleAnalysis, analyze_tokens};
 use lingrep_web::templates::SampleResults;
@@ -17,12 +16,16 @@ fn matched_renders_inline_tokens_and_captures_without_fetch_urls() {
     .expect("renders");
     assert!(html.contains("走る"), "match surface shown");
     assert!(html.contains("verb"), "named capture shown");
-    // The capture-selector buttons target `sample-capture-{render_index}-{ordinal}`
-    // detail divs; those targets must actually be rendered or the click handler's
-    // getElementById lookup silently no-ops.
+    // A capture bar names its match and its ordinal; the match's template
+    // must hold the row those two select, or selecting the bar shows nothing.
     assert!(
-        html.contains("id=\"sample-capture-"),
-        "capture detail target div is rendered"
+        html.contains("data-sample-bar=\"0-0\" data-sample-match=\"0\" data-sample-capture=\"0\""),
+        "the capture bar is rendered: {html}"
+    );
+    assert!(
+        html.contains("<template id=\"sample-match-0\">")
+            && html.contains("data-sample-capture-row=\"0\""),
+        "the capture's row is rendered in its match's detail: {html}"
     );
     // Inline contract: NO per-token inspect fetch URLs in the sample fragment.
     assert!(
@@ -34,8 +37,8 @@ fn matched_renders_inline_tokens_and_captures_without_fetch_urls() {
         "sample tokens are interactive buttons: {html}"
     );
     assert!(
-        html.contains("id=\"sample-token-0\""),
-        "sample token inspection panel is rendered inline: {html}"
+        html.contains("<template id=\"sample-token-0\">"),
+        "each token's inspection is rendered once, inert: {html}"
     );
     assert!(
         html.contains("title=\"動詞"),
@@ -78,7 +81,7 @@ fn failed_shows_the_compile_error_message() {
 }
 
 #[test]
-fn sample_render_shows_constellation_states_classes_and_parent_depth() {
+fn a_sentence_whose_policy_hid_a_candidate_lists_reported_and_hidden_candidates() {
     let source = include_str!("../../../patterns/sf-experimental.lx");
     let analysis = analyze_tokens(
         source,
@@ -103,54 +106,30 @@ fn sample_render_shows_constellation_states_classes_and_parent_depth() {
     .render()
     .expect("renders");
 
-    assert!(html.contains("sample-constellation"));
-    assert!(html.contains("S2C"));
-    assert!(html.contains("data-publication=\"published\""));
+    assert_eq!(
+        html.matches("data-sample-policy").count(),
+        1,
+        "only the second sentence has a hidden candidate: {html}"
+    );
+    assert!(html.contains("S2C"), "a reported match shows its class");
     assert!(html.contains("data-publication=\"suppressed\""));
-    assert!(html.contains("data-depth=\"0\""));
-    assert!(!html.contains("ものである"));
+    assert!(html.contains("data-i18n=\"sample.hidden\""));
+    // The view must not resurrect the pattern policy excluded: it is neither
+    // a bar nor a listed candidate.
+    assert!(!html.contains("<span class=\"sample-bar-label\">ものである</span>"));
+    let policy = html
+        .split_once("data-sample-policy")
+        .and_then(|(_, rest)| rest.split_once("</details>"))
+        .expect("the policy list is rendered")
+        .0;
+    assert!(!policy.contains("ものである"), "{policy}");
 }
 
 #[test]
-fn sample_render_shows_composition_regions_and_a_literal_gap() {
-    let lines = vec![vec![
-        tok("猫", "名詞"),
-        tok("が", "助詞"),
-        tok("走る", "動詞"),
-    ]];
-    let analysis = analyze_tokens(
-        "pattern noun := [upos=名詞]. pattern verb := [upos=動詞].",
-        &lines,
-    );
-
-    let html = SampleResults {
-        analysis,
-        run: None,
-    }
-    .render()
-    .expect("renders");
-
-    assert!(html.contains("sample-composition"), "the strip is rendered");
-    assert!(
-        html.contains("data-gap-tokens=\"1\""),
-        "the gap width is machine-readable: {html}"
-    );
-    assert!(
-        html.contains("data-gap-budget=\"within\""),
-        "a one-token gap is inside the initial expectation"
-    );
-    // The literal intervening token is visible, with its morphology.
-    assert!(html.contains("が"), "the gap token surface is shown");
-    assert!(html.contains("助詞"), "the gap token POS is shown");
-}
-
-#[test]
-fn sample_render_labels_a_wide_gap_as_diagnostic() {
+fn a_sentence_whose_policy_hid_nothing_paints_its_matches_and_has_no_policy_list() {
     let lines = vec![vec![
         tok("猫", "名詞"),
         tok("は", "助詞"),
-        tok("とても", "副詞"),
-        tok("速く", "形容詞"),
         tok("走る", "動詞"),
     ]];
     let analysis = analyze_tokens(
@@ -165,39 +144,23 @@ fn sample_render_labels_a_wide_gap_as_diagnostic() {
     .render()
     .expect("renders");
 
-    assert!(html.contains("data-gap-tokens=\"3\""));
+    assert!(!html.contains("data-sample-policy"), "{html}");
+    assert_eq!(html.matches("kwic-token kwic-token-match").count(), 2);
+    for (name, token) in [("noun", 1), ("verb", 3)] {
+        assert!(
+            html.contains(&format!(
+                "<span class=\"sample-bar-label\">{name}</span><span class=\"visually-hidden\">\
+                 <span data-i18n=\"sample.token_at\" data-i18n-args='{{\"n\": {token}}}'>"
+            )),
+            "the {name} bar starts under token {token}: {html}"
+        );
+    }
     assert!(
-        html.contains("data-gap-budget=\"investigate\""),
-        "a three-token gap is evidence of a missing expression"
+        html.contains(
+            r##"<a href="#sample-sentence-1"><code>noun</code></a></th><td class="numeric">1</td>"##
+        ),
+        "each definition is counted and links to its first sentence: {html}"
     );
-    for surface in ["は", "とても", "速く"] {
-        assert!(html.contains(surface), "gap token {surface} is not elided");
-    }
-}
-
-#[test]
-fn sample_render_shows_composition_for_the_experimental_catalog() {
-    let source = include_str!("../../../patterns/sf-experimental.lx");
-    let analysis = analyze_tokens(
-        source,
-        &[vec![
-            TokenInfo::default().with_orth("もの").with_lemma("物"),
-            TokenInfo::default().with_orth("で").with_lemma("だ"),
-            TokenInfo::default().with_orth("あろう").with_lemma("有る"),
-        ]],
-    );
-
-    let html = SampleResults {
-        analysis,
-        run: None,
-    }
-    .render()
-    .expect("renders");
-
-    assert!(html.contains("sample-composition"));
-    assert!(html.contains("S2C"), "the published class still shows");
-    // The composition strip must not resurrect the pattern policy excluded.
-    assert!(!html.contains("ものである"));
 }
 
 #[test]
@@ -213,11 +176,12 @@ fn sample_lines_are_one_document_for_document_lookarounds() {
          pattern last := [upos=名詞] not_followed_by([], within=document).",
         &lines,
     );
-    let SampleAnalysis::Matched { matches, .. } = analysis else {
+    let SampleAnalysis::Matched { sentences } = analysis else {
         panic!("the sample matches");
     };
-    let mut found: Vec<(String, String)> = matches
+    let mut found: Vec<(String, String)> = sentences
         .into_iter()
+        .flat_map(|sentence| sentence.matches)
         .map(|matched| (matched.pattern_name, matched.matched_text))
         .collect();
     found.sort();
@@ -236,9 +200,7 @@ fn a_run_names_its_tokenizer_its_missing_attributes_and_each_failed_claim() {
         ClaimFailure, ClaimFailureKind, ClaimsReport, SampleBinding, SampleClaims, SampleRun,
         UnavailableAttribute,
     };
-    use lingrep_web::sample::{
-        UnmatchedLine, WhyNot, WhyNotElement, WhyNotOutcome, WhyNotStop, WhyNotStopKind,
-    };
+    use lingrep_web::sample::{WhyNot, WhyNotElement, WhyNotOutcome, WhyNotStop, WhyNotStopKind};
     let why = |outcome| WhyNot {
         definition: "v".into(),
         outcome,
@@ -250,18 +212,18 @@ fn a_run_names_its_tokenizer_its_missing_attributes_and_each_failed_claim() {
             expects: "pattern v".into(),
         }),
     };
-    let unmatched = vec![UnmatchedLine {
-        text: "<鳥>".into(),
-        definitions: vec![why(WhyNotOutcome::WhereRejected {
-            spans: "0..2".into(),
-        })],
-    }];
-    let lines = vec![vec![tok("走る", "動詞")]];
+    let lines = vec![vec![tok("走る", "動詞")], vec![tok("<鳥>", "名詞")]];
     let render = |binding, claims| {
+        let mut analysis = analyze_tokens("pattern v := [upos=動詞].", &lines);
+        let SampleAnalysis::Matched { sentences } = &mut analysis else {
+            panic!("走る matches");
+        };
+        sentences[1].why_not = vec![why(WhyNotOutcome::WhereRejected {
+            spans: "0..2".into(),
+        })];
         SampleResults {
-            analysis: analyze_tokens("pattern v := [upos=動詞].", &lines),
+            analysis,
             run: Some(SampleRun {
-                unmatched: unmatched.clone(),
                 analyzer: "vibrato morphology · unidic.dic".into(),
                 stored: false,
                 corpus_analyzer: Some("conllu pretokenized".into()),
@@ -339,7 +301,7 @@ fn a_run_names_its_tokenizer_its_missing_attributes_and_each_failed_claim() {
     );
     for expected in [
         r#"data-why-not="stopped""#,
-        r#"data-i18n-args='{"start": 1, "consumed": 2}'"#,
+        r#"data-i18n-args='{"start": 2, "consumed": 2}'"#,
         "<span lang=\"ja\" data-why-not-token>「&#60;い&#62;」</span>",
         "<code data-why-not-element>[lemma=居る &#38; unidic.cform~終止形]</code>",
         r#"data-i18n-args='{"line": 4, "column": 9}'"#,
@@ -348,7 +310,7 @@ fn a_run_names_its_tokenizer_its_missing_attributes_and_each_failed_claim() {
         r#"data-i18n="sample.why_no_value""#,
         r#"data-i18n-args='{"starts": 2}'"#,
         r#"data-i18n="sample.why_truncated""#,
-        "<p class=\"sample-unmatched-text\" lang=\"ja\">&#60;鳥&#62;</p>",
+        "title=\"名詞\">&#60;鳥&#62;</button>",
         r#"data-why-not="where-rejected""#,
         "<code>0..2</code>",
         "data-claim-insert=\"counterexamples\" data-claim-offset=\"7\" \

@@ -344,7 +344,7 @@ async fn a_corpus_sentence_is_shown_with_its_stored_tokens_until_the_form_omits_
     .await;
     assert_eq!(status, StatusCode::OK);
     assert!(html.contains("data-sample-stored"), "{html}");
-    assert!(html.contains("sample-match"), "{html}");
+    assert!(html.contains("data-sample-bar=\"0\""), "{html}");
 
     let (status, _) = post(vec![
         ("pattern", pattern),

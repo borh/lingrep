@@ -136,11 +136,18 @@ struct SamplePage {
     catalog_keys: Vec<String>,
 }
 
+/// What the page opens with when nothing else seeds it: one definition with
+/// one capture that matches two of the three default sample sentences, so the
+/// first view shows a match, a capture and an unmatched sentence.
+const STARTER_PATTERN: &str = "\
+# A verb of thinking followed by a passive auxiliary: 考えられる, 思われる.
+pattern thought := (?<verb> [lemma in {考える, 思う}]) [lemma in {られる, れる}].
+";
+
 /// Seeded from the pattern of the Workbench run a hit's debug link names while
-/// that run is displayed, and otherwise from the same `--patterns` default the
-/// index seeds from, so landing here first still starts from the server's
-/// catalog. The two pages then diverge: each pattern box persists its own
-/// draft under its own id.
+/// that run is displayed, otherwise from the `--patterns` file when the
+/// operator named one, and otherwise from [`STARTER_PATTERN`]. Each page's
+/// pattern box then persists its own draft under its own id.
 async fn sample_page(
     State(store): State<RequestStore>,
     axum::extract::Query(query): axum::extract::Query<SampleQuery>,
@@ -170,7 +177,13 @@ async fn sample_page(
     }
     SamplePage {
         opened,
-        seed_pattern: seed_pattern.unwrap_or_else(|| store.default_pattern.to_string()),
+        seed_pattern: seed_pattern.unwrap_or_else(|| {
+            store
+                .sample_seed
+                .as_deref()
+                .unwrap_or(STARTER_PATTERN)
+                .to_owned()
+        }),
         current_page: "sample",
         frequency_view: !store.frequency.is_empty(),
         catalog_keys: store.catalogs.keys().map(str::to_owned).collect(),

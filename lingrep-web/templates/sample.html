@@ -5,16 +5,13 @@
 {% block content %}
 {% call macros::corpus_line("none (this page reads only the sample text)", "corpus.none", false) %}{% endcall %}
 <h1><span data-i18n="sample.title">Sample debugger</span></h1>
-<p class="muted" data-i18n="sample.blurb">
-    Run a lingrep patterns pattern over text you paste here, and see how it tokenizes and
-    what it matches. Nothing is read from a corpus and nothing is written.
-</p>
+<p class="muted sample-blurb" data-i18n="sample.blurb">Test a pattern on sentences you paste here. Nothing is read from a corpus and nothing is written.</p>
 
 {# The pattern box lives INSIDE this form and carries its own draft, keyed by
-   its own id. That is the point of the page: the corpus search's editor is no
-   longer shared with — or re-posted every 400 ms by — a sample run. #}
+   its own id: the corpus search's editor is not shared with a sample run. #}
 <div class="sample-workspace" data-sample-workspace>
-  <div class="query-workspace">
+  <div class="sample-inputs query-workspace">
+    <h2 class="visually-hidden" data-i18n="sample.inputs_title">Pattern and sample text</h2>
     <form class="sample-form"
           hx-post="api/sample" hx-target="#sample-results" hx-swap="innerHTML"
           hx-trigger="load, input changed delay:400ms from:#sample-text, pattern:valid changed from:#sample-pattern, submit"
@@ -24,7 +21,7 @@
         <div id="sample-editor" class="corpus-pattern-editor">
           <textarea id="sample-pattern" name="pattern" rows="8" data-pattern-editor
                     spellcheck="false" autocapitalize="off" autocorrect="off" autocomplete="off"
-                    placeholder="test := [upos=VERB]." required>{{ seed_pattern }}</textarea>
+                    placeholder="pattern verb := [upos=VERB]." required>{{ seed_pattern }}</textarea>
         </div>
         <details class="pattern-diagram" data-pattern-diagram="sample-pattern">
           <summary><span data-i18n="editor.diagram_title">Recognition diagram of the definition at the cursor</span> <code data-diagram-name></code></summary>
@@ -39,23 +36,29 @@
         <input type="hidden" name="corpus" value="{{ sentence.corpus }}">
         <input type="hidden" name="corpus_sentence" value="{{ sentence.ordinal }}" data-corpus-sentence>
         <p class="sample-opened muted" data-corpus-sentence-note><span data-i18n="sample.opened_stored" data-i18n-args='{"ordinal": {{ sentence.ordinal }}}'>Corpus sentence {{ sentence.ordinal }}, shown with the analysis stored in the corpus. Editing the text switches to the sample tokenizer.</span> <code>{{ sentence.corpus }}</code></p>
-        <textarea id="sample-text" class="sample-input" name="sample" rows="6" lang="ja"
+        <textarea id="sample-text" class="sample-input" name="sample" rows="5" lang="ja"
                   placeholder="猫が走る。">{{ sentence.text }}</textarea>
         {% when None %}
-        <textarea id="sample-text" class="sample-input" name="sample" rows="6" lang="ja"
+        <textarea id="sample-text" class="sample-input" name="sample" rows="5" lang="ja"
                   placeholder="猫が走る。">この結果は重要であると考えられる。
 さらなる検証が必要であると思われる。
 その可能性が高いと言えるのではないだろうか。</textarea>
         {% endmatch %}
       </div>
       <div class="sample-actions">
-        <button type="submit" class="btn btn-primary"><span data-i18n="sample.run">Run on sample</span></button>
+        <button type="submit" class="btn btn-secondary btn-compact"><span data-i18n="sample.run">Run</span></button>
+        <span class="sample-run-hint muted"><span data-i18n="sample.run_hint">Runs as you type.</span> <kbd>Ctrl</kbd>+<kbd>Enter</kbd></span>
         <span class="sample-status" role="status" aria-live="polite" data-sample-status></span>
       </div>
     </form>
     {% include "partials/query_library.html" %}
   </div>
   <script type="module" src="assets/query-library.js"></script>
-  <div id="sample-results" aria-live="polite"></div>
+  <section class="sample-output" aria-labelledby="sample-results-title">
+    <h2 id="sample-results-title" class="visually-hidden" data-i18n="sample.results_title">Results</h2>
+    <p class="sample-stale" data-sample-stale hidden><span data-i18n="sample.stale">The pattern has an error. These results are from the last pattern that compiled.</span> <button type="button" class="link-button" data-sample-stale-jump><span data-i18n="sample.stale_jump">Go to the error</span></button></p>
+    <div id="sample-results"></div>
+  </section>
+  {% include "partials/sample_detail.html" %}
 </div>
 {% endblock %}

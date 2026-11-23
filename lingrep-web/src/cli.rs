@@ -132,8 +132,11 @@ pub struct Args {
 
     /// lingrep patterns grammar file whose contents seed the pattern editor on the index
     /// page. Read once at startup; an unreadable file starts an empty editor.
-    #[arg(long = "patterns", default_value = "patterns/sentence-final.lx")]
-    pub patterns: PathBuf,
+    /// The Sample debugger opens with this file only when the flag is given,
+    /// and with a short starter pattern otherwise.
+    /// [default: patterns/sentence-final.lx]
+    #[arg(long = "patterns")]
+    pub patterns: Option<PathBuf>,
 
     /// Directory searched recursively for `*.lx` catalogs offered in the UI's
     /// catalog list. Defaults to the parent directory of `--patterns`, so the
@@ -269,7 +272,17 @@ pub fn read_default_pattern(path: &Path) -> String {
 pub fn resolve_pattern_root(args: &Args) -> PathBuf {
     args.pattern_root
         .clone()
-        .unwrap_or_else(|| crate::catalog_index::default_root(&args.patterns))
+        .unwrap_or_else(|| crate::catalog_index::default_root(args.patterns_path()))
+}
+
+impl Args {
+    /// The `--patterns` file, or the stock catalog when the flag is absent.
+    #[must_use]
+    pub fn patterns_path(&self) -> &Path {
+        self.patterns
+            .as_deref()
+            .unwrap_or(Path::new("patterns/sentence-final.lx"))
+    }
 }
 
 #[cfg(test)]
@@ -385,9 +398,10 @@ mod tests {
         // of whether the dev shell's LINGREP_DICTIONARY_PATH satisfies the requirement.
         let args = super::Args::try_parse_from(["lingrep-web", "--dict-path", "/tmp/d"])
             .expect("defaults should parse");
+        assert_eq!(args.patterns, None);
         assert_eq!(
-            args.patterns,
-            std::path::PathBuf::from("patterns/sentence-final.lx")
+            args.patterns_path(),
+            std::path::Path::new("patterns/sentence-final.lx")
         );
     }
 
@@ -424,7 +438,7 @@ mod tests {
             "x.lx",
         ])
         .expect("explicit --patterns should parse");
-        assert_eq!(args.patterns, std::path::PathBuf::from("x.lx"));
+        assert_eq!(args.patterns, Some(std::path::PathBuf::from("x.lx")));
     }
 
     #[test]

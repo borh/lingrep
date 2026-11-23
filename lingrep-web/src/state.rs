@@ -244,6 +244,9 @@ pub struct RequestStore {
     /// file contents). Empty unless set via [`RequestStore::with_default_pattern`];
     /// only the index handler reads it.
     pub default_pattern: Arc<str>,
+    /// Seed text for the Sample debugger's pattern editor: the `--patterns`
+    /// file when the operator named one. `None` opens the starter pattern.
+    pub sample_seed: Option<Arc<str>>,
     /// Catalogs discovered at startup and offered in the UI's catalog list.
     /// Empty unless set via [`RequestStore::with_catalogs`]; only the index
     /// handler and the catalog routes read it.
@@ -328,6 +331,7 @@ impl RequestStore {
             corpora,
             coordinators,
             default_pattern: Arc::from(""),
+            sample_seed: None,
             catalogs: Arc::new(crate::catalog_index::CatalogIndex::default()),
             frequency: Arc::default(),
             reading_sidecars: Arc::default(),
@@ -344,6 +348,7 @@ impl RequestStore {
             corpora,
             coordinators,
             default_pattern: Arc::from(""),
+            sample_seed: None,
             catalogs: Arc::new(crate::catalog_index::CatalogIndex::default()),
             frequency: Arc::default(),
             reading_sidecars: Arc::default(),
@@ -385,6 +390,7 @@ impl RequestStore {
             corpora,
             coordinators,
             default_pattern: Arc::from(""),
+            sample_seed: None,
             catalogs: Arc::new(crate::catalog_index::CatalogIndex::default()),
             frequency: Arc::default(),
             reading_sidecars: Arc::default(),
@@ -398,6 +404,13 @@ impl RequestStore {
     #[must_use]
     pub fn with_default_pattern(mut self, default_pattern: impl Into<Arc<str>>) -> Self {
         self.default_pattern = default_pattern.into();
+        self
+    }
+
+    /// Seeds the Sample debugger with `seed` instead of its starter pattern.
+    #[must_use]
+    pub fn with_sample_seed(mut self, seed: Option<impl Into<Arc<str>>>) -> Self {
+        self.sample_seed = seed.map(Into::into);
         self
     }
 

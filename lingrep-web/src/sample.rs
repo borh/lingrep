@@ -14,7 +14,7 @@ use crate::inspection::{
 };
 use crate::patterns::compile_web_pattern;
 use crate::patterns::format_pattern_compile_error;
-use crate::templates::{CaptureInspectionFragment, TokenInspectionFragment, TrustedFragmentHtml};
+use crate::templates::{TokenInspectionFragment, TrustedFragmentHtml};
 use lingrep_core::analysis::{AnalyzerPlan, VibratoPlan};
 use lingrep_core::fsm::{CompileOutput, ExampleFailure, ExampleFailureKind, ExampleReport};
 use lingrep_core::token_match::{TokenInfo, TokenSchema};
@@ -65,8 +65,27 @@ pub struct MatchView {
     pub tokens: Vec<TokenView>,
     pub captures: Vec<SampleCaptureData>,
     pub capture_lanes: Vec<SampleCaptureLane>,
+    /// The pattern element that consumed each token, in token order. `None`
+    /// when the explanation pass has no derivation of this match.
+    pub consumed: Option<Vec<ConsumedRow>>,
+    /// The classes the catalog assigns to the reported match.
+    pub classes: Box<[String]>,
     /// The edit that adds this match's sentence to the definition's `examples`.
     pub add_example: Option<ClaimInsert>,
+}
+
+/// One token of a match with the pattern element that consumed it.
+#[derive(Debug, Clone)]
+pub struct ConsumedRow {
+    /// Sentence-local token index.
+    pub token: usize,
+    pub orth: String,
+    /// The token element's source text.
+    pub element: String,
+    /// Source text of each reference the element was reached through,
+    /// outermost first.
+    pub via: Vec<String>,
+    pub tests: Vec<lingrep_core::fsm::AttributeTestOutcome>,
 }
 
 #[derive(Debug, Clone)]
@@ -78,7 +97,7 @@ pub struct SampleCaptureData {
     pub end: usize,
     pub grid_start: usize,
     pub grid_span: usize,
-    pub detail_html: TrustedFragmentHtml,
+    pub text: String,
 }
 
 #[derive(Debug, Clone)]
@@ -86,16 +105,21 @@ pub struct SampleCaptureLane {
     pub captures: Vec<SampleCaptureData>,
 }
 
-/// One input line's raw-candidate constellation, published composition, and
-/// token rail.
+/// One non-empty input line: its tokens, published matches, raw candidates
+/// and published composition. Match, capture, group and composition spans
+/// are sentence-local; `TokenView::index` counts across the whole sample.
 #[derive(Debug, Clone)]
-pub struct SampleConstellation {
+pub struct SampleSentence {
     pub tokens: Vec<TokenView>,
+    pub matches: Vec<MatchView>,
     pub groups: Box<[ConstellationGroup]>,
     /// Regions and gaps alternating in document order. Empty when policy
     /// published nothing on this line, which is a different fact from the
     /// matcher having seen no candidate.
     pub composition: Box<[CompositionItem]>,
+    /// Why each definition published nothing here. Empty when the line has a
+    /// match, and for lines past the explanation limit.
+    pub why_not: Vec<WhyNot>,
 }
 
 pub struct SampleCaptureView {
@@ -132,12 +156,7 @@ pub fn sample_capture_view(
             end: display_capture.span.end,
             grid_start: capture.span.start.saturating_sub(matched.start) + 1,
             grid_span: capture.span.end.saturating_sub(capture.span.start).max(1),
-            detail_html: TrustedFragmentHtml::from_rendered(
-                CaptureInspectionFragment {
-                    capture: &display_capture,
-                }
-                .render()?,
-            ),
+            text: capture.text.clone(),
         })
     };
     let captures = inspection
@@ -169,17 +188,17 @@ pub fn sample_capture_view(
 /// silently-empty `Matched`.
 #[derive(Debug, Clone)]
 pub enum SampleAnalysis {
+    /// The matcher saw a candidate on at least one sentence.
     Matched {
-        tokens: Vec<TokenView>,
-        matches: Vec<MatchView>,
-        constellations: Vec<SampleConstellation>,
+        sentences: Vec<SampleSentence>,
     },
+    /// No sentence has a candidate; empty when the sample has no text.
     NoMatches {
-        tokens: Vec<TokenView>,
+        sentences: Vec<SampleSentence>,
     },
-    FragmentsOnly {
-        tokens: Vec<TokenView>,
-    },
+    FragmentsOnly,
+    /// The pattern source declares nothing.
+    EmptyPattern,
     Failed(SampleAnalysisError),
 }
 
@@ -197,8 +216,7 @@ fn rendering_failed(error: askama::Error) -> SampleAnalysisError {
 
 /// The one-line pieces of a sample result, built from one explanation pass.
 struct LineAnalysis {
-    matches: Vec<MatchView>,
-    constellation: SampleConstellation,
+    sentence: SampleSentence,
     candidates: Box<[lingrep_core::fsm::ExplainedMatch]>,
 }
 
@@ -242,10 +260,40 @@ fn build_line_analysis<S: lingrep_core::token_match::TokenSequence + ?Sized>(
                 .get(..byte)
                 .map(|before| before.encode_utf16().count())
         };
-        for consumed in output
-            .consumed_tokens(&m.pattern, sequence, m.start, m.end)
-            .unwrap_or_default()
-        {
+        let derivation = output.consumed_tokens(&m.pattern, sequence, m.start, m.end);
+        let source_text = |element: &lingrep_core::fsm::ElementLocation| {
+            pattern_source
+                .get(element.byte_range.clone())
+                .unwrap_or_default()
+                .to_owned()
+        };
+        let consumed_rows = derivation.as_ref().map(|derivation| {
+            derivation
+                .iter()
+                .map(|consumed| ConsumedRow {
+                    token: consumed.token,
+                    orth: line
+                        .get(consumed.token)
+                        .and_then(|token| token.surface().or(token.orth()))
+                        .unwrap_or_default()
+                        .to_owned(),
+                    element: consumed
+                        .elements
+                        .first()
+                        .map(source_text)
+                        .unwrap_or_default(),
+                    via: consumed
+                        .elements
+                        .iter()
+                        .skip(1)
+                        .rev()
+                        .map(source_text)
+                        .collect(),
+                    tests: consumed.tests.clone(),
+                })
+                .collect()
+        });
+        for consumed in derivation.unwrap_or_default() {
             let Some(view) = consumed
                 .token
                 .checked_sub(m.start)
@@ -266,16 +314,18 @@ fn build_line_analysis<S: lingrep_core::token_match::TokenSequence + ?Sized>(
                 .collect::<Vec<_>>()
                 .join(" ");
         }
-        let capture_view = sample_capture_view(line, m, base_index).map_err(rendering_failed)?; // propagate
+        let capture_view = sample_capture_view(line, m, 0).map_err(rendering_failed)?; // propagate
         out.push(MatchView {
             render_index: render_offset + out.len(),
             pattern_name: m.pattern.to_string(),
-            start: base_index + m.start,
-            end: base_index + m.end,
+            start: m.start,
+            end: m.end,
             matched_text,
             tokens,
             captures: capture_view.captures,
             capture_lanes: capture_view.lanes,
+            consumed: consumed_rows,
+            classes: Box::default(),
             add_example: claim_insert(output, pattern_source, &m.pattern, "examples", &sentence),
         });
     }
@@ -287,13 +337,30 @@ fn build_line_analysis<S: lingrep_core::token_match::TokenSequence + ?Sized>(
         .map_err(rendering_failed)?;
     // One projection pass feeds both the raw constellation and the published
     // composition; they must not be derived from two different explanations.
-    let analysis = project_sentence_patterns(matcher, &explanation, line, base_index);
+    let analysis = project_sentence_patterns(matcher, &explanation, line, 0);
+    for reported in &mut out {
+        if let Some(alternative) = analysis
+            .constellation
+            .groups
+            .iter()
+            .flat_map(|group| group.alternatives.iter())
+            .find(|alternative| {
+                alternative.published.as_ref().is_some_and(|published| {
+                    published.name == reported.pattern_name
+                        && published.span == (reported.start..reported.end)
+                })
+            })
+        {
+            reported.classes = alternative.classes.clone();
+        }
+    }
     Ok(LineAnalysis {
-        matches: out,
-        constellation: SampleConstellation {
+        sentence: SampleSentence {
             tokens,
+            matches: out,
             groups: analysis.constellation.groups,
             composition: analysis.composition,
+            why_not: Vec::new(),
         },
         candidates: explanation.candidates,
     })
@@ -311,7 +378,7 @@ fn whole<'a>(lines: &[&'a [TokenInfo]]) -> Vec<lingrep_core::fsm::ContextSegment
 
 pub fn analyze_tokens(pattern_source: &str, lines: &[Vec<TokenInfo>]) -> SampleAnalysis {
     match compile_web_pattern(pattern_source) {
-        Ok(output) => analyze_compiled(&output, pattern_source, lines).0,
+        Ok(output) => analyze_compiled(&output, pattern_source, lines),
         Err(error) => SampleAnalysis::Failed(SampleAnalysisError {
             message: format_pattern_compile_error(&error),
         }),
@@ -327,13 +394,18 @@ fn analyze_compiled(
     output: &CompileOutput,
     pattern_source: &str,
     lines: &[Vec<TokenInfo>],
-) -> (SampleAnalysis, Vec<UnmatchedLine>) {
+) -> SampleAnalysis {
     let matcher = &output.matcher;
-    let mut unmatched: Vec<UnmatchedLine> = Vec::new();
-    let mut all_tokens: Vec<TokenInfo> = Vec::new();
-    let mut all_matches: Vec<MatchView> = Vec::new();
-    let mut constellations: Vec<SampleConstellation> = Vec::new();
-    let mut has_candidates = false;
+    if pattern_source.trim().is_empty() {
+        return SampleAnalysis::EmptyPattern;
+    }
+    if matcher.patterns().is_empty() {
+        return SampleAnalysis::FragmentsOnly;
+    }
+    let mut sentences: Vec<SampleSentence> = Vec::new();
+    let mut explained = 0;
+    let mut token_count = 0;
+    let mut match_count = 0;
     let lines: Vec<&[TokenInfo]> = lines
         .iter()
         .map(Vec::as_slice)
@@ -349,99 +421,63 @@ fn analyze_compiled(
                 },
             )]),
         };
-        let base_index = all_tokens.len();
         // The editor needs both raw candidates and what policy publishes. The
         // matcher owns that one policy application so this view cannot drift
         // from normal publication behavior.
         let explanation = match matcher.try_explain_sentence_in_context(line, &context) {
             Ok(explanation) => explanation,
             Err(error) => {
-                return (
-                    SampleAnalysis::Failed(SampleAnalysisError {
-                        message: format!("Could not inspect this sentence: {error}"),
-                    }),
-                    Vec::new(),
-                );
+                return SampleAnalysis::Failed(SampleAnalysisError {
+                    message: format!("Could not inspect this sentence: {error}"),
+                });
             }
         };
-        match build_line_analysis(
+        let mut analysis = match build_line_analysis(
             line,
             line,
             explanation,
             output,
             pattern_source,
-            base_index,
-            all_matches.len(),
+            token_count,
+            match_count,
         ) {
-            Ok(mut analysis) => {
-                if analysis.matches.is_empty() && unmatched.len() < UNMATCHED_LINE_LIMIT {
-                    unmatched.push(UnmatchedLine {
-                        text: surface_text(line),
-                        definitions: matcher
-                            .patterns()
-                            .iter()
-                            .take(UNMATCHED_DEFINITION_LIMIT)
-                            .filter_map(|(name, _)| {
-                                let mut why = why_not(
-                                    output,
-                                    pattern_source,
-                                    name,
-                                    line,
-                                    &analysis.candidates,
-                                )?;
-                                if matches!(
-                                    why.outcome,
-                                    WhyNotOutcome::Stopped(_) | WhyNotOutcome::WhereRejected { .. }
-                                ) {
-                                    why.add_counterexample = claim_insert(
-                                        output,
-                                        pattern_source,
-                                        name,
-                                        "counterexamples",
-                                        &surface_text(line),
-                                    );
-                                }
-                                Some(why)
-                            })
-                            .collect(),
-                    });
-                }
-                has_candidates |= !analysis.constellation.groups.is_empty();
-                all_matches.append(&mut analysis.matches);
-                constellations.push(analysis.constellation);
-            }
-            Err(error) => return (SampleAnalysis::Failed(error), Vec::new()),
+            Ok(analysis) => analysis,
+            Err(error) => return SampleAnalysis::Failed(error),
+        };
+        if analysis.sentence.matches.is_empty() && explained < UNMATCHED_LINE_LIMIT {
+            explained += 1;
+            analysis.sentence.why_not = matcher
+                .patterns()
+                .iter()
+                .take(UNMATCHED_DEFINITION_LIMIT)
+                .filter_map(|(name, _)| {
+                    let mut why =
+                        why_not(output, pattern_source, name, line, &analysis.candidates)?;
+                    if matches!(
+                        why.outcome,
+                        WhyNotOutcome::Stopped(_) | WhyNotOutcome::WhereRejected { .. }
+                    ) {
+                        why.add_counterexample = claim_insert(
+                            output,
+                            pattern_source,
+                            name,
+                            "counterexamples",
+                            &surface_text(line),
+                        );
+                    }
+                    Some(why)
+                })
+                .collect();
         }
-        all_tokens.extend(line.iter().cloned());
+        token_count += line.len();
+        match_count += analysis.sentence.matches.len();
+        sentences.push(analysis.sentence);
     }
-
-    let token_views = match all_tokens
-        .iter()
-        .enumerate()
-        .map(|(i, t)| TokenView::from_token_info(t, i))
-        .collect::<Result<Vec<_>, _>>()
-        .map_err(rendering_failed)
-    {
-        Ok(views) => views,
-        Err(error) => return (SampleAnalysis::Failed(error), Vec::new()),
-    };
-
-    let analysis = if matcher.patterns().is_empty() {
-        SampleAnalysis::FragmentsOnly {
-            tokens: token_views,
-        }
-    } else if !has_candidates {
-        SampleAnalysis::NoMatches {
-            tokens: token_views,
-        }
+    if sentences.iter().any(|sentence| !sentence.groups.is_empty()) {
+        SampleAnalysis::Matched { sentences }
     } else {
-        SampleAnalysis::Matched {
-            tokens: token_views,
-            matches: all_matches,
-            constellations,
-        }
-    };
-    (analysis, unmatched)
+        SampleAnalysis::NoMatches { sentences }
+    }
 }
 
 fn surface_text(tokens: &[TokenInfo]) -> String {
@@ -449,13 +485,6 @@ fn surface_text(tokens: &[TokenInfo]) -> String {
         .iter()
         .filter_map(|token| token.surface().or(token.orth()))
         .collect()
-}
-
-/// A sample line on which no definition published a match.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct UnmatchedLine {
-    pub text: String,
-    pub definitions: Vec<WhyNot>,
 }
 
 /// Why one definition published no match for one sentence.
@@ -803,8 +832,6 @@ pub enum ClaimFailureKind {
 /// What ran a sample, and what that run cannot show.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SampleRun {
-    /// Sample lines without a published match, each explained per definition.
-    pub unmatched: Vec<UnmatchedLine>,
     /// The analyzer and dictionary that tokenized the sample.
     pub analyzer: String,
     /// The tokens are a corpus sentence's stored analysis, and `analyzer`
@@ -933,7 +960,6 @@ fn sample_run_bound(
         }
     };
     SampleRun {
-        unmatched: Vec::new(),
         analyzer,
         corpus_analyzer: None,
         stored: false,
@@ -1015,8 +1041,8 @@ pub fn analyze_sample(
         .filter(|line| !line.is_empty())
         .map(|line| plan.tokenize(line))
         .collect();
-    let (analysis, unmatched) = analyze_compiled(&output, pattern_source, &lines);
-    let mut run = sample_run(
+    let analysis = analyze_compiled(&output, pattern_source, &lines);
+    let run = sample_run(
         &output,
         pattern_source,
         plan.schema(),
@@ -1024,7 +1050,6 @@ pub fn analyze_sample(
         &|text| plan.tokenize(text),
         ClaimBudget::REQUEST,
     );
-    run.unmatched = unmatched;
     SampleReport {
         analysis,
         run: Some(run),
@@ -1052,7 +1077,6 @@ pub fn analyze_stored_sentence(
         Err(error) => return failed(format_pattern_compile_error(&error), None),
     };
     let run = SampleRun {
-        unmatched: Vec::new(),
         analyzer,
         corpus_analyzer: None,
         stored: true,
@@ -1071,13 +1095,19 @@ pub fn analyze_stored_sentence(
             );
         }
     };
-    let views = |tokens: &[TokenInfo]| {
-        tokens
-            .iter()
-            .enumerate()
-            .map(|(index, token)| TokenView::from_token_info(token, index))
-            .collect::<Result<Vec<_>, _>>()
-            .map_err(rendering_failed)
+    let unbound = |tokens: &[TokenInfo]| -> Result<SampleSentence, SampleAnalysisError> {
+        Ok(SampleSentence {
+            tokens: tokens
+                .iter()
+                .enumerate()
+                .map(|(index, token)| TokenView::from_token_info(token, index))
+                .collect::<Result<Vec<_>, _>>()
+                .map_err(rendering_failed)?,
+            matches: Vec::new(),
+            groups: Box::default(),
+            composition: Box::default(),
+            why_not: Vec::new(),
+        })
     };
     let bound = match output
         .matcher
@@ -1086,15 +1116,14 @@ pub fn analyze_stored_sentence(
         Ok(bound) => bound,
         // `run.binding` carries the refusal.
         Err(_) => {
-            return match views(&tokens) {
-                Ok(tokens) => SampleReport {
-                    analysis: SampleAnalysis::NoMatches { tokens },
-                    run: Some(run),
+            return SampleReport {
+                analysis: match unbound(&tokens) {
+                    Ok(sentence) => SampleAnalysis::NoMatches {
+                        sentences: vec![sentence],
+                    },
+                    Err(error) => SampleAnalysis::Failed(error),
                 },
-                Err(error) => SampleReport {
-                    analysis: SampleAnalysis::Failed(error),
-                    run: Some(run),
-                },
+                run: Some(run),
             };
         }
     };
@@ -1130,50 +1159,36 @@ pub fn analyze_stored_sentence(
             };
         }
     };
-    let mut run = run;
-    if analysis.matches.is_empty() {
-        run.unmatched.push(UnmatchedLine {
-            text: surface_text(&tokens),
-            definitions: output
-                .matcher
-                .patterns()
-                .iter()
-                .take(UNMATCHED_DEFINITION_LIMIT)
-                .filter_map(|(name, _)| {
-                    why_not_over(
-                        &output,
-                        pattern_source,
-                        name,
-                        &tokens,
-                        sentence,
-                        &analysis.candidates,
-                    )
-                })
-                .collect(),
-        });
+    let mut line = analysis.sentence;
+    if line.matches.is_empty() {
+        line.why_not = output
+            .matcher
+            .patterns()
+            .iter()
+            .take(UNMATCHED_DEFINITION_LIMIT)
+            .filter_map(|(name, _)| {
+                why_not_over(
+                    &output,
+                    pattern_source,
+                    name,
+                    &tokens,
+                    sentence,
+                    &analysis.candidates,
+                )
+            })
+            .collect();
     }
-    let token_views = match views(&tokens) {
-        Ok(views) => views,
-        Err(error) => {
-            return SampleReport {
-                analysis: SampleAnalysis::Failed(error),
-                run: Some(run),
-            };
-        }
-    };
-    let analysis = if output.matcher.patterns().is_empty() {
-        SampleAnalysis::FragmentsOnly {
-            tokens: token_views,
-        }
-    } else if analysis.constellation.groups.is_empty() {
+    let analysis = if pattern_source.trim().is_empty() {
+        SampleAnalysis::EmptyPattern
+    } else if output.matcher.patterns().is_empty() {
+        SampleAnalysis::FragmentsOnly
+    } else if line.groups.is_empty() {
         SampleAnalysis::NoMatches {
-            tokens: token_views,
+            sentences: vec![line],
         }
     } else {
         SampleAnalysis::Matched {
-            tokens: token_views,
-            matches: analysis.matches,
-            constellations: vec![analysis.constellation],
+            sentences: vec![line],
         }
     };
     SampleReport {

@@ -22,6 +22,11 @@
         {% if catalog_keys.is_empty() %}
         <p class="muted" data-i18n="library.no_catalogs">No catalogs found.</p>
         {% else %}
+        {% if catalog_keys.len() > 8 %}
+        <label class="visually-hidden" for="catalog-filter" data-i18n="library.filter_catalogs">Filter catalogs</label>
+        <input type="search" id="catalog-filter" class="catalog-filter" data-catalog-filter placeholder="Filter catalogs…" data-i18n-placeholder="library.filter_catalogs_placeholder" autocomplete="off" spellcheck="false">
+        <p class="muted" data-catalog-filter-empty hidden data-i18n="library.filter_catalogs_none">No catalog name contains that text.</p>
+        {% endif %}
         {% for key in catalog_keys %}
         <button type="button" class="catalog-entry" data-catalog-key="{{ key }}">{{ key }}</button>
         {% endfor %}

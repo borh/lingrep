@@ -466,9 +466,139 @@ function beginSampleRequest(form) {
 
 function finishSampleRequest(target) {
   target.setAttribute("aria-busy", "false");
+  markSampleStale(false);
   const status = target.closest("[data-sample-workspace]")
     ?.querySelector("[data-sample-status]");
-  if (status) status.textContent = "";
+  // The status line is the page's one live region for a run: it announces the
+  // counts, not the whole result.
+  if (status) status.textContent = target.querySelector("[data-sample-summary]")?.textContent.trim() ?? "";
+  restoreSampleSelection(target);
+}
+
+/** The detail rail that shows selections made in `node`'s sample results. */
+function sampleDetailFor(node) {
+  return node?.closest?.("[data-sample-workspace], [data-inline-sample-drawer]")
+    ?.querySelector("[data-sample-detail]") ?? null;
+}
+
+function showSampleTab(detail, name) {
+  detail.removeAttribute("data-collapsed");
+  detail.querySelectorAll("[data-sample-tab]").forEach((tab) => {
+    const selected = tab.dataset.sampleTab === name;
+    tab.setAttribute("aria-selected", String(selected));
+    tab.tabIndex = selected ? 0 : -1;
+  });
+  detail.querySelectorAll("[data-sample-panel]").forEach((panel) => {
+    panel.hidden = panel.dataset.samplePanel !== name;
+  });
+}
+
+function fillSamplePanel(detail, name, template) {
+  const panel = detail.querySelector(`[data-sample-panel="${name}"]`);
+  if (!panel) return null;
+  const body = panel.querySelector("[data-sample-panel-body]");
+  body.replaceChildren(...(template ? [template.content.cloneNode(true)] : []));
+  panel.querySelector("[data-sample-panel-empty]").hidden = Boolean(template);
+  return body;
+}
+
+/** Selects the bar `id` (`match` or `match-capture`) in `results`, or none for `null`. */
+function selectSampleBar(results, id, { reveal = true } = {}) {
+  results.querySelectorAll("[data-sample-bar]").forEach((cell) => {
+    const selected = cell.dataset.sampleBar === id;
+    cell.toggleAttribute("data-selected", selected);
+    if (cell.matches("button")) cell.setAttribute("aria-pressed", String(selected));
+  });
+  const detail = sampleDetailFor(results);
+  if (!detail) return;
+  detail.dataset.selectedBar = id ?? "";
+  const [match, capture] = (id ?? "").split("-");
+  const body = fillSamplePanel(
+    detail,
+    "explain",
+    id === null ? null : results.querySelector(`template[id="sample-match-${match}"]`),
+  );
+  if (capture !== undefined) {
+    body?.querySelector(`[data-sample-capture-row="${capture}"]`)?.setAttribute("data-selected", "");
+  }
+  if (id !== null && reveal) showSampleTab(detail, "explain");
+}
+
+/** Selects the token `index` in `results`, or none for `null`. */
+function selectSampleToken(results, index, { reveal = true } = {}) {
+  let ranges = [];
+  results.querySelectorAll("[data-sample-token]").forEach((button) => {
+    const selected = button.dataset.sampleToken === index;
+    button.setAttribute("aria-pressed", String(selected));
+    if (selected) ranges = parseSourceRanges(button.dataset.sourceRanges);
+  });
+  patternTextarea()?.dispatchEvent(new CustomEvent("sample:source", { detail: { ranges } }));
+  const detail = sampleDetailFor(results);
+  if (!detail) return;
+  detail.dataset.selectedToken = index ?? "";
+  fillSamplePanel(
+    detail,
+    "token",
+    index === null ? null : results.querySelector(`template[id="sample-token-${index}"]`),
+  );
+  if (index !== null && reveal) showSampleTab(detail, "token");
+}
+
+/** Reapplies the rail's selection to results that replaced the ones it was made in. */
+function restoreSampleSelection(target) {
+  const detail = sampleDetailFor(target);
+  const results = target.querySelector("[data-sample-results]");
+  if (!detail) return;
+  const bar = detail.dataset.selectedBar || null;
+  const token = detail.dataset.selectedToken || null;
+  const has = (selector) => Boolean(results?.querySelector(selector));
+  if (results) {
+    selectSampleBar(results, bar && has(`[data-sample-bar="${bar}"]`) ? bar : null, { reveal: false });
+    selectSampleToken(results, token && has(`[data-sample-token="${token}"]`) ? token : null, { reveal: false });
+  } else {
+    fillSamplePanel(detail, "explain", null);
+    fillSamplePanel(detail, "token", null);
+  }
+}
+
+/** Marks the sample page's results as belonging to an earlier pattern, or not. */
+function markSampleStale(stale, from = null) {
+  const results = document.getElementById("sample-results");
+  const note = document.querySelector("[data-sample-stale]");
+  if (!results || !note) return;
+  const shown = stale && Boolean(results.querySelector("[data-sample-results]"));
+  results.toggleAttribute("data-stale", shown);
+  note.hidden = !shown;
+  if (from !== null) note.dataset.errorFrom = String(from);
+}
+
+let referenceKeys = null;
+/** Lists the attributes the sample tokenizer supplies in the Reference tab. */
+async function renderSampleReference(tokenKeys) {
+  const body = document.querySelector("[data-sample-reference-attributes] tbody");
+  if (!body) return;
+  if (tokenKeys !== undefined) referenceKeys = tokenKeys;
+  const editor = await import("./editor/pattern-editor.js");
+  const options = editor.patternCompletionOptions(
+    { kind: "attribute" },
+    { tokenKeys: referenceKeys, definitions: [], captures: [] },
+  );
+  body.replaceChildren(...options.map((option) => {
+    const row = document.createElement("tr");
+    const name = document.createElement("th");
+    name.scope = "row";
+    const insert = document.createElement("button");
+    insert.type = "button";
+    insert.dataset.sampleInsert = option.apply ?? option.label;
+    const code = document.createElement("code");
+    code.textContent = option.label;
+    insert.append(code);
+    name.append(insert);
+    const description = document.createElement("td");
+    description.textContent = option.info ?? "";
+    row.append(name, description);
+    return row;
+  }));
 }
 
 function failSampleRequest(form) {
@@ -1720,6 +1850,16 @@ if (typeof document !== "undefined") {
   });
 
   document.addEventListener("pattern:cursor", (event) => markTokensConsumedAt(event.detail?.offset ?? null));
+  document.addEventListener("pattern:invalid", (event) => {
+    if (event.target.id === "sample-pattern") markSampleStale(true, event.detail?.from ?? null);
+  });
+  document.addEventListener("pattern:valid", (event) => {
+    if (event.target.id !== "sample-pattern") return;
+    markSampleStale(false);
+    void renderSampleReference(event.detail?.tokenKeys ?? null);
+  });
+  onLocaleChange(() => { void renderSampleReference(); });
+  document.addEventListener("sample:rendered", (event) => restoreSampleSelection(event.target));
   // An edited corpus sentence is no longer the sentence the corpus stores.
   document.addEventListener("input", (event) => {
     if (event.target.id !== "sample-text") return;
@@ -1856,22 +1996,50 @@ if (typeof document !== "undefined") {
 
     const sampleToken = event.target.closest("[data-sample-token]");
     if (sampleToken) {
-      const container = sampleToken.closest(".sample-results");
+      const container = sampleToken.closest("[data-sample-results]");
       if (!container) return;
-      const tokenIndex = sampleToken.dataset.sampleToken;
       const wasPressed = sampleToken.getAttribute("aria-pressed") === "true";
-      container.querySelectorAll("[data-sample-token]").forEach((btn) => {
-        btn.setAttribute(
-          "aria-pressed",
-          String(!wasPressed && btn.dataset.sampleToken === tokenIndex),
-        );
-      });
-      container.querySelectorAll(".sample-token-detail").forEach((panel) => {
-        panel.hidden = wasPressed || panel.id !== `sample-token-${tokenIndex}`;
-      });
-      patternTextarea()?.dispatchEvent(new CustomEvent("sample:source", {
-        detail: { ranges: wasPressed ? [] : parseSourceRanges(sampleToken.dataset.sourceRanges) },
-      }));
+      selectSampleToken(container, wasPressed ? null : sampleToken.dataset.sampleToken);
+      return;
+    }
+
+    const sampleBar = event.target.closest("[data-sample-bar]");
+    if (sampleBar) {
+      const container = sampleBar.closest("[data-sample-results]");
+      if (!container) return;
+      selectSampleBar(container, sampleBar.hasAttribute("data-selected") ? null : sampleBar.dataset.sampleBar);
+      return;
+    }
+
+    const sampleTab = event.target.closest("[data-sample-tab]");
+    if (sampleTab) {
+      const detail = sampleTab.closest("[data-sample-detail]");
+      // Selecting the open tab again closes the dock.
+      if (sampleTab.getAttribute("aria-selected") === "true" && !detail.hasAttribute("data-collapsed")) {
+        detail.setAttribute("data-collapsed", "");
+      } else {
+        showSampleTab(detail, sampleTab.dataset.sampleTab);
+      }
+      return;
+    }
+
+    const sampleInsert = event.target.closest("[data-sample-insert]");
+    if (sampleInsert) {
+      const textarea = patternTextarea();
+      if (textarea) {
+        void import("./editor/pattern-editor.js")
+          .then((mod) => mod.insertAtCursor(textarea, sampleInsert.dataset.sampleInsert));
+      }
+      return;
+    }
+
+    const staleJump = event.target.closest("[data-sample-stale-jump]");
+    if (staleJump) {
+      const textarea = patternTextarea();
+      const from = Number(staleJump.closest("[data-sample-stale]").dataset.errorFrom ?? 0);
+      if (textarea) {
+        void import("./editor/pattern-editor.js").then((mod) => mod.selectSource(textarea, from));
+      }
       return;
     }
 
@@ -2112,6 +2280,16 @@ if (typeof document !== "undefined") {
         tokens[next].focus();
         tokens[next].click();
       }
+      return;
+    }
+
+    const sampleTab = event.target.closest?.("[data-sample-tab]");
+    if (sampleTab && (event.key === "ArrowRight" || event.key === "ArrowLeft")) {
+      const tabs = [...sampleTab.closest("[role=tablist]").querySelectorAll("[data-sample-tab]")];
+      const next = tabs[(tabs.indexOf(sampleTab) + (event.key === "ArrowRight" ? 1 : -1) + tabs.length) % tabs.length];
+      event.preventDefault();
+      next.focus();
+      next.click();
       return;
     }
 
