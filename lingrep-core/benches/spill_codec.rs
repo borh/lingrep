@@ -55,7 +55,7 @@ fn string_keys(criterion: &mut Criterion) {
             }
             let mut visited = 0usize;
             counts
-                .visit_sorted(|_key, count| {
+                .visit_sorted::<std::io::Error>(|_key, count| {
                     visited += 1;
                     black_box(count);
                     Ok(())
@@ -78,7 +78,7 @@ fn integer_keys(criterion: &mut Criterion) {
             }
             let mut visited = 0usize;
             counts
-                .visit_sorted(|_key, count| {
+                .visit_sorted::<std::io::Error>(|_key, count| {
                     visited += 1;
                     black_box(count);
                     Ok(())

@@ -371,13 +371,23 @@ impl SpillOperationError {
     }
 }
 
-fn contains_operation_error(error: &(dyn std::error::Error + 'static)) -> bool {
-    error.downcast_ref::<SpillOperationError>().is_some()
-        || error
-            .downcast_ref::<io::Error>()
-            .and_then(io::Error::get_ref)
-            .is_some_and(|source| contains_operation_error(source))
-        || error.source().is_some_and(contains_operation_error)
+/// Failure while visiting a sorted count stream.
+#[derive(Debug, thiserror::Error)]
+pub enum SpillVisitError<E> {
+    /// The sorted stream could not be prepared or read.
+    #[error(transparent)]
+    Storage(io::Error),
+    /// The visitor stopped the stream with its own error.
+    #[error(transparent)]
+    Visitor(E),
+}
+
+impl From<SpillVisitError<io::Error>> for io::Error {
+    fn from(error: SpillVisitError<io::Error>) -> Self {
+        match error {
+            SpillVisitError::Storage(error) | SpillVisitError::Visitor(error) => error,
+        }
+    }
 }
 
 fn operation_io_error(
@@ -386,9 +396,6 @@ fn operation_io_error(
     budget: TempBudgetSnapshot,
     source: io::Error,
 ) -> io::Error {
-    if contains_operation_error(&source) {
-        return source;
-    }
     let kind = source.kind();
     io::Error::new(
         kind,
@@ -1114,44 +1121,38 @@ where
         self.finalize_runs(SpillOperation::Finalize)
     }
 
-    pub fn visit_sorted(
+    /// Visits counts in key order, stopping at the first storage or visitor error.
+    pub fn visit_sorted<E>(
         &mut self,
-        mut visitor: impl FnMut(&K, usize) -> io::Result<()>,
-    ) -> io::Result<()> {
+        mut visitor: impl FnMut(&K, usize) -> Result<(), E>,
+    ) -> Result<(), SpillVisitError<E>> {
         // Nothing ever spilled: the resident buffer already is the sorted
         // stream, and writing it out to read it straight back would round the
         // records through the codec and the disk for nothing.
         if self.runs.is_empty() {
             for (key, count) in &self.pending {
-                visitor(key, *count)?;
+                visitor(key, *count).map_err(SpillVisitError::Visitor)?;
             }
             return Ok(());
         }
-        self.flush()?;
-        self.finalize_runs(SpillOperation::Visit)?;
+        self.flush().map_err(SpillVisitError::Storage)?;
+        self.finalize_runs(SpillOperation::Visit)
+            .map_err(SpillVisitError::Storage)?;
         let Some(run) = self.runs.first() else {
             return Ok(());
         };
         debug_assert_eq!(run.reservation.held_bytes(), run.bytes);
-        let mut reader = match RunReader::open(run) {
-            Ok(reader) => reader,
-            Err(source) => {
-                return Err(self.operation_error(SpillOperation::Visit, source));
-            }
-        };
+        let mut reader = RunReader::open(run).map_err(|source| {
+            SpillVisitError::Storage(self.operation_error(SpillOperation::Visit, source))
+        })?;
         loop {
-            let record = match reader.next(&mut self.metrics) {
-                Ok(record) => record,
-                Err(source) => {
-                    return Err(self.operation_error(SpillOperation::Visit, source));
-                }
-            };
+            let record = reader.next(&mut self.metrics).map_err(|source| {
+                SpillVisitError::Storage(self.operation_error(SpillOperation::Visit, source))
+            })?;
             let Some(record) = record else {
                 break;
             };
-            if let Err(source) = visitor(&record.key, record.count) {
-                return Err(self.operation_error(SpillOperation::Visit, source));
-            }
+            visitor(&record.key, record.count).map_err(SpillVisitError::Visitor)?;
         }
         Ok(())
     }
@@ -1600,7 +1601,10 @@ mod tests {
         counts
             .add(DecodeFailingKey("decode".to_owned()), 1)
             .unwrap();
-        let error = counts.visit_sorted(|_, _| Ok(())).unwrap_err();
+        let error = counts.visit_sorted::<io::Error>(|_, _| Ok(())).unwrap_err();
+        let SpillVisitError::Storage(error) = error else {
+            panic!("expected a spill read error, got {error:?}");
+        };
         let source = codec_source(&error);
         assert_eq!(source.operation(), SpillCodecOperation::DecodeRecord);
         assert_eq!(source.run_id(), Some(1));

@@ -17,7 +17,7 @@ use std::io::Write;
 
 use lingrep_core::spill::{
     BudgetedWriter, SortedRunCounts, SpillCountOverflow, SpillOperation, SpillOperationError,
-    SpillPolicy, TempBudget, TempCapacityError,
+    SpillPolicy, SpillVisitError, TempBudget, TempCapacityError,
 };
 
 fn error_chain_contains<T>(error: &(dyn std::error::Error + 'static)) -> bool
@@ -64,7 +64,10 @@ fn forced_finalize_failure() -> io::Error {
 fn forced_visit_failure() -> io::Error {
     let budget = Arc::new(TempBudget::new(retained_two_run_bytes()));
     let mut counts = two_runs(budget);
-    counts.visit_sorted(|_, _| Ok(())).unwrap_err()
+    counts
+        .visit_sorted::<io::Error>(|_, _| Ok(()))
+        .unwrap_err()
+        .into()
 }
 
 fn forced_compact_failure() -> io::Error {
@@ -129,12 +132,51 @@ fn visiting_empty_counts_is_a_noop() {
     .unwrap();
     let mut visited = false;
     counts
-        .visit_sorted(|_, _| {
+        .visit_sorted::<io::Error>(|_, _| {
             visited = true;
             Ok(())
         })
         .unwrap();
     assert!(!visited);
+}
+
+#[test]
+fn visitor_error_stops_at_the_same_record_with_or_without_spilling() {
+    #[derive(Debug, PartialEq, Eq)]
+    struct StopAt(String);
+
+    for max_pending_keys in [1, 4] {
+        let mut counts = SortedRunCounts::with_policy(
+            SpillPolicy {
+                max_pending_bytes: usize::MAX,
+                max_pending_keys,
+                merge_fan_in: 4,
+            },
+            Arc::new(TempBudget::new(u64::MAX)),
+        )
+        .unwrap();
+        for key in ["c", "b", "a"] {
+            counts.add(key.to_owned(), 1).unwrap();
+        }
+
+        let mut visited = Vec::new();
+        let error = counts
+            .visit_sorted(|key, _| {
+                visited.push(key.clone());
+                if key == "b" {
+                    Err(StopAt(key.clone()))
+                } else {
+                    Ok(())
+                }
+            })
+            .unwrap_err();
+
+        let SpillVisitError::Visitor(error) = error else {
+            panic!("expected the visitor's error, got {error:?}");
+        };
+        assert_eq!(error, StopAt("b".to_owned()));
+        assert_eq!(visited, ["a", "b"]);
+    }
 }
 
 #[test]
@@ -205,9 +247,9 @@ fn second_sorted_visit_replays_without_allocating_another_run() {
     .unwrap();
     counts.add("b".to_owned(), 1).unwrap();
     counts.add("a".to_owned(), 2).unwrap();
-    counts.visit_sorted(|_, _| Ok(())).unwrap();
+    counts.visit_sorted::<io::Error>(|_, _| Ok(())).unwrap();
     let after_first = budget.used_bytes();
-    counts.visit_sorted(|_, _| Ok(())).unwrap();
+    counts.visit_sorted::<io::Error>(|_, _| Ok(())).unwrap();
     assert_eq!(budget.used_bytes(), after_first);
 }
 
@@ -228,7 +270,7 @@ fn successful_visit_collapses_live_spill_state() {
     }
     let live_before_visit = counts.run_count();
     assert_eq!(live_before_visit, 4);
-    counts.visit_sorted(|_, _| Ok(())).unwrap();
+    counts.visit_sorted::<io::Error>(|_, _| Ok(())).unwrap();
     assert_eq!(counts.buffered_keys(), 0);
     assert_eq!(counts.run_count(), 1);
     assert!(counts.run_count() < live_before_visit);
@@ -257,7 +299,7 @@ fn spill_snapshot_retains_high_water_and_record_denominators() {
     assert_eq!(before.records_read_total(), 8);
     assert_eq!(before.max_run_level(), 2);
 
-    counts.visit_sorted(|_, _| Ok(())).unwrap();
+    counts.visit_sorted::<io::Error>(|_, _| Ok(())).unwrap();
     let after = counts.snapshot();
     assert_eq!(after.buffered_keys(), 0);
     assert_eq!(after.run_count(), 1);
@@ -278,9 +320,9 @@ fn repeated_visits_increment_reads_without_rewriting_runs() {
     .unwrap();
     counts.add("b".to_owned(), 1).unwrap();
     counts.add("a".to_owned(), 1).unwrap();
-    counts.visit_sorted(|_, _| Ok(())).unwrap();
+    counts.visit_sorted::<io::Error>(|_, _| Ok(())).unwrap();
     let first = counts.snapshot();
-    counts.visit_sorted(|_, _| Ok(())).unwrap();
+    counts.visit_sorted::<io::Error>(|_, _| Ok(())).unwrap();
     let second = counts.snapshot();
     assert_eq!(
         second.records_written_total(),
@@ -466,7 +508,7 @@ fn tiered_compaction_has_logarithmic_write_amplification() {
     for index in 0..257 {
         counts.add(format!("key-{index:04}"), 1).unwrap();
     }
-    counts.visit_sorted(|_, _| Ok(())).unwrap();
+    counts.visit_sorted::<io::Error>(|_, _| Ok(())).unwrap();
 
     let initial = counts.initial_run_bytes_written();
     let total = counts.total_run_bytes_written();
@@ -545,7 +587,7 @@ fn sorted_runs_merge_duplicate_keys_in_lexical_order() {
 
     let mut observed = Vec::new();
     counts
-        .visit_sorted(|key, count| {
+        .visit_sorted::<io::Error>(|key, count| {
             observed.push((key.clone(), count));
             Ok(())
         })
@@ -593,7 +635,10 @@ fn merged_runs_reject_usize_overflow() {
     counts.add("a".to_owned(), usize::MAX).unwrap();
     counts.add("a".to_owned(), 1).unwrap();
 
-    let error = counts.visit_sorted(|_, _| Ok(())).unwrap_err();
+    let error = counts.visit_sorted::<io::Error>(|_, _| Ok(())).unwrap_err();
+    let SpillVisitError::Storage(error) = error else {
+        panic!("expected a spill merge error, got {error:?}");
+    };
 
     assert_eq!(error.kind(), io::ErrorKind::InvalidData);
     assert!(error_chain_contains::<SpillCountOverflow>(&error));
@@ -670,7 +715,7 @@ fn merged_runs_preserve_lexical_order_and_fold_duplicates_across_levels() {
     }
     let mut visited = Vec::new();
     counts
-        .visit_sorted(|key, count| {
+        .visit_sorted::<io::Error>(|key, count| {
             visited.push((key.clone(), count));
             Ok(())
         })
@@ -746,7 +791,7 @@ fn persisted_runs_are_zstd_streams_and_cost_less_than_their_records() {
     // not merely a small file.
     let mut visited = 0usize;
     counts
-        .visit_sorted(|_key, count| {
+        .visit_sorted::<io::Error>(|_key, count| {
             visited += 1;
             assert_eq!(count, 1);
             Ok(())
@@ -848,7 +893,7 @@ fn small_integer_keys_stay_correct_when_compression_does_not_shrink_them() {
     }
     let mut visited = Vec::new();
     counts
-        .visit_sorted(|key, count| {
+        .visit_sorted::<io::Error>(|key, count| {
             visited.push((*key, count));
             Ok(())
         })
@@ -866,7 +911,7 @@ fn pre_insert_and_post_insert_flush_produce_equal_runs() {
     fn drain(mut counts: SortedRunCounts<String>) -> (Vec<(String, usize)>, u64) {
         let mut rows = Vec::new();
         counts
-            .visit_sorted(|key, count| {
+            .visit_sorted::<io::Error>(|key, count| {
                 rows.push((key.clone(), count));
                 Ok(())
             })
@@ -940,7 +985,7 @@ fn framed_records_round_trip_across_a_wide_merge() {
     }
     let mut seen = Vec::new();
     counts
-        .visit_sorted(|key, count| {
+        .visit_sorted::<io::Error>(|key, count| {
             seen.push((key.clone(), count));
             Ok(())
         })
@@ -968,7 +1013,7 @@ fn unspilled_counts_visit_and_drain_without_creating_runs() {
 
     let mut visited = Vec::new();
     counts
-        .visit_sorted(|key, count| {
+        .visit_sorted::<io::Error>(|key, count| {
             visited.push((key.clone(), count));
             Ok(())
         })
