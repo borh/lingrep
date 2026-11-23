@@ -25,10 +25,8 @@ serde_json.workspace = true
 similar = { version = "2.7", default-features = false }
 sqlx.workspace = true
 thiserror.workspace = true
-# The provenance recorder owns its connection end to end, which means owning
-# the runtime it is opened, used and closed on rather than borrowing the
-# caller's. `rt` alone: the recorder thread drives one current-thread runtime.
-tokio = { version = "1", features = ["rt"] }
+# The provenance recorder thread drives a runtime with SQLx's timer.
+tokio = { version = "1", features = ["rt", "time"] }
 lingrep-core.workspace = true
 zstd.workspace = true
 

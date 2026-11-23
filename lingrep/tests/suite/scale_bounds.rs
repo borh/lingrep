@@ -33,7 +33,7 @@ use crate::support::{assert_success, lingrep_std, parse_jsonl};
 /// The soft and hard `RLIMIT_NOFILE` of every summary: macOS's default soft limit.
 const SUMMARY_OPEN_FILE_LIMIT: u64 = 256;
 
-/// `corpus build` of the 1× fixture fails with 24 open files and succeeds with 32.
+/// The soft and hard `RLIMIT_NOFILE` cap for every corpus-build scale.
 const BUILD_OPEN_FILE_LIMIT: u64 = 32;
 
 const SCALES: [usize; 3] = [1, 10, 100];
@@ -405,7 +405,7 @@ fn corpus_build_reports_descriptor_exhaustion() {
             input.as_os_str(),
         ],
         &[],
-        24,
+        18,
     );
     let stderr = String::from_utf8_lossy(&run.output.stderr);
     assert!(!run.output.status.success());

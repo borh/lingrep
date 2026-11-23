@@ -473,7 +473,7 @@ fn record_provenance(
     queue: &std::sync::mpsc::Receiver<Vec<ProvenanceCommand>>,
 ) -> Result<(), CorpusError> {
     let runtime = tokio::runtime::Builder::new_current_thread()
-        .enable_all()
+        .enable_time()
         .build()
         .map_err(CorpusError::Io)?;
     runtime.block_on(async move {
