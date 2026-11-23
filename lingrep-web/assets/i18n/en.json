@@ -688,7 +688,6 @@
   "status.busy": "Server busy: too many active sessions. Try again shortly.",
   "status.detail_failed": "Could not load that pattern; the previous detail is still shown.",
   "status.server_error": "Could not complete this request. Try again. If it fails again, ask the server operator to check the logs.",
-  "status.failed": "This search failed.",
   "status.failed_scan": "The corpus scan could not be completed.",
   "status.failed_analysis_changed": "The corpus saved with this question has changed. Choose the current corpus and search again.",
   "status.failed_cache": "The corpus cache is unavailable.",

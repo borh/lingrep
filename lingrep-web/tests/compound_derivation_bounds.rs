@@ -147,8 +147,9 @@ fn numbered_sentence(k: usize) -> Vec<TokenInfo> {
 }
 
 fn assert_result_limit(attempt: &QueryAttempt, row: &str) {
-    assert_eq!(attempt.phase, AttemptPhase::Failed, "{row}: {attempt:?}");
-    let failure = attempt.failure.as_ref().unwrap();
+    let AttemptPhase::Failed(failure) = &attempt.phase else {
+        panic!("{row}: expected Failed, got {attempt:?}");
+    };
     assert_eq!(
         failure.category,
         ErrorCategory::ResultLimit,

@@ -142,19 +142,11 @@ async fn indexed_revisions_validate_saved_analysis_identity_before_execution() {
                 100
             );
         } else {
-            assert_eq!(attempt.phase, AttemptPhase::Failed);
-            assert_eq!(
-                attempt.failure.as_ref().unwrap().category,
-                ErrorCategory::AnalysisChanged
-            );
-            assert!(
-                attempt
-                    .failure
-                    .as_ref()
-                    .unwrap()
-                    .message
-                    .contains("corpus saved with this question")
-            );
+            let AttemptPhase::Failed(failure) = &attempt.phase else {
+                panic!("expected Failed, got {:?}", attempt.phase);
+            };
+            assert_eq!(failure.category, ErrorCategory::AnalysisChanged);
+            assert!(failure.message.contains("corpus saved with this question"));
             assert!(view.state.displayed_snapshot().is_none());
             assert_eq!(attempt.sentences, 0);
         }
@@ -308,7 +300,7 @@ async fn compile_failure_retains_sanitized_diagnostic() {
     let view = tokio::time::timeout(std::time::Duration::from_secs(5), async {
         loop {
             let view = registry.snapshot(&workbench).await.unwrap();
-            if view.state.current_attempt().unwrap().phase == AttemptPhase::Failed {
+            if view.state.current_attempt().unwrap().failure().is_some() {
                 break view;
             }
             tokio::task::yield_now().await;
@@ -316,13 +308,7 @@ async fn compile_failure_retains_sanitized_diagnostic() {
     })
     .await
     .unwrap();
-    let failure = view
-        .state
-        .current_attempt()
-        .unwrap()
-        .failure
-        .as_ref()
-        .unwrap();
+    let failure = view.state.current_attempt().unwrap().failure().unwrap();
 
     assert_eq!(failure.category, ErrorCategory::Compile);
     assert!(failure.message.contains("lingrep-web.lx:1:"));
@@ -345,7 +331,7 @@ async fn a_dependency_where_clause_over_a_schema_without_edges_is_reported_as_a_
     let view = tokio::time::timeout(std::time::Duration::from_secs(5), async {
         loop {
             let view = registry.snapshot(&workbench).await.unwrap();
-            if view.state.current_attempt().unwrap().phase == AttemptPhase::Failed {
+            if view.state.current_attempt().unwrap().failure().is_some() {
                 break view;
             }
             tokio::task::yield_now().await;
@@ -355,8 +341,8 @@ async fn a_dependency_where_clause_over_a_schema_without_edges_is_reported_as_a_
     .unwrap();
 
     assert_eq!(
-        view.state.current_attempt().unwrap().failure,
-        Some(lingrep_web::revision::AttemptFailure {
+        view.state.current_attempt().unwrap().failure(),
+        Some(&lingrep_web::revision::AttemptFailure {
             category: ErrorCategory::Binding,
             message: "The catalog cannot bind to this corpus's token schema (vibrato morphology): \
                       dependency `where` clauses require dep.head, dep.rel, which the token schema \
@@ -430,8 +416,9 @@ async fn failed_runtime_terminates_waiting_revision() {
                 .state
                 .current_attempt()
                 .unwrap()
-                .phase;
-            if phase == AttemptPhase::Failed {
+                .phase
+                .clone();
+            if matches!(phase, AttemptPhase::Failed(_)) {
                 break;
             }
             tokio::task::yield_now().await;
@@ -535,7 +522,7 @@ fn occupy(pool: &rayon::ThreadPool) -> HeldPool {
 
 async fn phase_of(registry: &CoordinatorRegistry, workbench: &WorkbenchId) -> AttemptPhase {
     let view = registry.snapshot(workbench).await.unwrap();
-    view.state.current_attempt().unwrap().phase
+    view.state.current_attempt().unwrap().phase.clone()
 }
 
 async fn run_ready_tasks() {
@@ -591,12 +578,12 @@ async fn a_superseding_revision_starts_scanning_only_after_the_superseded_scan_e
 async fn wait_for_phase(
     registry: &CoordinatorRegistry,
     workbench: &WorkbenchId,
-    reached: impl Fn(AttemptPhase) -> bool,
+    reached: impl Fn(&AttemptPhase) -> bool,
 ) -> AttemptPhase {
     let deadline = std::time::Instant::now() + WAIT;
     loop {
         let phase = phase_of(registry, workbench).await;
-        if reached(phase) {
+        if reached(&phase) {
             return phase;
         }
         assert!(
@@ -607,11 +594,8 @@ async fn wait_for_phase(
     }
 }
 
-fn is_terminal(phase: AttemptPhase) -> bool {
-    matches!(
-        phase,
-        AttemptPhase::Completed | AttemptPhase::Cancelled(_) | AttemptPhase::Failed
-    )
+fn is_terminal(phase: &AttemptPhase) -> bool {
+    phase.is_terminal()
 }
 
 async fn advance(duration: std::time::Duration) {

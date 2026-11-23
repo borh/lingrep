@@ -225,7 +225,7 @@ async fn completed(
 ) -> Result<(Arc<CompletedSnapshot>, ReadyCorpus, Arc<ResultIndex>)> {
     let (workbench, view) = view(store, id).await?;
     if !matches!(
-        view.state.current_attempt().map(|a| a.phase),
+        view.state.current_attempt().map(|a| &a.phase),
         Some(AttemptPhase::Completed)
     ) {
         return Err(ApiError(
@@ -285,10 +285,10 @@ async fn project_run_with_cache(
             "This search was replaced. Run the saved query again.".into(),
         ));
     }
-    let phase = match attempt.phase {
+    let phase = match &attempt.phase {
         AttemptPhase::Completed => "complete",
         AttemptPhase::Cancelled(_) => "cancelled",
-        AttemptPhase::Failed => "failed",
+        AttemptPhase::Failed(_) => "failed",
         _ => "running",
     };
     let snapshot = view.state.displayed_snapshot();
@@ -440,8 +440,7 @@ async fn project_run_with_cache(
         contract_run = Some(data);
     }
     let diagnostics = if attempt
-        .failure
-        .as_ref()
+        .failure()
         .is_some_and(|failure| failure.category == ErrorCategory::Compile)
     {
         let source = attempt.source.clone();
@@ -455,8 +454,7 @@ async fn project_run_with_cache(
     };
     if definitions.is_empty()
         && attempt
-            .failure
-            .as_ref()
+            .failure()
             .is_some_and(|failure| failure.category == ErrorCategory::ResultLimit)
     {
         let source = attempt.source.clone();
@@ -473,7 +471,7 @@ async fn project_run_with_cache(
         }
         None => (
             phase,
-            attempt.failure.as_ref().map(|e| e.message.clone()),
+            attempt.failure().map(|e| e.message.clone()),
             None,
             None,
         ),
@@ -493,7 +491,7 @@ async fn project_run_with_cache(
         elapsed: 0.0,
         version,
         error,
-        error_code: attempt.failure.as_ref().and_then(|e| match e.category {
+        error_code: attempt.failure().and_then(|e| match e.category {
             ErrorCategory::VectorsChanged => Some("vectors_changed"),
             ErrorCategory::AnalysisChanged => Some("analysis_changed"),
             ErrorCategory::ResultLimit => Some("result_limit"),

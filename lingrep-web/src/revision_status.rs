@@ -133,7 +133,7 @@ pub fn project_revision_status(view: Option<&CoordinatorView>) -> RevisionStatus
         .is_some_and(|(shown, current)| shown.revision != current.revision);
     let mut diagnostic = None;
     let ((message, message_key, message_args), busy, terminal, kind) =
-        match attempt.map(|attempt| attempt.phase) {
+        match attempt.map(|attempt| &attempt.phase) {
             Some(AttemptPhase::WaitingForCorpus) => (
                 (
                     "Preparing the corpus cache…".into(),
@@ -208,50 +208,47 @@ pub fn project_revision_status(view: Option<&CoordinatorView>) -> RevisionStatus
                 true,
                 RevisionStatusKind::Abandoned,
             ),
-            Some(AttemptPhase::Failed) => (
-                match attempt.and_then(|attempt| attempt.failure.as_ref()) {
-                    None => ("This search failed.".into(), Some("status.failed"), None),
-                    Some(failure) => match failure.category {
-                        ErrorCategory::Compile => {
-                            diagnostic = Some(failure.message.clone());
-                            (
-                                "The pattern did not compile:".into(),
-                                Some("status.failed_compile"),
-                                None,
-                            )
-                        }
-                        ErrorCategory::Binding => {
-                            diagnostic = Some(failure.message.clone());
-                            (
-                                "This catalog cannot run on this corpus:".into(),
-                                Some("status.failed_binding"),
-                                None,
-                            )
-                        }
-                        ErrorCategory::Scope => {
-                            diagnostic = Some(failure.message.clone());
-                            (
-                                "This search scope cannot be applied to this corpus:".into(),
-                                Some("status.failed_scope"),
-                                None,
-                            )
-                        }
-                        ErrorCategory::Cache => {
-                            (failure.message.clone(), Some("status.failed_cache"), None)
-                        }
-                        ErrorCategory::AnalysisChanged => (
-                            failure.message.clone(),
-                            Some("status.failed_analysis_changed"),
+            Some(AttemptPhase::Failed(failure)) => (
+                match failure.category {
+                    ErrorCategory::Compile => {
+                        diagnostic = Some(failure.message.clone());
+                        (
+                            "The pattern did not compile:".into(),
+                            Some("status.failed_compile"),
                             None,
-                        ),
-                        ErrorCategory::VectorsChanged => (failure.message.clone(), None, None),
-                        ErrorCategory::Execution
-                        | ErrorCategory::ResultLimit
-                        | ErrorCategory::Integrity => {
-                            diagnostic = Some(failure.message.clone());
-                            ("The corpus scan could not be completed.".into(), Some("status.failed_scan"), None)
-                        }
-                    },
+                        )
+                    }
+                    ErrorCategory::Binding => {
+                        diagnostic = Some(failure.message.clone());
+                        (
+                            "This catalog cannot run on this corpus:".into(),
+                            Some("status.failed_binding"),
+                            None,
+                        )
+                    }
+                    ErrorCategory::Scope => {
+                        diagnostic = Some(failure.message.clone());
+                        (
+                            "This search scope cannot be applied to this corpus:".into(),
+                            Some("status.failed_scope"),
+                            None,
+                        )
+                    }
+                    ErrorCategory::Cache => {
+                        (failure.message.clone(), Some("status.failed_cache"), None)
+                    }
+                    ErrorCategory::AnalysisChanged => (
+                        failure.message.clone(),
+                        Some("status.failed_analysis_changed"),
+                        None,
+                    ),
+                    ErrorCategory::VectorsChanged => (failure.message.clone(), None, None),
+                    ErrorCategory::Execution
+                    | ErrorCategory::ResultLimit
+                    | ErrorCategory::Integrity => {
+                        diagnostic = Some(failure.message.clone());
+                        ("The corpus scan could not be completed.".into(), Some("status.failed_scan"), None)
+                    }
                 },
                 false,
                 true,
@@ -265,7 +262,7 @@ pub fn project_revision_status(view: Option<&CoordinatorView>) -> RevisionStatus
             ),
         };
     let completed = matches!(
-        attempt.map(|attempt| attempt.phase),
+        attempt.map(|attempt| &attempt.phase),
         Some(AttemptPhase::Completed)
     );
     let notices = view

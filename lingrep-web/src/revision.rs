@@ -29,14 +29,27 @@ pub enum CacheReadinessView {
     Failed,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum AttemptPhase {
     WaitingForCorpus,
     Queued,
     Running,
     Completed,
     Cancelled(CancelReason),
-    Failed,
+    Failed(AttemptFailure),
+}
+
+impl AttemptPhase {
+    pub fn is_terminal(&self) -> bool {
+        matches!(self, Self::Completed | Self::Cancelled(_) | Self::Failed(_))
+    }
+
+    pub fn failure(&self) -> Option<&AttemptFailure> {
+        match self {
+            Self::Failed(failure) => Some(failure),
+            _ => None,
+        }
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -56,7 +69,16 @@ pub struct QueryAttempt {
     pub phase: AttemptPhase,
     pub sentences: u64,
     pub tokens: u64,
-    pub failure: Option<AttemptFailure>,
+}
+
+impl QueryAttempt {
+    pub fn is_terminal(&self) -> bool {
+        self.phase.is_terminal()
+    }
+
+    pub fn failure(&self) -> Option<&AttemptFailure> {
+        self.phase.failure()
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -142,12 +164,9 @@ impl RevisionCoordinatorState {
     }
 
     pub fn is_terminal(&self) -> bool {
-        self.current_attempt.as_ref().is_some_and(|attempt| {
-            matches!(
-                attempt.phase,
-                AttemptPhase::Completed | AttemptPhase::Cancelled(_) | AttemptPhase::Failed
-            )
-        })
+        self.current_attempt
+            .as_ref()
+            .is_some_and(QueryAttempt::is_terminal)
     }
 
     pub fn accept(
@@ -176,7 +195,6 @@ impl RevisionCoordinatorState {
             },
             sentences: 0,
             tokens: 0,
-            failure: None,
         });
         true
     }
@@ -258,55 +276,75 @@ impl RevisionCoordinatorState {
     }
 
     pub fn apply_terminal(&mut self, event: CoordinatorEvent) -> bool {
-        if let CoordinatorEvent::Completed {
-            revision, snapshot, ..
-        } = &event
-            && snapshot.revision != *revision
-        {
-            return false;
-        }
-        let (workbench, revision, phase, failure) = match &event {
+        let (workbench, revision, phase, completed_snapshot) = match event {
             CoordinatorEvent::Completed {
                 workbench,
                 revision,
-                ..
-            } => (workbench, *revision, AttemptPhase::Completed, None),
+                snapshot,
+            } => {
+                if snapshot.revision != revision {
+                    return false;
+                }
+                (workbench, revision, AttemptPhase::Completed, Some(snapshot))
+            }
             CoordinatorEvent::Cancelled {
                 workbench,
                 revision,
                 reason,
-            } => (workbench, *revision, AttemptPhase::Cancelled(*reason), None),
+            } => (workbench, revision, AttemptPhase::Cancelled(reason), None),
             CoordinatorEvent::Failed {
                 workbench,
                 revision,
                 failure,
-            } => (
-                workbench,
-                *revision,
-                AttemptPhase::Failed,
-                Some(failure.clone()),
-            ),
+            } => (workbench, revision, AttemptPhase::Failed(failure), None),
             CoordinatorEvent::Progress { .. } => return false,
         };
-        if workbench != &self.workbench {
+        if workbench != self.workbench {
             return false;
         }
         let Some(attempt) = self.current_attempt.as_mut() else {
             return false;
         };
-        if attempt.revision != revision
-            || matches!(
-                attempt.phase,
-                AttemptPhase::Completed | AttemptPhase::Cancelled(_) | AttemptPhase::Failed
-            )
-        {
+        if attempt.revision != revision || attempt.is_terminal() {
             return false;
         }
         attempt.phase = phase;
-        attempt.failure = failure;
-        if let CoordinatorEvent::Completed { snapshot, .. } = event {
+        if let Some(snapshot) = completed_snapshot {
             self.displayed_snapshot = Some(snapshot);
         }
         true
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn failure_payload_is_carried_only_by_failed_phase() {
+        let workbench = WorkbenchId::new("wb");
+        let mut state = RevisionCoordinatorState::new(workbench.clone());
+        assert!(state.accept(
+            RevisionId(1),
+            "p := [upos=NOUN].".into(),
+            CacheReadinessView::Ready,
+            Default::default(),
+        ));
+        assert!(state.current_attempt().unwrap().failure().is_none());
+        assert!(!state.is_terminal());
+
+        let failure = AttemptFailure {
+            category: ErrorCategory::Compile,
+            message: "bad syntax".into(),
+        };
+        assert!(state.apply_terminal(CoordinatorEvent::Failed {
+            workbench,
+            revision: RevisionId(1),
+            failure: failure.clone(),
+        }));
+        let attempt = state.current_attempt().unwrap();
+        assert_eq!(attempt.phase, AttemptPhase::Failed(failure.clone()));
+        assert_eq!(attempt.failure(), Some(&failure));
+        assert!(state.is_terminal());
     }
 }

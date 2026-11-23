@@ -37,7 +37,8 @@ pub(crate) struct StreamFrame {
 /// event-name selection and body strings are the observable SSE contract.
 pub(crate) fn render_stream_event(view: &CoordinatorView, request_id: &str) -> StreamFrame {
     let status = project_revision_status(Some(view));
-    if let Some(AttemptPhase::Completed) = view.state.current_attempt().map(|attempt| attempt.phase)
+    if let Some(AttemptPhase::Completed) =
+        view.state.current_attempt().map(|attempt| &attempt.phase)
     {
         let explorer = render_completed_results(view.state.displayed_snapshot(), request_id);
         let scope_control = String::new();
