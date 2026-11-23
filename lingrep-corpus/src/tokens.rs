@@ -745,6 +745,19 @@ impl TokenReader {
         char_offsets: bool,
         pool: Option<&rayon::ThreadPool>,
     ) -> Result<Vec<BoundTokenSentence>, CorpusError> {
+        self.decode_bound_ordinals_reusing(ordinals, projection, char_offsets, pool, &mut None)
+    }
+
+    /// Decodes like [`Self::decode_bound_ordinals`], taking a block from `last`
+    /// when it holds that block and leaving the last block decoded serially in it.
+    fn decode_bound_ordinals_reusing(
+        &self,
+        ordinals: &[u64],
+        projection: &BoundProjection,
+        char_offsets: bool,
+        pool: Option<&rayon::ThreadPool>,
+        last: &mut Option<LoadedBlock>,
+    ) -> Result<Vec<BoundTokenSentence>, CorpusError> {
         if projection.schema_digest() != self.schema.digest() {
             return Err(invalid("requested projection belongs to another schema"));
         }
@@ -783,7 +796,35 @@ impl TokenReader {
         };
         let decoded = match pool.filter(|_| blocks.len() > 1) {
             Some(pool) => pool.install(|| blocks.par_iter().map(decode).collect::<Vec<_>>()),
-            None => blocks.iter().map(decode).collect(),
+            None => blocks
+                .iter()
+                .map(|(entry, locals)| {
+                    let (raw, index) = match last.take() {
+                        Some(loaded) if loaded.first_sentence == entry.first_sentence => {
+                            (loaded.raw, Some(loaded.index))
+                        }
+                        _ => (self.load_block(*entry)?, None),
+                    };
+                    let (sentences, built) = decode_block_indexed(
+                        &raw,
+                        *entry,
+                        &self.schema,
+                        projection,
+                        locals,
+                        char_offsets,
+                        None,
+                        index.as_ref(),
+                    )?;
+                    if let Some(index) = built.or(index) {
+                        *last = Some(LoadedBlock {
+                            first_sentence: entry.first_sentence,
+                            raw,
+                            index,
+                        });
+                    }
+                    Ok(sentences)
+                })
+                .collect(),
         };
         let mut output = Vec::with_capacity(ordinals.len());
         for block in decoded {
@@ -1008,9 +1049,20 @@ enum SourceProjection {
     },
 }
 
+/// One decompressed, checksum-verified and fully scanned block, the corpus
+/// ordinal of its first sentence, and the record offsets that scan found.
+pub(crate) struct LoadedBlock {
+    first_sentence: u64,
+    raw: Vec<u8>,
+    index: BlockIndex,
+}
+
 pub struct PreparedSentenceSource {
     reader: TokenReader,
     decode_pool: Option<Arc<rayon::ThreadPool>>,
+    /// The block the previous batch decoded last, so a walk that takes fewer
+    /// sentences per batch than a block holds loads each block once.
+    last_block: Option<LoadedBlock>,
     enhanced: Option<Arc<EnhancedReader>>,
     locations: MappedLocations,
     projection: SourceProjection,
@@ -1117,6 +1169,7 @@ impl PreparedSentenceSource {
         Ok(Self {
             reader,
             decode_pool: None,
+            last_block: None,
             enhanced,
             locations,
             projection,
@@ -1482,11 +1535,12 @@ impl PreparedSentenceSource {
             };
             let mut decoded = self
                 .reader
-                .decode_bound_ordinals(
+                .decode_bound_ordinals_reusing(
                     &ordinals,
                     &projection,
                     self.char_offsets,
                     self.decode_pool.as_deref(),
+                    &mut self.last_block,
                 )
                 .map_err(|error| self.fail(ordinals[0], error))?;
             let mut graph_observations = None;
@@ -2048,6 +2102,43 @@ fn decode_block(
     char_offsets: bool,
     max_selected_bytes: Option<usize>,
 ) -> Result<Vec<BoundTokenSentence>, CorpusError> {
+    decode_block_indexed(
+        raw,
+        entry,
+        schema,
+        projection,
+        locals,
+        char_offsets,
+        max_selected_bytes,
+        None,
+    )
+    .map(|(sentences, _)| sentences)
+}
+
+/// Where each sentence's records begin in a block that a full scan has
+/// already validated.
+pub(crate) struct BlockIndex {
+    /// Offset of each sentence's annotation record.
+    annotations: Vec<usize>,
+    /// Offset of the cells of each sentence's first token.
+    cells: Vec<usize>,
+}
+
+/// Decodes the `locals` of a block. Without `index`, every record of the block
+/// is read and validated and the index of that scan is returned; with the
+/// index of an earlier scan of the same bytes, only the selected sentences'
+/// records are read.
+#[allow(clippy::too_many_arguments)]
+fn decode_block_indexed(
+    raw: &[u8],
+    entry: DirectoryEntry,
+    schema: &TokenSchema,
+    projection: &BoundProjection,
+    locals: &[usize],
+    char_offsets: bool,
+    max_selected_bytes: Option<usize>,
+    index: Option<&BlockIndex>,
+) -> Result<(Vec<BoundTokenSentence>, Option<BlockIndex>), CorpusError> {
     let supports_spans = match slice(raw, 0, 8)? {
         magic if magic == BLOCK_MAGIC => false,
         magic if magic == SPAN_BLOCK_MAGIC => true,
@@ -2113,7 +2204,7 @@ fn decode_block(
             .ok_or_else(|| invalid("projected residency overflow"))?;
     }
     if max_selected_bytes.is_some_and(|limit| selected_bytes > limit) {
-        return Ok(Vec::new());
+        return Ok((Vec::new(), None));
     }
     let mut selected = locals
         .iter()
@@ -2144,7 +2235,17 @@ fn decode_block(
     let mut offsets = Vec::with_capacity(locals.len());
     let mut annotations = Vec::with_capacity(locals.len());
     let mut selected_sentence = 0;
-    for (local, range) in ranges.iter().enumerate() {
+    let mut annotation_offsets = Vec::new();
+    let visited = match index {
+        Some(_) => locals.to_vec(),
+        None => (0..sentence_count).collect(),
+    };
+    for local in visited {
+        let range = &ranges[local];
+        match index {
+            Some(index) => cursor = index.annotations[local],
+            None => annotation_offsets.push(cursor),
+        }
         let flags = read_u32_at(raw, &mut cursor)?;
         if flags > 3 || (!supports_spans && flags > 1) {
             return Err(invalid("invalid sentence annotation flags"));
@@ -2187,7 +2288,7 @@ fn decode_block(
                 selected_bytes = selected_bytes
                     .saturating_add(count.saturating_mul(std::mem::size_of::<SentenceSpan>()));
                 if max_selected_bytes.is_some_and(|limit| selected_bytes > limit) {
-                    return Ok(Vec::new());
+                    return Ok((Vec::new(), None));
                 }
                 annotation.reserve_exact(count);
             }
@@ -2211,7 +2312,7 @@ fn decode_block(
                     selected_bytes =
                         selected_bytes.saturating_add(kind.len() + label.map_or(0, str::len));
                     if max_selected_bytes.is_some_and(|limit| selected_bytes > limit) {
-                        return Ok(Vec::new());
+                        return Ok((Vec::new(), None));
                     }
                     annotation.push(SentenceSpan {
                         kind: kind.to_owned(),
@@ -2237,77 +2338,105 @@ fn decode_block(
     // strictly increasing above. `token` only increases, so the owner can only
     // move forward.
     let mut owner_cursor = 0_usize;
-    for token in 0..token_count {
-        while owner_cursor < selected.len() && selected[owner_cursor].0.end <= token {
-            owner_cursor += 1;
-        }
-        let owner = (owner_cursor < selected.len() && selected[owner_cursor].0.start <= token)
-            .then_some(owner_cursor);
-        for (stored, attribute) in schema.attributes().iter().enumerate() {
-            match attribute.kind() {
-                AttributeKind::Scalar => {
-                    let id = read_u32_at(raw, &mut cursor)?;
-                    if id as usize > strings.len() {
-                        return Err(invalid("invalid scalar string id"));
-                    }
-                    if let Some(projected) = requested[stored]
-                        && let Some(local_index) = owner
-                    {
-                        if id != 0 {
-                            selected_bytes =
-                                selected_bytes.saturating_add(strings[id as usize - 1].len());
-                            if max_selected_bytes.is_some_and(|limit| selected_bytes > limit) {
-                                return Ok(Vec::new());
-                            }
+    let mut cell_offsets = Vec::new();
+    let token_runs = match index {
+        Some(index) => locals
+            .iter()
+            .map(|local| (ranges[*local].clone(), index.cells[*local]))
+            .collect(),
+        None => vec![(0..token_count, cursor)],
+    };
+    for (tokens, start) in token_runs {
+        cursor = start;
+        for token in tokens {
+            if index.is_none() {
+                while cell_offsets.len() < ranges.len() && ranges[cell_offsets.len()].start <= token
+                {
+                    cell_offsets.push(cursor);
+                }
+            }
+            while owner_cursor < selected.len() && selected[owner_cursor].0.end <= token {
+                owner_cursor += 1;
+            }
+            let owner = (owner_cursor < selected.len() && selected[owner_cursor].0.start <= token)
+                .then_some(owner_cursor);
+            for (stored, attribute) in schema.attributes().iter().enumerate() {
+                match attribute.kind() {
+                    AttributeKind::Scalar => {
+                        let id = read_u32_at(raw, &mut cursor)?;
+                        if id as usize > strings.len() {
+                            return Err(invalid("invalid scalar string id"));
                         }
-                        let start = selected[local_index].0.start;
-                        selected[local_index].1[(token - start) * projection.len() + projected] =
-                            if id == 0 {
+                        if let Some(projected) = requested[stored]
+                            && let Some(local_index) = owner
+                        {
+                            if id != 0 {
+                                selected_bytes =
+                                    selected_bytes.saturating_add(strings[id as usize - 1].len());
+                                if max_selected_bytes.is_some_and(|limit| selected_bytes > limit) {
+                                    return Ok((Vec::new(), None));
+                                }
+                            }
+                            let start = selected[local_index].0.start;
+                            selected[local_index].1
+                                [(token - start) * projection.len() + projected] = if id == 0 {
                                 ProjectedAttributeValue::missing_scalar()
                             } else {
                                 ProjectedAttributeValue::scalar(strings[id as usize - 1])
                             };
-                    }
-                }
-                AttributeKind::StringSet => {
-                    let count = read_u32_at(raw, &mut cursor)? as usize;
-                    let selected_cell = requested[stored].zip(owner);
-                    if selected_cell.is_some() {
-                        selected_bytes = selected_bytes.saturating_add(
-                            count.saturating_mul(std::mem::size_of::<CompactString>()),
-                        );
-                        if max_selected_bytes.is_some_and(|limit| selected_bytes > limit) {
-                            return Ok(Vec::new());
                         }
                     }
-                    let mut set =
-                        Vec::with_capacity(if selected_cell.is_some() { count } else { 0 });
-                    for _ in 0..count {
-                        let id = read_u32_at(raw, &mut cursor)? as usize;
-                        if id == 0 || id > strings.len() {
-                            return Err(invalid("invalid set string id"));
-                        }
+                    AttributeKind::StringSet => {
+                        let count = read_u32_at(raw, &mut cursor)? as usize;
+                        let selected_cell = requested[stored].zip(owner);
                         if selected_cell.is_some() {
-                            selected_bytes = selected_bytes.saturating_add(strings[id - 1].len());
+                            selected_bytes = selected_bytes.saturating_add(
+                                count.saturating_mul(std::mem::size_of::<CompactString>()),
+                            );
                             if max_selected_bytes.is_some_and(|limit| selected_bytes > limit) {
-                                return Ok(Vec::new());
+                                return Ok((Vec::new(), None));
                             }
-                            set.push(CompactString::new(strings[id - 1]));
                         }
-                    }
-                    if let Some((projected, local_index)) = selected_cell {
-                        let start = selected[local_index].0.start;
-                        selected[local_index].1[(token - start) * projection.len() + projected] =
-                            ProjectedAttributeValue::StringSet(set);
+                        let mut set =
+                            Vec::with_capacity(if selected_cell.is_some() { count } else { 0 });
+                        for _ in 0..count {
+                            let id = read_u32_at(raw, &mut cursor)? as usize;
+                            if id == 0 || id > strings.len() {
+                                return Err(invalid("invalid set string id"));
+                            }
+                            if selected_cell.is_some() {
+                                selected_bytes =
+                                    selected_bytes.saturating_add(strings[id - 1].len());
+                                if max_selected_bytes.is_some_and(|limit| selected_bytes > limit) {
+                                    return Ok((Vec::new(), None));
+                                }
+                                set.push(CompactString::new(strings[id - 1]));
+                            }
+                        }
+                        if let Some((projected, local_index)) = selected_cell {
+                            let start = selected[local_index].0.start;
+                            selected[local_index].1
+                                [(token - start) * projection.len() + projected] =
+                                ProjectedAttributeValue::StringSet(set);
+                        }
                     }
                 }
             }
         }
     }
-    if cursor != raw.len() {
-        return Err(invalid("trailing V1 block bytes"));
-    }
-    selected
+    let built = if index.is_none() {
+        if cursor != raw.len() {
+            return Err(invalid("trailing V1 block bytes"));
+        }
+        cell_offsets.resize(ranges.len(), cursor);
+        Some(BlockIndex {
+            annotations: annotation_offsets,
+            cells: cell_offsets,
+        })
+    } else {
+        None
+    };
+    let sentences = selected
         .into_iter()
         .zip(offsets)
         .zip(annotations)
@@ -2318,7 +2447,8 @@ fn decode_block(
                 .with_spans(annotations)
                 .map_err(invalid)
         })
-        .collect()
+        .collect::<Result<Vec<_>, _>>()?;
+    Ok((sentences, built))
 }
 
 fn validate_char_span(previous: Option<CharSpan>, span: CharSpan) -> Result<(), CorpusError> {
@@ -2790,16 +2920,15 @@ mod tests {
         for batch_size in [1, 17, 1024] {
             let mut source = open(Some(sample));
             assert_eq!(drain(&mut source, batch_size), expected);
-            if batch_size == 1024 {
-                assert_eq!(
-                    source.decoded_block_count(),
-                    blocks
-                        .iter()
-                        .filter(|b| sample.admits(b.first_sentence))
-                        .count()
-                );
-                assert_eq!(source.decoded_sentence_count(), expected.len());
-            }
+            assert_eq!(
+                source.decoded_block_count(),
+                blocks
+                    .iter()
+                    .filter(|b| sample.admits(b.first_sentence))
+                    .count(),
+                "batch size {batch_size}"
+            );
+            assert_eq!(source.decoded_sentence_count(), expected.len());
             let scope = (0..ordinal).filter(|id| id % 3 == 0).collect();
             let mut source = open(Some(sample)).with_admission(SentenceAdmission::Sentences(scope));
             assert_eq!(
@@ -2831,9 +2960,11 @@ mod tests {
                 drain(&mut source, batch_size),
                 listed[..listed.len() - 1].to_vec()
             );
-            if batch_size == 1024 {
-                assert_eq!(source.decoded_block_count(), containing);
-            }
+            assert_eq!(
+                source.decoded_block_count(),
+                containing,
+                "batch size {batch_size}"
+            );
             let mut source = open(None)
                 .with_ordinals(listed.to_vec())
                 .unwrap()
@@ -2844,9 +2975,13 @@ mod tests {
             open(None).with_ordinals(vec![5, 2]),
             Err(CorpusError::UnsortedOrdinals)
         ));
-        for (range, batch_size, decoded_blocks) in
-            [(1..2, 1, 1), (250..270, 1024, 3), (770..9_999, 1024, 1)]
-        {
+        for (range, batch_size, decoded_blocks) in [
+            (1..2, 1, 1),
+            (250..270, 1024, 3),
+            (250..270, 1, 3),
+            (0..9_999, 1, 5),
+            (770..9_999, 1024, 1),
+        ] {
             let mut source = open(None).with_ordinal_range(range.clone());
             assert_eq!(
                 drain(&mut source, batch_size),
@@ -3086,6 +3221,108 @@ mod tests {
             .clone()
             .with_char_offsets(Some(Arc::new(vec![CharSpan::new(2, 1); 3])));
         assert!(encode_block(&[bad], &projection).is_err());
+    }
+
+    #[test]
+    fn indexed_decode_equals_a_full_scan_for_every_selection() {
+        let schema = TokenSchema::new([
+            SchemaAttribute::new("text", AttributeKind::Scalar).unwrap(),
+            SchemaAttribute::new("lemma", AttributeKind::Scalar).unwrap(),
+            SchemaAttribute::new("feat.Number", AttributeKind::StringSet).unwrap(),
+        ])
+        .unwrap();
+        let projection = schema
+            .bind_projection(schema.keys().iter().cloned())
+            .unwrap();
+        let row = |token: &str, number: &[&str], lemma: Option<&str>| {
+            vec![
+                ProjectedAttributeValue::scalar(token),
+                lemma.map_or_else(
+                    ProjectedAttributeValue::missing_scalar,
+                    ProjectedAttributeValue::scalar,
+                ),
+                ProjectedAttributeValue::string_set(number.iter().copied()),
+            ]
+        };
+        let sentence = |rows: Vec<Vec<ProjectedAttributeValue>>| {
+            BoundTokenSentence::from_projected_attribute_values(
+                &projection,
+                rows.len(),
+                rows.into_iter().flatten().collect(),
+            )
+            .unwrap()
+        };
+        let spanned = sentence(vec![
+            row("猫", &["Sing"], Some("猫")),
+            row("が", &[], None),
+            row("鳴く", &["Sing", "Plur"], Some("鳴く")),
+        ])
+        .with_spans(vec![lingrep_core::token_match::SentenceSpan {
+            kind: "bunsetsu".into(),
+            start: 0,
+            end: 2,
+            head: Some(0),
+            label: Some("NP".into()),
+            governor: None,
+        }])
+        .unwrap()
+        .with_char_offsets(Some(Arc::new(vec![
+            CharSpan::new(0, 1),
+            CharSpan::new(1, 2),
+            CharSpan::new(2, 4),
+        ])));
+        let plain = sentence(vec![row("犬", &[], Some("犬")), row("だ", &["Plur"], None)]);
+        let sentences = vec![spanned.clone(), plain.clone(), spanned, plain];
+        let raw = encode_block(&sentences, &projection).unwrap();
+        let entry = DirectoryEntry {
+            first_sentence: 0,
+            sentence_count: sentences.len() as u64,
+            file_offset: 0,
+            stored_len: 0,
+            raw_len: raw.len() as u64,
+            token_count: 10,
+            checksum: [0; 32],
+        };
+        let subset = schema
+            .bind_projection([AttributeKey::new("feat.Number").unwrap()])
+            .unwrap();
+        for projected in [&projection, &subset] {
+            for char_offsets in [true, false] {
+                let (_, index) = decode_block_indexed(
+                    &raw,
+                    entry,
+                    &schema,
+                    projected,
+                    &[],
+                    char_offsets,
+                    None,
+                    None,
+                )
+                .unwrap();
+                let index = index.unwrap();
+                for mask in 1..1_u32 << sentences.len() {
+                    let locals = (0..sentences.len())
+                        .filter(|local| mask & (1 << local) != 0)
+                        .collect::<Vec<_>>();
+                    let scanned =
+                        decode_block(&raw, entry, &schema, projected, &locals, char_offsets, None)
+                            .unwrap();
+                    let (indexed, rebuilt) = decode_block_indexed(
+                        &raw,
+                        entry,
+                        &schema,
+                        projected,
+                        &locals,
+                        char_offsets,
+                        None,
+                        Some(&index),
+                    )
+                    .unwrap();
+                    assert_eq!(indexed, scanned, "{locals:?}");
+                    assert!(rebuilt.is_none());
+                }
+            }
+        }
     }
 
     /// `encode_block` walks each token row once, interning a value and writing
