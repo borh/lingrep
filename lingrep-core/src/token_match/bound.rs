@@ -448,6 +448,16 @@ impl BoundTokenSentence {
         }
     }
 
+    /// The ordinal under which `key` is projected, or `None` when it is not.
+    #[must_use]
+    pub fn ordinal(&self, key: &AttributeKey) -> Option<AttributeOrdinal> {
+        self.keys
+            .iter()
+            .position(|candidate| candidate == key)
+            .and_then(|index| u8::try_from(index).ok())
+            .map(AttributeOrdinal::new)
+    }
+
     /// Borrows one projected token row.
     #[must_use]
     pub fn token(&self, index: usize) -> Option<BoundToken<'_>> {
@@ -562,13 +572,7 @@ impl TokenSequence for BoundTokenSentence {
     }
 
     fn value_key(&self, token: usize, key: &AttributeKey) -> Option<AttributeValueRef<'_>> {
-        let ordinal = self
-            .keys
-            .iter()
-            .position(|candidate| candidate == key)
-            .and_then(|index| u8::try_from(index).ok())
-            .map(AttributeOrdinal::new)?;
-        self.token(token)?.value(ordinal)
+        self.token(token)?.value(self.ordinal(key)?)
     }
 
     fn value_locator(
