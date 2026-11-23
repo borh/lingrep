@@ -76,18 +76,24 @@ impl AssertionCatalog {
                 .programs
                 .into_vec()
                 .into_iter()
-                .map(|program| CompiledAssertionProgram {
-                    direction: program.direction,
-                    scope: program.scope,
-                    reach: program.reach,
-                    automaton: compile_automaton(
-                        program.automaton,
-                        predicates,
-                        &mut epsilon_reachable_entries,
-                    ),
-                    dependencies: program.dependencies,
-                    required_attributes: program.required_attributes,
-                    union_members: program.union_members,
+                .map(|program| {
+                    let body = if program.union_members.is_empty() {
+                        CompiledAssertionBody::Automaton(Box::new(compile_automaton(
+                            program.automaton,
+                            predicates,
+                            &mut epsilon_reachable_entries,
+                        )))
+                    } else {
+                        CompiledAssertionBody::Union(program.union_members)
+                    };
+                    CompiledAssertionProgram {
+                        direction: program.direction,
+                        scope: program.scope,
+                        reach: program.reach,
+                        body,
+                        dependencies: program.dependencies,
+                        required_attributes: program.required_attributes,
+                    }
                 })
                 .collect(),
             occurrences: self.occurrences,
@@ -158,7 +164,10 @@ impl CompiledAssertionCatalog {
     /// One program's forward consume index as `(groups, edges)`.
     #[cfg(test)]
     fn consume_shape_for_test(&self, program: usize) -> (usize, usize) {
-        let index = &self.programs[program].automaton.forward_consume;
+        let CompiledAssertionBody::Automaton(automaton) = &self.programs[program].body else {
+            return (0, 0);
+        };
+        let index = &automaton.forward_consume;
         (index.groups.len(), index.edges.len())
     }
 
@@ -189,10 +198,18 @@ struct CompiledAssertionProgram {
     direction: LookDirection,
     scope: Option<LookaroundScope>,
     reach: usize,
-    automaton: CompiledAssertionAutomaton,
+    body: CompiledAssertionBody,
     dependencies: Box<[AssertionProgramId]>,
     required_attributes: Box<[AttributeKey]>,
-    union_members: Box<[AssertionProgramId]>,
+}
+
+/// How a compiled assertion program computes its boundary row.
+#[derive(Clone, Debug)]
+enum CompiledAssertionBody {
+    /// Swept over the sentence as a direction-specialized automaton.
+    Automaton(Box<CompiledAssertionAutomaton>),
+    /// Bitwise union of its already-materialized member rows.
+    Union(Box<[AssertionProgramId]>),
 }
 
 #[derive(Clone, Debug)]
@@ -833,9 +850,16 @@ impl<'catalog, 'tokens, S: TokenSequence + ?Sized> AssertionSession<'catalog, 't
         // out yields a `'catalog` borrow rather than one of `self` — which is
         // why this `&mut self` method can hold `automaton` across `&self` calls.
         // Do not "fix" a borrow error here by taking `&mut self` in the pass.
-        let automaton = &self.catalog.programs[id.index()].automaton;
-        self.reverse_pass(automaton, ReverseSeed::SentenceEndOnly)
-            .first_set()
+        match &self.catalog.programs[id.index()].body {
+            CompiledAssertionBody::Automaton(automaton) => self
+                .reverse_pass(automaton, ReverseSeed::SentenceEndOnly)
+                .first_set(),
+            CompiledAssertionBody::Union(members) => members
+                .iter()
+                .copied()
+                .filter_map(|member| self.suffix_start(member))
+                .min(),
+        }
     }
 
     /// Materializes every row `id`'s automaton reads through a `Fact` edge.
@@ -870,16 +894,19 @@ impl<'catalog, 'tokens, S: TokenSequence + ?Sized> AssertionSession<'catalog, 't
         // their rows `or`ed together, and sweeping the sentence again to
         // rediscover it would be the whole cost of a pass for none of the
         // information.
-        if !program.union_members.is_empty() {
-            let mut row = BoundaryBits::new(self.tokens.len() + 1);
-            for member in &program.union_members {
-                let source = self.rows[member.index()]
-                    .as_ref()
-                    .expect("union members are materialized as dependencies");
-                row.union_with(source);
+        let automaton = match &program.body {
+            CompiledAssertionBody::Union(members) => {
+                let mut row = BoundaryBits::new(self.tokens.len() + 1);
+                for member in members {
+                    let source = self.rows[member.index()]
+                        .as_ref()
+                        .expect("union members are materialized as dependencies");
+                    row.union_with(source);
+                }
+                return row;
             }
-            return row;
-        }
+            CompiledAssertionBody::Automaton(automaton) => automaton.as_ref(),
+        };
         if let Some(scope) = &program.scope
             && let Some(window) = self.context.and_then(|context| context.windows.get(scope))
         {
@@ -903,7 +930,7 @@ impl<'catalog, 'tokens, S: TokenSequence + ?Sized> AssertionSession<'catalog, 't
                 #[cfg(feature = "bench-instrumentation")]
                 metrics: AssertionMetricCells::default(),
             };
-            let joined_row = session.evaluate_local(id);
+            let joined_row = session.evaluate_automaton(program.direction, automaton);
             self.work = std::mem::take(&mut session.work);
             self.frontier = std::mem::take(&mut session.frontier);
             self.next_frontier = std::mem::take(&mut session.next_frontier);
@@ -915,12 +942,15 @@ impl<'catalog, 'tokens, S: TokenSequence + ?Sized> AssertionSession<'catalog, 't
             }
             return row;
         }
-        self.evaluate_local(id)
+        self.evaluate_automaton(program.direction, automaton)
     }
 
-    fn evaluate_local(&mut self, id: AssertionProgramId) -> BoundaryBits {
-        let automaton = &self.catalog.programs[id.index()].automaton;
-        match self.catalog.programs[id.index()].direction {
+    fn evaluate_automaton(
+        &mut self,
+        direction: LookDirection,
+        automaton: &CompiledAssertionAutomaton,
+    ) -> BoundaryBits {
+        match direction {
             LookDirection::PrecededBy => {
                 let mut row = BoundaryBits::new(self.tokens.len() + 1);
                 let mut frontier = std::mem::take(&mut self.frontier);
@@ -1735,22 +1765,21 @@ mod tests {
         let retained_entries = catalog
             .programs
             .iter()
-            .flat_map(|program| {
-                [
-                    &program.automaton.forward_closure,
-                    &program.automaton.reverse_closure,
-                ]
+            .filter_map(|program| match &program.body {
+                CompiledAssertionBody::Automaton(automaton) => Some(automaton.as_ref()),
+                CompiledAssertionBody::Union(_) => None,
             })
+            .flat_map(|automaton| [&automaton.forward_closure, &automaton.reverse_closure])
             .filter_map(|closure| closure.epsilon_transitive.as_ref())
             .map(|closure| closure.states.len())
             .sum::<usize>();
         assert!(retained_entries <= CompiledEpsilonClosureIndex::MAX_CATALOG_REACHABLE_ENTRIES);
         assert!(catalog.programs.iter().any(|program| {
-            program
-                .automaton
-                .reverse_closure
-                .epsilon_transitive
-                .is_none()
+            matches!(
+                &program.body,
+                CompiledAssertionBody::Automaton(automaton)
+                    if automaton.reverse_closure.epsilon_transitive.is_none()
+            )
         }));
     }
 
