@@ -26,7 +26,8 @@ pub(crate) use discovery::{
 };
 
 pub use display::{
-    MissingRequiredAttribute, displayed_text, matched_orth_tokens, matched_surface, project_context,
+    MissingRequiredAttribute, displayed_text, matched_orth_tokens, matched_surface,
+    matched_surface_into, project_context,
 };
 
 pub(crate) use hashing::identity_io_error;

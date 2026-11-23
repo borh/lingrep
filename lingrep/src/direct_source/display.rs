@@ -59,7 +59,20 @@ pub fn matched_surface(
     span: Range<usize>,
     location: &SentenceLocation,
 ) -> Result<String, MissingRequiredAttribute> {
-    joined_orths(sentence, span, location, |index| {
+    let mut text = String::new();
+    matched_surface_into(sentence, span, location, &mut text)?;
+    Ok(text)
+}
+
+/// Writes the exported `surface` of `span` into `out`, reusing its capacity.
+pub fn matched_surface_into(
+    sentence: &dyn TokenSequence,
+    span: Range<usize>,
+    location: &SentenceLocation,
+    out: &mut String,
+) -> Result<(), MissingRequiredAttribute> {
+    out.clear();
+    joined_orths_into(sentence, span, location, out, |index| {
         lingrep_core::token_match::source_space_before(sentence, index) == Some(true)
     })
 }
@@ -72,26 +85,27 @@ pub fn displayed_text(
     span: Range<usize>,
     location: &SentenceLocation,
 ) -> Result<String, MissingRequiredAttribute> {
-    joined_orths(sentence, span, location, |index| {
+    let mut text = String::new();
+    joined_orths_into(sentence, span, location, &mut text, |index| {
         lingrep_core::token_match::display_space_before(sentence, index)
-    })
+    })?;
+    Ok(text)
 }
 
-fn joined_orths(
+fn joined_orths_into(
     sentence: &dyn TokenSequence,
     span: Range<usize>,
     location: &SentenceLocation,
+    text: &mut String,
     space_before: impl Fn(usize) -> bool,
-) -> Result<String, MissingRequiredAttribute> {
-    let mut text = String::new();
+) -> Result<(), MissingRequiredAttribute> {
     let first = span.start;
     visit_matched_orths(sentence, span, location, |index, orth| {
         if index > first && space_before(index) {
             text.push(' ');
         }
         text.push_str(orth);
-    })?;
-    Ok(text)
+    })
 }
 
 pub fn matched_orth_tokens(

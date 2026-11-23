@@ -1,12 +1,16 @@
 //! Direct bounded `matches` orchestration and publication.
 
+use std::collections::BTreeMap;
 use std::io::{self, IsTerminal, Write};
+use std::ops::Range;
 use std::time::{Duration, Instant};
 
 use lingrep_core::execution::{
     ExecutionError, MatchSink, PolicySelection, Publication, SinkControl, cached_run_attributes,
 };
 use lingrep_core::fsm::{Match, PublishedRecord, RecordView};
+use lingrep_core::token_match::{AttributeValueRef, SentenceSpan, TokenSequence};
+use serde::{Serialize, Serializer};
 
 use super::CommandOutcome;
 use super::query_completion::FilesystemCompletion;
@@ -16,13 +20,13 @@ use super::query_resolution::{
 use super::query_scope::parse_scope;
 use super::query_support::{
     execution_output_error, execution_output_io, oversized_omissions_error,
-    protocol_execution_limits, publish_query_jsonl, publish_run_and_definitions, token_evidence,
+    protocol_execution_limits, publish_query_jsonl, publish_run_and_definitions,
     write_vectors_notice,
 };
 use crate::catalog_input::load_and_compile_with_vectors;
 use crate::cli::{ExecutionCliConfig, MatchesArgs, ProgressMode};
 use crate::direct_source::OversizedSentenceOmissionSummary;
-use crate::direct_source::{matched_orth_tokens, matched_surface};
+use crate::direct_source::{matched_orth_tokens, matched_surface, matched_surface_into};
 use crate::error::CliError;
 use crate::output::{
     ColorPolicy, ContextColorPalette, EvidenceTsvRow, HumanKwicRow, HumanMatchLayout,
@@ -33,11 +37,10 @@ use crate::presentation::{
     ColorMode, OutputMode, ResultDelivery, resolve_match_context, resolve_match_limit,
 };
 use crate::protocol::query::{
-    Capture, CharSpan as ProtocolCharSpan, CommittedPrefix, Coverage, EvidenceWord,
-    GraphBinding as ProtocolGraphBinding, GraphNodeAttribute as ProtocolGraphNodeAttribute,
-    GraphNodeId as ProtocolGraphNodeId, MatchData, MatchEvidence, MatchOrder, ProtocolKeyField,
-    PublishedProjection, QueryComplete, QueryEnvelope, QueryEvent, QueryMode, QueryRun, SourceSpan,
-    SpanConvention, TagField, TemporaryStorageLimits, Termination,
+    CharSpan as ProtocolCharSpan, CommittedPrefix, Coverage, EvidenceWord,
+    GraphNodeId as ProtocolGraphNodeId, MatchEvidence, MatchOrder, PublishedProjection,
+    QueryComplete, QueryEnvelope, QueryEvent, QueryMode, QueryRun, SourceSpan, SpanConvention,
+    TemporaryStorageLimits, Termination,
 };
 use crate::terminal::{PresentationProgress, TerminalArbiter};
 
@@ -67,52 +70,481 @@ fn protocol_graph_node(node: lingrep_core::corpus::conllu::EnhancedNodeId) -> Pr
 /// `--evidence` widened the projection, so that `--evidence` adds a field and
 /// alters none. An empty node's scalars come from the graph, not the
 /// projection, and are never narrowed.
-fn protocol_graph_binding(
-    binding: &lingrep_core::fsm::GraphBinding,
+fn graph_node_attribute_published(
+    node: lingrep_core::corpus::conllu::EnhancedNodeId,
+    attribute: &lingrep_core::fsm::GraphNodeAttribute,
     published: Option<&[lingrep_core::token_match::AttributeKey]>,
-) -> ProtocolGraphBinding {
-    match binding {
-        lingrep_core::fsm::GraphBinding::Measure { name, value } => ProtocolGraphBinding::Measure {
-            name: name.to_string(),
-            value: value.number().and_then(serde_json::Number::from_f64),
-            status: value.status().into(),
-        },
-        lingrep_core::fsm::GraphBinding::Count { name, value } => ProtocolGraphBinding::Count {
-            name: name.to_string(),
-            value: *value,
-        },
-        lingrep_core::fsm::GraphBinding::Node {
-            name,
-            node,
-            attributes,
-        } => ProtocolGraphBinding::Node {
-            name: name.to_string(),
-            node: protocol_graph_node(*node),
-            attributes: attributes
-                .iter()
-                .filter(|attribute| {
-                    !matches!(
-                        node,
-                        lingrep_core::corpus::conllu::EnhancedNodeId::Word { .. }
-                    ) || attribute.name.as_str().starts_with("node.")
-                        || published.is_none_or(|keys| keys.contains(&attribute.name))
-                })
-                .map(|attribute| ProtocolGraphNodeAttribute {
-                    name: attribute.name.pattern_key().to_owned(),
-                    value: attribute.value.to_string(),
-                })
-                .collect(),
-        },
-        lingrep_core::fsm::GraphBinding::Edge {
-            name,
-            head,
-            dependent,
-            relation,
-        } => ProtocolGraphBinding::Edge {
-            name: name.to_string(),
-            head: protocol_graph_node(*head),
-            dependent: protocol_graph_node(*dependent),
-            relation: relation.to_string(),
+) -> bool {
+    !matches!(
+        node,
+        lingrep_core::corpus::conllu::EnhancedNodeId::Word { .. }
+    ) || attribute.name.as_str().starts_with("node.")
+        || published.is_none_or(|keys| keys.contains(&attribute.name))
+}
+
+#[derive(Serialize)]
+struct BorrowedMatchEnvelope<'a> {
+    schema: &'static str,
+    #[serde(rename = "type")]
+    kind: &'static str,
+    data: BorrowedMatchData<'a>,
+}
+
+#[derive(Serialize)]
+struct BorrowedMatchData<'a> {
+    sequence: u64,
+    pattern: &'a str,
+    span: SourceSpan,
+    #[serde(skip_serializing_if = "BorrowedSpanIds::is_empty")]
+    span_ids: BorrowedSpanIds<'a>,
+    #[serde(skip_serializing_if = "BTreeMap::is_empty")]
+    whole_span_ids: BTreeMap<&'a str, Vec<u64>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    char_span: Option<ProtocolCharSpan>,
+    captures: BorrowedCaptures<'a>,
+    #[serde(skip_serializing_if = "BorrowedGraphBindings::is_empty")]
+    graph_bindings: BorrowedGraphBindings<'a>,
+    #[serde(skip_serializing_if = "<[_]>::is_empty")]
+    interpretations: &'a [lingrep_core::fsm::Interpretation],
+    corpus_sentence_ordinal: u64,
+    source_name: &'a str,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    source_metadata: Option<&'a serde_json::Map<String, serde_json::Value>>,
+    document_ordinal: u64,
+    document_sentence_ordinal: u64,
+    surface: &'a str,
+    tokens: BorrowedTokenSlice<'a>,
+    left_context: Option<BorrowedTokenSlice<'a>>,
+    right_context: Option<BorrowedTokenSlice<'a>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    unit: Option<&'a str>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    key: Option<BorrowedKeyFields<'a>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    lexical: Option<BorrowedLexicalMatch<'a>>,
+    #[serde(skip_serializing_if = "BorrowedTags::is_empty")]
+    tags: BorrowedTags<'a>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    evidence: Option<MatchEvidence>,
+}
+
+struct BorrowedSpanIds<'a> {
+    spans: &'a [SentenceSpan],
+    start: usize,
+    end: usize,
+    has_any: bool,
+}
+
+impl BorrowedSpanIds<'_> {
+    fn is_empty(&self) -> bool {
+        !self.has_any
+    }
+}
+
+impl Serialize for BorrowedSpanIds<'_> {
+    fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        use serde::ser::SerializeSeq;
+        let mut seq = serializer.serialize_seq(None)?;
+        for (id, span) in self.spans.iter().enumerate() {
+            if span.start <= self.start && self.end <= span.end {
+                seq.serialize_element(&(id as u64))?;
+            }
+        }
+        seq.end()
+    }
+}
+
+struct BorrowedCaptures<'a> {
+    captures: &'a [lingrep_core::fsm::Capture],
+    sentence: &'a dyn TokenSequence,
+}
+
+#[derive(Serialize)]
+struct BorrowedCapture<'a> {
+    name: &'a str,
+    hygienic_path: &'a str,
+    span: SourceSpan,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    char_span: Option<ProtocolCharSpan>,
+}
+
+impl Serialize for BorrowedCaptures<'_> {
+    fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        use serde::ser::SerializeSeq;
+        let mut seq = serializer.serialize_seq(Some(self.captures.len()))?;
+        for capture in self.captures {
+            seq.serialize_element(&BorrowedCapture {
+                name: capture.name.as_str(),
+                hygienic_path: capture.path.as_str(),
+                span: SourceSpan {
+                    start: capture.start as u64,
+                    end: capture.end as u64,
+                },
+                char_span: span_char_range(self.sentence, capture.start..capture.end),
+            })?;
+        }
+        seq.end()
+    }
+}
+
+struct BorrowedGraphBindings<'a> {
+    bindings: &'a [lingrep_core::fsm::GraphBinding],
+    published: Option<&'a [lingrep_core::token_match::AttributeKey]>,
+}
+
+impl BorrowedGraphBindings<'_> {
+    fn is_empty(&self) -> bool {
+        self.bindings.is_empty()
+    }
+}
+
+struct BorrowedGraphNodeAttributes<'a> {
+    node: lingrep_core::corpus::conllu::EnhancedNodeId,
+    attributes: &'a [lingrep_core::fsm::GraphNodeAttribute],
+    published: Option<&'a [lingrep_core::token_match::AttributeKey]>,
+}
+
+#[derive(Serialize)]
+struct BorrowedGraphNodeAttribute<'a> {
+    name: &'a str,
+    value: &'a str,
+}
+
+impl Serialize for BorrowedGraphNodeAttributes<'_> {
+    fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        use serde::ser::SerializeSeq;
+        let mut seq = serializer.serialize_seq(None)?;
+        for attribute in self.attributes {
+            if graph_node_attribute_published(self.node, attribute, self.published) {
+                seq.serialize_element(&BorrowedGraphNodeAttribute {
+                    name: attribute.name.pattern_key(),
+                    value: attribute.value.as_str(),
+                })?;
+            }
+        }
+        seq.end()
+    }
+}
+
+#[derive(Serialize)]
+#[serde(tag = "binding_kind", rename_all = "snake_case")]
+enum BorrowedGraphBinding<'a> {
+    Measure {
+        name: &'a str,
+        value: Option<serde_json::Number>,
+        status: &'static str,
+    },
+    Count {
+        name: &'a str,
+        value: Option<usize>,
+    },
+    Node {
+        name: &'a str,
+        node: ProtocolGraphNodeId,
+        attributes: BorrowedGraphNodeAttributes<'a>,
+    },
+    Edge {
+        name: &'a str,
+        head: ProtocolGraphNodeId,
+        dependent: ProtocolGraphNodeId,
+        relation: &'a str,
+    },
+}
+
+impl Serialize for BorrowedGraphBindings<'_> {
+    fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        use serde::ser::SerializeSeq;
+        let mut seq = serializer.serialize_seq(Some(self.bindings.len()))?;
+        for binding in self.bindings {
+            let borrowed = match binding {
+                lingrep_core::fsm::GraphBinding::Measure { name, value } => {
+                    BorrowedGraphBinding::Measure {
+                        name: name.as_str(),
+                        value: value.number().and_then(serde_json::Number::from_f64),
+                        status: value.status(),
+                    }
+                }
+                lingrep_core::fsm::GraphBinding::Count { name, value } => {
+                    BorrowedGraphBinding::Count {
+                        name: name.as_str(),
+                        value: *value,
+                    }
+                }
+                lingrep_core::fsm::GraphBinding::Node {
+                    name,
+                    node,
+                    attributes,
+                } => BorrowedGraphBinding::Node {
+                    name: name.as_str(),
+                    node: protocol_graph_node(*node),
+                    attributes: BorrowedGraphNodeAttributes {
+                        node: *node,
+                        attributes,
+                        published: self.published,
+                    },
+                },
+                lingrep_core::fsm::GraphBinding::Edge {
+                    name,
+                    head,
+                    dependent,
+                    relation,
+                } => BorrowedGraphBinding::Edge {
+                    name: name.as_str(),
+                    head: protocol_graph_node(*head),
+                    dependent: protocol_graph_node(*dependent),
+                    relation: relation.as_str(),
+                },
+            };
+            seq.serialize_element(&borrowed)?;
+        }
+        seq.end()
+    }
+}
+
+struct BorrowedTokenSlice<'a> {
+    sentence: &'a dyn TokenSequence,
+    range: Range<usize>,
+    projection: &'a PublishedProjection,
+}
+
+#[derive(Serialize)]
+struct BorrowedTokenEvidence<'a> {
+    index: u64,
+    attributes: BorrowedTokenAttributes<'a>,
+}
+
+struct BorrowedTokenAttributes<'a> {
+    sentence: &'a dyn TokenSequence,
+    index: usize,
+    projection: &'a PublishedProjection,
+}
+
+impl Serialize for BorrowedTokenAttributes<'_> {
+    fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        use serde::ser::SerializeMap;
+        let mut map = serializer.serialize_map(None)?;
+        for key in self.projection.attributes() {
+            if let Some(value) = self.sentence.value_key(self.index, key) {
+                match value {
+                    AttributeValueRef::Scalar(value) => {
+                        map.serialize_entry(key.as_str(), value)?;
+                    }
+                    AttributeValueRef::StringSet(values) => {
+                        map.serialize_entry(key.as_str(), values)?;
+                    }
+                }
+            }
+        }
+        map.end()
+    }
+}
+
+impl Serialize for BorrowedTokenSlice<'_> {
+    fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        use serde::ser::SerializeSeq;
+        let mut seq = serializer.serialize_seq(Some(self.range.len()))?;
+        for index in self.range.clone() {
+            seq.serialize_element(&BorrowedTokenEvidence {
+                index: index as u64,
+                attributes: BorrowedTokenAttributes {
+                    sentence: self.sentence,
+                    index,
+                    projection: self.projection,
+                },
+            })?;
+        }
+        seq.end()
+    }
+}
+
+enum BorrowedKeyFields<'a> {
+    Scalar(&'a [lingrep_core::fsm::ProjectedKeyField]),
+    Lexical(&'a [lingrep_core::fsm::LexicalProjectedKeyField]),
+}
+
+#[derive(Serialize)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+enum BorrowedKeyField<'a> {
+    Scalar { name: &'a str, value: &'a str },
+    List { name: &'a str, values: &'a [String] },
+}
+
+impl Serialize for BorrowedKeyFields<'_> {
+    fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        use serde::ser::SerializeSeq;
+        match self {
+            Self::Scalar(fields) => {
+                let mut seq = serializer.serialize_seq(Some(fields.len()))?;
+                for field in *fields {
+                    seq.serialize_element(&BorrowedKeyField::Scalar {
+                        name: field.name.as_str(),
+                        value: field.value.as_str(),
+                    })?;
+                }
+                seq.end()
+            }
+            Self::Lexical(fields) => {
+                let mut seq = serializer.serialize_seq(Some(fields.len()))?;
+                for field in *fields {
+                    let borrowed = match &field.value {
+                        lingrep_core::fsm::LexicalProjectedKeyValue::Scalar(value) => {
+                            BorrowedKeyField::Scalar {
+                                name: field.name.as_str(),
+                                value: value.as_str(),
+                            }
+                        }
+                        lingrep_core::fsm::LexicalProjectedKeyValue::Segments(values) => {
+                            BorrowedKeyField::List {
+                                name: field.name.as_str(),
+                                values: values.as_slice(),
+                            }
+                        }
+                    };
+                    seq.serialize_element(&borrowed)?;
+                }
+                seq.end()
+            }
+        }
+    }
+}
+
+#[derive(Serialize)]
+struct BorrowedLexicalMatch<'a> {
+    term: &'a str,
+    matched_by: BorrowedMatchedBy<'a>,
+}
+
+struct BorrowedMatchedBy<'a>(&'a [lingrep_core::token_match::AttributeKey]);
+
+impl Serialize for BorrowedMatchedBy<'_> {
+    fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        use serde::ser::SerializeSeq;
+        let mut seq = serializer.serialize_seq(Some(self.0.len()))?;
+        for attribute in self.0 {
+            seq.serialize_element(attribute.pattern_key())?;
+        }
+        seq.end()
+    }
+}
+
+struct BorrowedTags<'a>(&'a [(compact_str::CompactString, String)]);
+
+impl BorrowedTags<'_> {
+    fn is_empty(&self) -> bool {
+        self.0.is_empty()
+    }
+}
+
+#[derive(Serialize)]
+struct BorrowedTagField<'a> {
+    name: &'a str,
+    value: &'a str,
+}
+
+impl Serialize for BorrowedTags<'_> {
+    fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        use serde::ser::SerializeSeq;
+        let mut seq = serializer.serialize_seq(Some(self.0.len()))?;
+        for (name, value) in self.0 {
+            seq.serialize_element(&BorrowedTagField {
+                name: name.as_str(),
+                value: value.as_str(),
+            })?;
+        }
+        seq.end()
+    }
+}
+
+#[allow(clippy::too_many_arguments)]
+fn borrowed_match_envelope<'a>(
+    sequence: u64,
+    record: &'a RecordView<'a>,
+    location: &'a lingrep_core::execution::SentenceLocation,
+    sentence: &'a dyn TokenSequence,
+    start: usize,
+    end: usize,
+    requested_context: usize,
+    projection: &'a PublishedProjection,
+    surface: &'a str,
+    char_span: Option<ProtocolCharSpan>,
+    published_graph_keys: Option<&'a [lingrep_core::token_match::AttributeKey]>,
+    evidence: Option<MatchEvidence>,
+) -> BorrowedMatchEnvelope<'a> {
+    let spans = sentence.spans();
+    let mut has_span_ids = false;
+    let mut whole_span_ids = BTreeMap::<&'a str, Vec<u64>>::new();
+    for (id, span) in spans.iter().enumerate() {
+        if span.start <= record.start && record.end <= span.end {
+            has_span_ids = true;
+            if (span.start, span.end) == (record.start, record.end) {
+                whole_span_ids
+                    .entry(span.kind.as_str())
+                    .or_default()
+                    .push(id as u64);
+            }
+        }
+    }
+    let left = start.saturating_sub(requested_context)..start;
+    let right = end..end.saturating_add(requested_context).min(sentence.len());
+    BorrowedMatchEnvelope {
+        schema: crate::protocol::query::SCHEMA,
+        kind: "match",
+        data: BorrowedMatchData {
+            sequence,
+            pattern: record.pattern,
+            span: SourceSpan {
+                start: record.start as u64,
+                end: record.end as u64,
+            },
+            span_ids: BorrowedSpanIds {
+                spans,
+                start: record.start,
+                end: record.end,
+                has_any: has_span_ids,
+            },
+            whole_span_ids,
+            char_span,
+            captures: BorrowedCaptures {
+                captures: record.captures,
+                sentence,
+            },
+            graph_bindings: BorrowedGraphBindings {
+                bindings: record.graph_bindings,
+                published: published_graph_keys,
+            },
+            interpretations: record.interpretations,
+            corpus_sentence_ordinal: location.corpus_sentence_ordinal,
+            source_name: location.source_name.as_ref(),
+            source_metadata: location.source_metadata.as_deref(),
+            document_ordinal: location.document_ordinal,
+            document_sentence_ordinal: location.document_sentence_ordinal,
+            surface,
+            tokens: BorrowedTokenSlice {
+                sentence,
+                range: start..end,
+                projection,
+            },
+            left_context: (requested_context != 0).then_some(BorrowedTokenSlice {
+                sentence,
+                range: left,
+                projection,
+            }),
+            right_context: (requested_context != 0).then_some(BorrowedTokenSlice {
+                sentence,
+                range: right,
+                projection,
+            }),
+            unit: record.unit,
+            key: record
+                .key
+                .map(BorrowedKeyFields::Scalar)
+                .or_else(|| record.lexical_key.map(BorrowedKeyFields::Lexical)),
+            lexical: record.lexical.map(|lexical| BorrowedLexicalMatch {
+                term: lexical.term.as_str(),
+                matched_by: BorrowedMatchedBy(&lexical.matched_by),
+            }),
+            tags: BorrowedTags(record.tags),
+            evidence,
         },
     }
 }
@@ -392,6 +824,7 @@ pub fn run(
             emitted: 0,
             last_committed: None,
             scratch: Vec::new(),
+            surface_scratch: String::new(),
             evidence: graph_scalars,
             endings: args
                 .ending_report
@@ -710,6 +1143,8 @@ struct DirectMatchSink<'a, W> {
     /// One buffer for the whole run rather than one allocation per record;
     /// see [`crate::protocol::write_jsonl_buffered`].
     scratch: Vec<u8>,
+    /// Reused surface text buffer for streaming JSONL publication.
+    surface_scratch: String,
     /// Present under `--evidence`: the attributes the run projected before
     /// evidence widened it; see [`protocol_graph_binding`].
     evidence: Option<Vec<lingrep_core::token_match::AttributeKey>>,
@@ -738,24 +1173,28 @@ impl MatchRetention {
         }
     }
 
-    fn push(
-        &mut self,
-        sequence: u64,
-        event: &QueryEnvelope,
-        offsets_missing: bool,
-    ) -> Result<(), ExecutionError> {
+    fn draw_slot(&mut self) -> Result<Option<usize>, ExecutionError> {
         self.seen = self
             .seen
             .checked_add(1)
             .ok_or(ExecutionError::ResourceAccounting)?;
         let draw = lingrep_core::execution::reservoir_draw(self.seed, 0, self.seen) % self.seen;
-        let slot = if self.records.len() < self.capacity as usize {
-            self.records.len()
+        if self.records.len() < self.capacity as usize {
+            Ok(Some(self.records.len()))
         } else if draw < u64::from(self.capacity) {
-            draw as usize
+            Ok(Some(draw as usize))
         } else {
-            return Ok(());
-        };
+            Ok(None)
+        }
+    }
+
+    fn store_slot<E: Serialize>(
+        &mut self,
+        slot: usize,
+        sequence: u64,
+        event: &E,
+        offsets_missing: bool,
+    ) -> Result<(), ExecutionError> {
         let bytes = serde_json::to_vec(event).map_err(|error| ExecutionError::InvalidLimit {
             field: "retain",
             message: error.to_string(),
@@ -865,130 +1304,56 @@ impl<W: Write> DirectMatchSink<'_, W> {
                 .min(sentence.len());
             match &self.output {
                 MatchSinkOutput::Jsonl => {
-                    let surface = matched_surface(sentence, record.start..record.end, location)
-                        .map_err(ExecutionError::from)?;
+                    matched_surface_into(
+                        sentence,
+                        record.start..record.end,
+                        location,
+                        &mut self.surface_scratch,
+                    )
+                    .map_err(ExecutionError::from)?;
                     let char_span = span_char_range(sentence, record.start..record.end);
                     let offsets_missing = self.char_offsets && char_span.is_none();
                     if offsets_missing {
                         self.offsets_omitted = self.offsets_omitted.saturating_add(1);
                     }
-                    let mut span_ids = Vec::new();
-                    let mut whole_span_ids = std::collections::BTreeMap::<String, Vec<u64>>::new();
-                    for (id, span) in sentence.spans().iter().enumerate() {
-                        if span.start <= record.start && record.end <= span.end {
-                            span_ids.push(id as u64);
-                            if (span.start, span.end) == (record.start, record.end) {
-                                whole_span_ids
-                                    .entry(span.kind.to_string())
-                                    .or_default()
-                                    .push(id as u64);
-                            }
-                        }
-                    }
-                    let event = QueryEnvelope::new(QueryEvent::Match(MatchData {
-                        sequence: self.sequence,
-                        pattern: record.pattern.to_owned(),
-                        span: SourceSpan {
-                            start: record.start as u64,
-                            end: record.end as u64,
-                        },
-                        span_ids,
-                        whole_span_ids,
-                        char_span,
-                        captures: record
-                            .captures
-                            .iter()
-                            .map(|capture| Capture {
-                                name: capture.name.to_string(),
-                                hygienic_path: capture.path.to_string(),
-                                span: SourceSpan {
-                                    start: capture.start as u64,
-                                    end: capture.end as u64,
-                                },
-                                char_span: span_char_range(sentence, capture.start..capture.end),
-                            })
-                            .collect(),
-                        interpretations: record.interpretations.to_vec(),
-                        graph_bindings: record
-                            .graph_bindings
-                            .iter()
-                            .map(|binding| {
-                                protocol_graph_binding(binding, self.evidence.as_deref())
-                            })
-                            .collect(),
-                        corpus_sentence_ordinal: location.corpus_sentence_ordinal,
-                        source_name: location.source_name.to_string(),
-                        source_metadata: location.source_metadata.clone(),
-                        document_ordinal: location.document_ordinal,
-                        document_sentence_ordinal: location.document_sentence_ordinal,
-                        surface,
-                        tokens: token_evidence(sentence, start..end, &self.projection),
-                        left_context: (self.requested_context != 0)
-                            .then(|| token_evidence(sentence, left.clone(), &self.projection)),
-                        right_context: (self.requested_context != 0)
-                            .then(|| token_evidence(sentence, right.clone(), &self.projection)),
-                        unit: record.unit.map(ToOwned::to_owned),
-                        key: record
-                            .key
-                            .map(|fields| {
-                                fields
-                                    .iter()
-                                    .map(|field| ProtocolKeyField::Scalar {
-                                        name: field.name.to_string(),
-                                        value: field.value.clone(),
-                                    })
-                                    .collect()
-                            })
-                            .or_else(|| {
-                                record.lexical_key.map(|fields| {
-                                    fields
-                                        .iter()
-                                        .map(|field| {
-                                            match &field.value {
-                                            lingrep_core::fsm::LexicalProjectedKeyValue::Scalar(
-                                                value,
-                                            ) => ProtocolKeyField::Scalar {
-                                                name: field.name.to_string(),
-                                                value: value.clone(),
-                                            },
-                                            lingrep_core::fsm::LexicalProjectedKeyValue::Segments(
-                                                values,
-                                            ) => ProtocolKeyField::List {
-                                                name: field.name.to_string(),
-                                                values: values.clone(),
-                                            },
-                                        }
-                                        })
-                                        .collect()
-                                })
-                            }),
-                        lexical: record.lexical.map(|lexical| {
-                            crate::protocol::query::LexicalMatchData {
-                                term: lexical.term.to_string(),
-                                matched_by: lexical
-                                    .matched_by
-                                    .iter()
-                                    .map(|attribute| attribute.pattern_key().to_owned())
-                                    .collect(),
-                            }
-                        }),
-                        tags: record
-                            .tags
-                            .iter()
-                            .map(|(name, value)| TagField {
-                                name: name.to_string(),
-                                value: value.clone(),
-                            })
-                            .collect(),
-                        evidence: self
-                            .evidence
-                            .is_some()
-                            .then(|| match_evidence(sentence, &record, location))
-                            .transpose()?,
-                    }));
+                    let evidence = self
+                        .evidence
+                        .is_some()
+                        .then(|| match_evidence(sentence, &record, location))
+                        .transpose()?;
                     if let Some(retention) = self.retention.as_mut() {
-                        retention.push(self.sequence, &event, offsets_missing)?;
+                        if let Some(slot) = retention.draw_slot()? {
+                            let event = borrowed_match_envelope(
+                                self.sequence,
+                                &record,
+                                location,
+                                sentence,
+                                start,
+                                end,
+                                self.requested_context,
+                                &self.projection,
+                                &self.surface_scratch,
+                                char_span,
+                                self.evidence.as_deref(),
+                                evidence,
+                            );
+                            retention.store_slot(slot, self.sequence, &event, offsets_missing)?;
+                        }
                     } else {
+                        let event = borrowed_match_envelope(
+                            self.sequence,
+                            &record,
+                            location,
+                            sentence,
+                            start,
+                            end,
+                            self.requested_context,
+                            &self.projection,
+                            &self.surface_scratch,
+                            char_span,
+                            self.evidence.as_deref(),
+                            evidence,
+                        );
                         crate::protocol::write_jsonl_buffered(
                             self.writer,
                             &mut self.scratch,
@@ -1249,6 +1614,7 @@ mod tests {
             emitted: 0,
             last_committed: None,
             scratch: Vec::new(),
+            surface_scratch: String::new(),
             evidence: None,
             endings: None,
             retention: None,
@@ -1669,5 +2035,367 @@ mod tests {
             lingrep_corpus::ReaderIdentity::from_bytes(*historical.finalize().as_bytes());
 
         assert_ne!(bounded, historical);
+    }
+
+    #[test]
+    fn borrowed_match_envelope_is_byte_identical_to_owned_match_data() {
+        use crate::commands::query_support::token_evidence;
+        use crate::protocol::query::{
+            Capture, GraphBinding as ProtocolGraphBinding,
+            GraphNodeAttribute as ProtocolGraphNodeAttribute, LexicalMatchData, MatchData,
+            ProtocolKeyField, TagField,
+        };
+        use lingrep_core::corpus::conllu::EnhancedNodeId;
+        use lingrep_core::fsm::{
+            GraphBinding, GraphNodeAttribute, LexicalMatch, LexicalProjectedKeyField,
+            LexicalProjectedKeyValue, ProjectedKeyField,
+        };
+        use lingrep_core::token_match::{
+            AttributeKey, BoundTokenSentence, CharSpan, SentenceSpan, TokenSchema,
+        };
+
+        let schema = TokenSchema::from_keys(["text", "surface", "lemma", "conllu.misc"]).unwrap();
+        let schema_projection = schema
+            .bind_projection(schema.keys().iter().cloned())
+            .unwrap();
+        let bound = BoundTokenSentence::from_projected_values(
+            &schema_projection,
+            4,
+            vec![
+                Some("猫".into()),
+                Some("猫".into()),
+                Some("猫".into()),
+                Some("SpaceAfter=No".into()),
+                Some("が".into()),
+                Some("が".into()),
+                Some("が".into()),
+                None,
+                Some("走っ".into()),
+                Some("走っ".into()),
+                Some("走る".into()),
+                None,
+                Some("た".into()),
+                Some("た".into()),
+                Some("た".into()),
+                None,
+            ],
+        )
+        .unwrap()
+        .with_char_offsets(Some(Arc::new(vec![
+            CharSpan { start: 0, end: 1 },
+            CharSpan { start: 1, end: 2 },
+            CharSpan { start: 2, end: 4 },
+            CharSpan { start: 4, end: 5 },
+        ])))
+        .with_spans(vec![
+            SentenceSpan {
+                kind: "clause".into(),
+                start: 0,
+                end: 4,
+                head: Some(2),
+                label: Some("main".into()),
+                governor: None,
+            },
+            SentenceSpan {
+                kind: "chunk".into(),
+                start: 1,
+                end: 3,
+                head: Some(2),
+                label: None,
+                governor: None,
+            },
+        ])
+        .unwrap();
+
+        let projection = PublishedProjection::new(schema.keys());
+        let mut metadata = serde_json::Map::new();
+        metadata.insert("genre".into(), serde_json::json!("fiction"));
+        let mut location = sink_test_location();
+        location.source_metadata = Some(Arc::new(metadata));
+
+        let captures = [lingrep_core::fsm::Capture {
+            name: "verb".into(),
+            path: "p.verb".into(),
+            start: 2,
+            end: 3,
+        }];
+        let graph_bindings = [
+            GraphBinding::Measure {
+                name: "dist".into(),
+                value: lingrep_core::fsm::Measurement::Number {
+                    sum: 3,
+                    count: std::num::NonZeroU64::new(2).unwrap(),
+                },
+            },
+            GraphBinding::Count {
+                name: "deps".into(),
+                value: Some(2),
+            },
+            GraphBinding::Node {
+                name: "head".into(),
+                node: EnhancedNodeId::Word { token_index: 2 },
+                attributes: vec![
+                    GraphNodeAttribute {
+                        name: AttributeKey::new("lemma").unwrap(),
+                        value: "走る".into(),
+                    },
+                    GraphNodeAttribute {
+                        name: AttributeKey::new("upos").unwrap(),
+                        value: "VERB".into(),
+                    },
+                ]
+                .into(),
+            },
+            GraphBinding::Edge {
+                name: "rel".into(),
+                head: EnhancedNodeId::Word { token_index: 2 },
+                dependent: EnhancedNodeId::Empty {
+                    boundary: 1,
+                    subindex: 1,
+                },
+                relation: "nsubj".into(),
+            },
+        ];
+        let scalar_key = [ProjectedKeyField {
+            name: "k".into(),
+            value: "走る".into(),
+        }];
+        let lexical_key = [
+            LexicalProjectedKeyField {
+                name: "k1".into(),
+                value: LexicalProjectedKeyValue::Scalar("走る".into()),
+            },
+            LexicalProjectedKeyField {
+                name: "k2".into(),
+                value: LexicalProjectedKeyValue::Segments(vec!["が".into(), "走っ".into()]),
+            },
+        ];
+        let lexical = LexicalMatch {
+            term: "が走る".into(),
+            matched_by: vec![AttributeKey::new("lemma").unwrap()].into(),
+        };
+        let tags = [(compact_str::CompactString::new("t"), "v".to_owned())];
+        let published_graph_keys = vec![AttributeKey::new("lemma").unwrap()];
+
+        let check_case = |record: RecordView<'_>,
+                          requested_context: usize,
+                          published_keys: Option<&[AttributeKey]>| {
+            let start = record.start.min(bound.len());
+            let end = record.end.min(bound.len()).max(start);
+            let left = start.saturating_sub(requested_context)..start;
+            let right = end..end.saturating_add(requested_context).min(bound.len());
+            let surface = matched_surface(&bound, record.start..record.end, &location).unwrap();
+            let char_span = span_char_range(&bound, record.start..record.end);
+            let evidence_owned = published_keys
+                .is_some()
+                .then(|| match_evidence(&bound, &record, &location).unwrap());
+            let evidence_borrowed = published_keys
+                .is_some()
+                .then(|| match_evidence(&bound, &record, &location).unwrap());
+
+            let mut span_ids = Vec::new();
+            let mut whole_span_ids = BTreeMap::<String, Vec<u64>>::new();
+            for (id, span) in bound.spans().iter().enumerate() {
+                if span.start <= record.start && record.end <= span.end {
+                    span_ids.push(id as u64);
+                    if (span.start, span.end) == (record.start, record.end) {
+                        whole_span_ids
+                            .entry(span.kind.clone())
+                            .or_default()
+                            .push(id as u64);
+                    }
+                }
+            }
+            let owned = QueryEnvelope::new(QueryEvent::Match(MatchData {
+                sequence: 7,
+                pattern: record.pattern.to_owned(),
+                span: SourceSpan {
+                    start: record.start as u64,
+                    end: record.end as u64,
+                },
+                span_ids,
+                whole_span_ids,
+                char_span,
+                captures: record
+                    .captures
+                    .iter()
+                    .map(|capture| Capture {
+                        name: capture.name.to_string(),
+                        hygienic_path: capture.path.to_string(),
+                        span: SourceSpan {
+                            start: capture.start as u64,
+                            end: capture.end as u64,
+                        },
+                        char_span: span_char_range(&bound, capture.start..capture.end),
+                    })
+                    .collect(),
+                graph_bindings: record
+                    .graph_bindings
+                    .iter()
+                    .map(|binding| match binding {
+                        GraphBinding::Measure { name, value } => ProtocolGraphBinding::Measure {
+                            name: name.to_string(),
+                            value: value.number().and_then(serde_json::Number::from_f64),
+                            status: value.status().into(),
+                        },
+                        GraphBinding::Count { name, value } => ProtocolGraphBinding::Count {
+                            name: name.to_string(),
+                            value: *value,
+                        },
+                        GraphBinding::Node {
+                            name,
+                            node,
+                            attributes,
+                        } => ProtocolGraphBinding::Node {
+                            name: name.to_string(),
+                            node: protocol_graph_node(*node),
+                            attributes: attributes
+                                .iter()
+                                .filter(|attribute| {
+                                    graph_node_attribute_published(*node, attribute, published_keys)
+                                })
+                                .map(|attribute| ProtocolGraphNodeAttribute {
+                                    name: attribute.name.pattern_key().to_owned(),
+                                    value: attribute.value.to_string(),
+                                })
+                                .collect(),
+                        },
+                        GraphBinding::Edge {
+                            name,
+                            head,
+                            dependent,
+                            relation,
+                        } => ProtocolGraphBinding::Edge {
+                            name: name.to_string(),
+                            head: protocol_graph_node(*head),
+                            dependent: protocol_graph_node(*dependent),
+                            relation: relation.to_string(),
+                        },
+                    })
+                    .collect(),
+                interpretations: record.interpretations.to_vec(),
+                corpus_sentence_ordinal: location.corpus_sentence_ordinal,
+                source_name: location.source_name.to_string(),
+                source_metadata: location.source_metadata.clone(),
+                document_ordinal: location.document_ordinal,
+                document_sentence_ordinal: location.document_sentence_ordinal,
+                surface: surface.clone(),
+                tokens: token_evidence(&bound, start..end, &projection),
+                left_context: (requested_context != 0)
+                    .then(|| token_evidence(&bound, left, &projection)),
+                right_context: (requested_context != 0)
+                    .then(|| token_evidence(&bound, right, &projection)),
+                unit: record.unit.map(ToOwned::to_owned),
+                key: record
+                    .key
+                    .map(|fields| {
+                        fields
+                            .iter()
+                            .map(|field| ProtocolKeyField::Scalar {
+                                name: field.name.to_string(),
+                                value: field.value.clone(),
+                            })
+                            .collect()
+                    })
+                    .or_else(|| {
+                        record.lexical_key.map(|fields| {
+                            fields
+                                .iter()
+                                .map(|field| match &field.value {
+                                    LexicalProjectedKeyValue::Scalar(value) => {
+                                        ProtocolKeyField::Scalar {
+                                            name: field.name.to_string(),
+                                            value: value.clone(),
+                                        }
+                                    }
+                                    LexicalProjectedKeyValue::Segments(values) => {
+                                        ProtocolKeyField::List {
+                                            name: field.name.to_string(),
+                                            values: values.clone(),
+                                        }
+                                    }
+                                })
+                                .collect()
+                        })
+                    }),
+                lexical: record.lexical.map(|lexical| LexicalMatchData {
+                    term: lexical.term.to_string(),
+                    matched_by: lexical
+                        .matched_by
+                        .iter()
+                        .map(|attribute| attribute.pattern_key().to_owned())
+                        .collect(),
+                }),
+                tags: record
+                    .tags
+                    .iter()
+                    .map(|(name, value)| TagField {
+                        name: name.to_string(),
+                        value: value.clone(),
+                    })
+                    .collect(),
+                evidence: evidence_owned,
+            }));
+
+            let borrowed = borrowed_match_envelope(
+                7,
+                &record,
+                &location,
+                &bound,
+                start,
+                end,
+                requested_context,
+                &projection,
+                &surface,
+                char_span,
+                published_keys,
+                evidence_borrowed,
+            );
+            let owned_json = serde_json::to_string(&owned).unwrap();
+            let borrowed_json = serde_json::to_string(&borrowed).unwrap();
+            assert_eq!(borrowed_json, owned_json);
+            let round_tripped: QueryEnvelope = serde_json::from_str(&borrowed_json).unwrap();
+            assert_eq!(round_tripped, owned);
+        };
+
+        // Case 1: fully populated with scalar key, context, and evidence narrowing.
+        check_case(
+            RecordView {
+                pattern: "p",
+                definition: "p",
+                start: 1,
+                end: 3,
+                captures: &captures,
+                graph_bindings: &graph_bindings,
+                interpretations: &[],
+                unit: Some("が走っ"),
+                key: Some(&scalar_key),
+                lexical_key: None,
+                lexical: Some(&lexical),
+                tags: &tags,
+            },
+            2,
+            Some(&published_graph_keys),
+        );
+
+        // Case 2: lexical key (scalar + segments), no context, no evidence.
+        check_case(
+            RecordView {
+                pattern: "lex",
+                definition: "lex",
+                start: 0,
+                end: 2,
+                captures: &[],
+                graph_bindings: &[],
+                interpretations: &[],
+                unit: None,
+                key: None,
+                lexical_key: Some(&lexical_key),
+                lexical: Some(&lexical),
+                tags: &[],
+            },
+            0,
+            None,
+        );
     }
 }
