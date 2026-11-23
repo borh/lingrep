@@ -185,7 +185,12 @@ impl ResultIndexState {
         recorder
             .journal
             .append_occurrence(&mut occurrence)
-            .map_err(|error| ExecutionError::Sink(error.to_string()))?;
+            .map_err(|error| match error {
+                crate::result_index::ResultIndexError::BudgetExceeded => {
+                    ExecutionError::SinkLimit(error.to_string())
+                }
+                other => ExecutionError::Sink(other.to_string()),
+            })?;
         let preview_bytes = occurrence_bytes(&occurrence);
         if seen <= 30 && recorder.preview_bytes.saturating_add(preview_bytes) <= 4 * 1024 * 1024 {
             recorder.preview.push(occurrence);
@@ -1063,7 +1068,7 @@ impl SnapshotSink {
 }
 
 fn compound_limit(error: CompoundLimitExceeded) -> ExecutionError {
-    ExecutionError::Sink(error.to_string())
+    ExecutionError::SinkLimit(error.to_string())
 }
 
 fn sink_error(error: SectionTallyError) -> ExecutionError {

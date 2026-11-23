@@ -227,6 +227,14 @@ pub enum ExecutionError {
     /// Writing results to a sink failed.
     #[error("result sink failed: {0}")]
     Sink(String),
+    /// A sink encountered an I/O or temporary-storage failure without erasing
+    /// its underlying [`std::io::Error`].
+    #[error("result sink failed: {0}")]
+    SinkIo(#[source] std::io::Error),
+    /// A sink refused further results because a caller-configured result limit
+    /// was exceeded.
+    #[error("{0}")]
+    SinkLimit(String),
     /// Writing authoritative or projected output failed without erasing its
     /// I/O category.
     #[error("output failed: {message}")]

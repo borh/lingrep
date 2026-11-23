@@ -74,7 +74,7 @@ fn summarize_fixture(
     let mut rows = Vec::new();
     finalized.visit(top, |actual| {
         rows.push(actual.clone());
-        Ok(())
+        Ok::<(), std::convert::Infallible>(())
     })?;
     Ok(rows)
 }
@@ -102,7 +102,7 @@ fn finalize_groups(groups: &[AggregationGroup]) -> Vec<SummaryRow> {
     finalized
         .visit(None, |row| {
             rows.push(row.clone());
-            Ok(())
+            Ok::<(), std::convert::Infallible>(())
         })
         .unwrap();
     rows
@@ -435,7 +435,7 @@ fn cross_variant_groups_merge_into_one_row_across_shards() {
         finalized
             .visit(None, |row| {
                 rows.push((row.partition.pattern_ordinal, row.count));
-                Ok(())
+                Ok::<(), std::convert::Infallible>(())
             })
             .unwrap();
         assert_eq!(rows, [(7, 5)], "shards={shards}");
@@ -511,7 +511,7 @@ fn shard_count_does_not_change_published_rows() {
         finalized
             .visit(None, |row| {
                 rows.push(row.clone());
-                Ok(())
+                Ok::<(), std::convert::Infallible>(())
             })
             .unwrap();
         rows
@@ -526,7 +526,7 @@ fn temp_exhaustion_is_exact_and_publishes_no_rows() {
     let mut summary = SummaryAggregator::with_limits(1, 2, 1, 2).unwrap();
     let mut published = Vec::<SummaryRow>::new();
 
-    let result = (|| {
+    let result: std::io::Result<u64> = (|| {
         for surface in ["一", "二", "三", "四"] {
             summary.add(
                 SummaryPartition::pattern(0),
@@ -534,10 +534,10 @@ fn temp_exhaustion_is_exact_and_publishes_no_rows() {
             )?;
         }
         let mut finalized = summary.finalize()?;
-        finalized.visit(None, |row| {
+        Ok(finalized.visit(None, |row| {
             published.push(row.clone());
-            Ok(())
-        })
+            Ok::<(), std::convert::Infallible>(())
+        })?)
     })();
 
     assert!(result.is_err());

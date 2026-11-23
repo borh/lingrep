@@ -15,7 +15,7 @@ use rayon::prelude::*;
 use rustc_hash::FxHashMap;
 use tempfile::TempPath;
 
-use crate::summary::{AggregationGroup, SummaryPartition, SummaryRow, SummaryRows};
+use crate::summary::{AggregationGroup, SummaryPartition, SummaryRow, SummaryRows, VisitError};
 
 const MAX_WIDTH: usize = 8;
 const ORDER_WORDS: usize = 3 + MAX_WIDTH;
@@ -423,11 +423,11 @@ impl FinalizedWindows {
 }
 
 impl SummaryRows for FinalizedWindows {
-    fn visit(
+    fn visit<E>(
         &mut self,
         top: Option<u64>,
-        mut visitor: impl FnMut(SummaryRow) -> io::Result<()>,
-    ) -> io::Result<u64> {
+        mut visitor: impl FnMut(SummaryRow) -> Result<(), E>,
+    ) -> Result<u64, VisitError<E>> {
         let mut current = None;
         let mut rank = 0_u64;
         let mut emitted = 0_u64;
@@ -462,7 +462,8 @@ impl SummaryRows for FinalizedWindows {
                 rank,
                 group: AggregationGroup::Key(fields),
                 count: !(u64::from(record[1]) << 32 | u64::from(record[2])),
-            })?;
+            })
+            .map_err(VisitError::Visitor)?;
             emitted += 1;
         }
         Ok(emitted)

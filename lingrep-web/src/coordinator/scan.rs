@@ -254,15 +254,10 @@ pub(super) fn classify_execution_error(error: &ExecutionError) -> AttemptFailure
                 "An input sentence is {actual} bytes; the server limit is {limit}. Ask the server operator to review the source and sentence limit."
             ),
         },
-        ExecutionError::Sink(message)
-            if *message == crate::result_index::ResultIndexError::BudgetExceeded.to_string()
-                || *message == crate::derived_patterns::CompoundLimitExceeded.to_string() =>
-        {
-            AttemptFailure {
-                category: ErrorCategory::ResultLimit,
-                message: message.clone(),
-            }
-        }
+        ExecutionError::SinkLimit(message) => AttemptFailure {
+            category: ErrorCategory::ResultLimit,
+            message: message.clone(),
+        },
         ExecutionError::Cache(_) | ExecutionError::Source { .. } => integrity_failure(),
         _ => execution_failure(),
     }

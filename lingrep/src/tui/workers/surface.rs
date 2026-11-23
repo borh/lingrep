@@ -96,11 +96,10 @@ impl SurfaceWorker {
             Ok(RunOutcome::Cancelled(_)) => {
                 send_cancelled(&tx, self.request_id, self.pattern_id);
             }
+            Err(crate::error::CliError::Execution(ExecutionError::SinkIo(error))) => {
+                send_failure(&tx, self.request_id, self.pattern_id, error);
+            }
             Err(error) => {
-                if let Some(error) = sink.failure.take() {
-                    send_failure(&tx, self.request_id, self.pattern_id, error);
-                    return;
-                }
                 let _ = tx.send(ExplorerMessage::SurfaceFailed {
                     request_id: self.request_id,
                     pattern_id: self.pattern_id,
@@ -118,7 +117,6 @@ const MERGE_FAN_IN: usize = 16;
 struct SurfaceSink {
     pattern: String,
     counts: SortedRunCounts<String>,
-    failure: Option<io::Error>,
 }
 
 impl SurfaceSink {
@@ -133,7 +131,6 @@ impl SurfaceSink {
                 },
                 budget,
             )?,
-            failure: None,
         })
     }
 
@@ -151,14 +148,7 @@ impl SurfaceSink {
                 Ok(())
             }
         };
-        let Self {
-            mut counts,
-            failure,
-            ..
-        } = self;
-        if let Some(error) = failure {
-            return Err(error);
-        }
+        let Self { mut counts, .. } = self;
         let mut ordered = SortedRunCounts::with_policy(
             SpillPolicy {
                 max_pending_bytes: usize::MAX,
@@ -255,11 +245,7 @@ impl MatchSink for SurfaceSink {
             for token_index in matched.start..matched.end {
                 let text = matched_surface(sentence, token_index..token_index + 1, location)
                     .map_err(ExecutionError::from)?;
-                if let Err(error) = self.counts.add(text, 1) {
-                    let message = error.to_string();
-                    self.failure = Some(error);
-                    return Err(ExecutionError::Sink(message));
-                }
+                self.counts.add(text, 1).map_err(ExecutionError::SinkIo)?;
             }
             records_emitted += 1;
         }

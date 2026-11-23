@@ -41,7 +41,7 @@ use crate::protocol::{write_jsonl, write_jsonl_buffered};
 use crate::summary::{
     AggregationGroup, AggregationInput, GroupingTally, MetadataValueTally, OwnedAggregationInput,
     SectionTally, SpillLayout, SummaryAggregator, SummaryPartition, SummaryRow, SummaryRows,
-    shard_hash,
+    VisitError, shard_hash,
 };
 use crate::terminal::PresentationProgress;
 use crate::terminal::TerminalArbiter;
@@ -186,35 +186,26 @@ fn publish_summary_rows_and_complete(
     mut complete: QueryComplete,
     writer: &mut impl SummaryEventWriter,
 ) -> Result<u64, CliError> {
-    let mut publication_error = None;
     let mut batch = Vec::with_capacity(SUMMARY_PUBLISH_ROWS);
-    let mut publish = |batch: &mut Vec<SummaryRow>| {
+    let mut publish = |batch: &mut Vec<SummaryRow>| -> Result<(), ExecutionError> {
         let written = writer.write_summaries(pattern_names, batch);
         batch.clear();
-        written.map_err(|error| {
-            let message = error.to_string();
-            publication_error = Some(error);
-            io::Error::other(message)
-        })
+        written
     };
-    let visit_result = finalized
-        .visit(top, |row| {
-            batch.push(row);
-            if batch.len() == SUMMARY_PUBLISH_ROWS {
-                publish(&mut batch)
-            } else {
-                Ok(())
-            }
-        })
-        .and_then(|emitted| publish(&mut batch).map(|()| emitted));
-    let emitted = match visit_result {
-        Ok(emitted) => emitted,
-        Err(_) if publication_error.is_some() => {
-            return Err(CliError::Execution(
-                publication_error.expect("checked summary publication error"),
-            ));
+    let emitted = match finalized.visit(top, |row| {
+        batch.push(row);
+        if batch.len() == SUMMARY_PUBLISH_ROWS {
+            publish(&mut batch)
+        } else {
+            Ok(())
         }
-        Err(error) => return Err(CliError::Aggregation(error)),
+    }) {
+        Ok(emitted) => {
+            publish(&mut batch)?;
+            emitted
+        }
+        Err(VisitError::Visitor(error)) => return Err(CliError::Execution(error)),
+        Err(VisitError::Storage(error)) => return Err(CliError::Aggregation(error)),
     };
     complete.counters.records_emitted = emitted;
     writer.write_complete(&complete)?;
@@ -848,7 +839,6 @@ pub fn run(
             span_grouping: SpanGrouping::new(args.by_span.as_deref()),
             grouping_coverage,
             accumulator,
-            aggregation_error: None,
             pattern_ordinals: &pattern_ordinals,
             selected_patterns: (args.pattern_filter.is_some() || args.group_patterns_by.is_some())
                 .then_some(&pattern_projection.selected),
@@ -887,12 +877,8 @@ pub fn run(
         );
         let outcome = match outcome {
             Ok(outcome) => outcome,
-            Err(error) => {
-                if let Some(error) = sink.aggregation_error.take() {
-                    return Err(CliError::Aggregation(error));
-                }
-                return Err(error.into());
-            }
+            Err(ExecutionError::SinkIo(error)) => return Err(CliError::Aggregation(error)),
+            Err(error) => return Err(error.into()),
         };
         let completed = match outcome {
             MatchingRunOutcome::Completed(completed) => *completed,
@@ -1225,7 +1211,6 @@ struct SummarySink<'a> {
     span_grouping: SpanGrouping<'a>,
     grouping_coverage: Option<GroupingTally>,
     accumulator: SummaryAccumulator<'a>,
-    aggregation_error: Option<io::Error>,
     pattern_ordinals: &'a BTreeMap<String, u64>,
     selected_patterns: Option<&'a BTreeSet<u64>>,
     /// Consulted per record to decide what it groups by.
@@ -1425,15 +1410,19 @@ fn write_count_table(
     )
     .map_err(table_error)?
     .with_pool(pool);
-    let mut failure = None;
+    enum TableVisitError {
+        Aggregation(io::Error),
+        Table(lingrep_corpus::CountTableError),
+    }
+
     let mut events = 0u64;
     let visited = finalized.visit(|event| {
         events += 1;
         if events.is_multiple_of(1 << 16) && cancellation.is_cancelled() {
-            return Err(io::Error::new(
+            return Err(TableVisitError::Aggregation(io::Error::new(
                 io::ErrorKind::Interrupted,
                 "count table writing cancelled",
-            ));
+            )));
         }
         let written = match event {
             crate::summary::GroupEvent::Entry {
@@ -1443,7 +1432,9 @@ fn write_count_table(
             } => match ordinals.binary_search(&pattern_ordinal) {
                 Ok(pattern) => writer.begin_entry(pattern, schema, words),
                 Err(_) => {
-                    return Err(io::Error::other("count for an unpublished pattern"));
+                    return Err(TableVisitError::Aggregation(io::Error::other(
+                        "count for an unpublished pattern",
+                    )));
                 }
             },
             crate::summary::GroupEvent::Sentence {
@@ -1453,22 +1444,21 @@ fn write_count_table(
             } => match document_index.get(&document_ordinal) {
                 Some(document) => writer.add_sentence(*document, sentence_ordinal, count),
                 None => {
-                    return Err(io::Error::other(
+                    return Err(TableVisitError::Aggregation(io::Error::other(
                         "count for a document with no admitted sentence",
-                    ));
+                    )));
                 }
             },
         };
-        written.map_err(|error| {
-            let message = error.to_string();
-            failure = Some(error);
-            io::Error::other(message)
-        })
+        written.map_err(TableVisitError::Table)
     });
-    if let Some(error) = failure {
-        return Err(table_error(error));
+    match visited {
+        Ok(()) => {}
+        Err(VisitError::Visitor(TableVisitError::Table(error))) => return Err(table_error(error)),
+        Err(
+            VisitError::Visitor(TableVisitError::Aggregation(error)) | VisitError::Storage(error),
+        ) => return Err(CliError::Aggregation(error)),
     }
-    visited.map_err(CliError::Aggregation)?;
     let peak = finalized.peak_temp_bytes();
     let staged = writer.finish(cancellation).map_err(table_error)?;
     Ok((staged, peak))
@@ -1773,12 +1763,7 @@ impl SummarySink<'_> {
             | SummaryAccumulator::ByDocument { .. }
             | SummaryAccumulator::WriteTable { .. } => return Ok(()),
         };
-        if let Err(error) = observed {
-            let message = error.to_string();
-            self.aggregation_error = Some(error);
-            return Err(ExecutionError::Sink(message));
-        }
-        Ok(())
+        observed.map_err(ExecutionError::SinkIo)
     }
 
     fn observe_grouping(
@@ -1786,12 +1771,10 @@ impl SummarySink<'_> {
         partition: SummaryPartition,
         grouped: bool,
     ) -> Result<(), ExecutionError> {
-        if let Some(coverage) = self.grouping_coverage.as_mut()
-            && let Err(error) = coverage.observe(partition, grouped)
-        {
-            let message = error.to_string();
-            self.aggregation_error = Some(error);
-            return Err(ExecutionError::Sink(message));
+        if let Some(coverage) = self.grouping_coverage.as_mut() {
+            coverage
+                .observe(partition, grouped)
+                .map_err(ExecutionError::SinkIo)?;
         }
         Ok(())
     }
@@ -1807,15 +1790,10 @@ impl SummarySink<'_> {
                 self.records_unkeyed += 1;
                 continue;
             };
-            let result = self
-                .accumulator
+            self.accumulator
                 .aggregator_mut()?
-                .add_owned_prehashed(partition, grouped, hash);
-            if let Err(error) = result {
-                let message = error.to_string();
-                self.aggregation_error = Some(error);
-                return Err(ExecutionError::Sink(message));
-            }
+                .add_owned_prehashed(partition, grouped, hash)
+                .map_err(ExecutionError::SinkIo)?;
         }
         Ok(records_emitted)
     }
@@ -1852,12 +1830,10 @@ impl SummarySink<'_> {
                 self.records_unkeyed += 1;
                 continue;
             };
-            let result = self.accumulator.aggregator_mut()?.add(partition, grouped);
-            if let Err(error) = result {
-                let message = error.to_string();
-                self.aggregation_error = Some(error);
-                return Err(ExecutionError::Sink(message));
-            }
+            self.accumulator
+                .aggregator_mut()?
+                .add(partition, grouped)
+                .map_err(ExecutionError::SinkIo)?;
         }
         self.observe_slot_patterns(location, sentence.len(), matched.into_iter())?;
         // Every match is folded into the aggregation; nothing is skipped.
@@ -1891,14 +1867,10 @@ impl MatchSink for SummarySink<'_> {
             if cancel.is_cancelled() {
                 return Ok((controls, true));
             }
-            match windows.push(pool, sentence) {
-                Ok(records_emitted) => controls.push(SinkControl::Continue { records_emitted }),
-                Err(error) => {
-                    let message = error.to_string();
-                    self.aggregation_error = Some(error);
-                    return Err(ExecutionError::Sink(message));
-                }
-            }
+            let records_emitted = windows
+                .push(pool, sentence)
+                .map_err(ExecutionError::SinkIo)?;
+            controls.push(SinkControl::Continue { records_emitted });
         }
         Ok((controls, false))
     }

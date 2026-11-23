@@ -1392,24 +1392,55 @@ pub struct FinalizedSummary {
     values: Vec<Box<str>>,
 }
 
+/// Distinguishes spill/storage I/O failures from a caller-supplied visitor's
+/// own typed error without smuggling the visitor error through `Option<E>`.
+#[derive(Debug)]
+pub enum VisitError<E> {
+    Storage(io::Error),
+    Visitor(E),
+}
+
+impl<E> From<io::Error> for VisitError<E> {
+    fn from(error: io::Error) -> Self {
+        Self::Storage(error)
+    }
+}
+
+impl From<VisitError<std::convert::Infallible>> for io::Error {
+    fn from(error: VisitError<std::convert::Infallible>) -> Self {
+        match error {
+            VisitError::Storage(error) => error,
+            VisitError::Visitor(never) => match never {},
+        }
+    }
+}
+
+impl From<VisitError<io::Error>> for io::Error {
+    fn from(error: VisitError<io::Error>) -> Self {
+        match error {
+            VisitError::Storage(error) | VisitError::Visitor(error) => error,
+        }
+    }
+}
+
 /// A finalized summary's rows in publication order.
 pub trait SummaryRows {
     /// Calls `visitor` with each row ranked at most `top` within its
     /// partition and returns the number of rows visited. Consumes the rows: a
     /// second call visits no rows.
-    fn visit(
+    fn visit<E>(
         &mut self,
         top: Option<u64>,
-        visitor: impl FnMut(SummaryRow) -> io::Result<()>,
-    ) -> io::Result<u64>;
+        visitor: impl FnMut(SummaryRow) -> Result<(), E>,
+    ) -> Result<u64, VisitError<E>>;
 }
 
 impl SummaryRows for FinalizedSummary {
-    fn visit(
+    fn visit<E>(
         &mut self,
         top: Option<u64>,
-        visitor: impl FnMut(SummaryRow) -> io::Result<()>,
-    ) -> io::Result<u64> {
+        visitor: impl FnMut(SummaryRow) -> Result<(), E>,
+    ) -> Result<u64, VisitError<E>> {
         Self::visit(self, top, visitor)
     }
 }
@@ -1421,11 +1452,11 @@ impl FinalizedSummary {
 
     /// Merges the shards' ordered streams and walks the global order once.
     /// Consumes the streams: a second call sees nothing.
-    pub fn visit(
+    pub fn visit<E>(
         &mut self,
         top: Option<u64>,
-        mut visitor: impl FnMut(SummaryRow) -> io::Result<()>,
-    ) -> io::Result<u64> {
+        mut visitor: impl FnMut(SummaryRow) -> Result<(), E>,
+    ) -> Result<u64, VisitError<E>> {
         let mut drains = Vec::with_capacity(self.shards.len());
         for counts in self.shards.drain(..) {
             drains.push(counts.into_sorted_drain()?);
@@ -1466,7 +1497,8 @@ impl FinalizedSummary {
                 rank,
                 group: materialize_group(&entry.group, &self.key_schemas, &self.values)?,
                 count,
-            })?;
+            })
+            .map_err(VisitError::Visitor)?;
             emitted = emitted
                 .checked_add(1)
                 .ok_or_else(|| io::Error::other("summary row count overflow"))?;
@@ -1631,10 +1663,10 @@ impl FinalizedGroups {
     /// Merges the shards' streams and reports each entry once, before its
     /// documents. Groups that compare equal are one entry, whichever key
     /// form each occurrence had. Consumes the streams.
-    pub fn visit(
+    pub fn visit<E>(
         &mut self,
-        mut visitor: impl FnMut(GroupEvent<'_>) -> io::Result<()>,
-    ) -> io::Result<()> {
+        mut visitor: impl FnMut(GroupEvent<'_>) -> Result<(), E>,
+    ) -> Result<(), VisitError<E>> {
         let mut drains = Vec::with_capacity(self.shards.len());
         for counts in self.shards.drain(..) {
             drains.push(counts.into_sorted_drain()?);
@@ -1663,14 +1695,16 @@ impl FinalizedGroups {
                     pattern_ordinal: entry.pattern_ordinal,
                     schema,
                     words: &words,
-                })?;
+                })
+                .map_err(VisitError::Visitor)?;
                 current = Some((entry.pattern_ordinal, entry.group));
             }
             visitor(GroupEvent::Sentence {
                 document_ordinal: entry.document_ordinal,
                 sentence_ordinal: entry.sentence_ordinal,
                 count: count as u64,
-            })?;
+            })
+            .map_err(VisitError::Visitor)?;
         }
         Ok(())
     }

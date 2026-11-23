@@ -715,8 +715,11 @@ fn execution_classification(
         E::Source { ordinal, .. } => {
             failure("execution", Matching, Safe).at(None, Some(*ordinal), None)
         }
-        E::Cache(_) | E::Sink(_) | E::Observer(_) => failure("execution", Matching, Safe),
-        E::InvalidLimit { .. }
+        E::Cache(_) | E::Sink(_) | E::SinkIo(_) | E::Observer(_) => {
+            failure("execution", Matching, Safe)
+        }
+        E::SinkLimit(_)
+        | E::InvalidLimit { .. }
         | E::ResourceAccounting
         | E::LookaroundWindowTooLarge { .. }
         | E::PolicyAnchor(_) => failure("execution", Matching, AfterChange),

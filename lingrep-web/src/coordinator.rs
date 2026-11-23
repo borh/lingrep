@@ -1310,8 +1310,9 @@ mod tests {
 
     #[test]
     fn result_budget_failure_tells_the_user_to_narrow_the_query() {
-        let error =
-            ExecutionError::Sink(crate::result_index::ResultIndexError::BudgetExceeded.to_string());
+        let error = ExecutionError::SinkLimit(
+            crate::result_index::ResultIndexError::BudgetExceeded.to_string(),
+        );
         let failure = classify_execution_error(&error);
         assert_eq!(failure.category, ErrorCategory::ResultLimit);
         assert!(
@@ -1324,7 +1325,7 @@ mod tests {
     #[test]
     fn compound_limit_failure_is_a_result_limit_naming_the_option() {
         let error =
-            ExecutionError::Sink(crate::derived_patterns::CompoundLimitExceeded.to_string());
+            ExecutionError::SinkLimit(crate::derived_patterns::CompoundLimitExceeded.to_string());
         let failure = classify_execution_error(&error);
         assert_eq!(failure.category, ErrorCategory::ResultLimit);
         assert!(failure.message.contains("Derive compounds"));

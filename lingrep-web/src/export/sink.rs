@@ -123,7 +123,7 @@ impl MatchSink for ExportSink {
                 })
                 .collect::<Result<Vec<_>, ExecutionError>>()?;
             let chains = contiguous_chains(&components)
-                .map_err(|error| ExecutionError::Sink(error.to_string()))?
+                .map_err(|error| ExecutionError::SinkLimit(error.to_string()))?
                 .chains;
             for chain in chains {
                 let index = if let Some(index) = self.compound_ids.get(&chain.components) {

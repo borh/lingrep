@@ -66,7 +66,6 @@ impl KwicWorker {
             Ok(writer) => KwicSink {
                 pattern_name: self.pattern_name,
                 writer,
-                failure: None,
             },
             Err(error) => {
                 send_failure(&tx, self.request_id, self.pattern_id, error);
@@ -97,11 +96,10 @@ impl KwicWorker {
                     error: "Processing cancelled".into(),
                 });
             }
+            Err(crate::error::CliError::Execution(ExecutionError::SinkIo(error))) => {
+                send_failure(&tx, self.request_id, self.pattern_id, error);
+            }
             Err(error) => {
-                if let Some(error) = sink.failure.take() {
-                    send_failure(&tx, self.request_id, self.pattern_id, error);
-                    return;
-                }
                 let _ = tx.send(ExplorerMessage::KwicFailed {
                     request_id: self.request_id,
                     pattern_id: self.pattern_id,
@@ -116,7 +114,6 @@ impl KwicWorker {
 struct KwicSink {
     pattern_name: String,
     writer: PagedStoreWriter<KwicLine>,
-    failure: Option<io::Error>,
 }
 
 impl MatchSink for KwicSink {
@@ -143,11 +140,7 @@ impl MatchSink for KwicSink {
                 match_start: matched.start,
                 match_end: matched.end,
             };
-            if let Err(error) = self.writer.push(&line) {
-                let message = error.to_string();
-                self.failure = Some(error);
-                return Err(ExecutionError::Sink(message));
-            }
+            self.writer.push(&line).map_err(ExecutionError::SinkIo)?;
             records_emitted += 1;
         }
         Ok(SinkControl::Continue { records_emitted })
