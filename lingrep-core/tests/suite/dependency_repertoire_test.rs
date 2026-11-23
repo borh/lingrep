@@ -1287,6 +1287,54 @@ fn readings_with_different_measures_are_separate_matches() {
 }
 
 #[test]
+fn readings_with_different_measures_share_the_longest_span_from_their_start() {
+    // From the noun the body matches one token with one set of measures and
+    // two tokens with two others.
+    let sentence = "1\tn\tn\tNOUN\t_\t_\t3\tobj\t_\t_\n2\tp\tp\tADP\t_\t_\t1\tcase\t_\t_\n3\tv\tv\tVERB\t_\t_\t0\troot\t_\t_\n";
+    let source = "interpret $a as reading {side: 1}\ninterpret $b as reading {side: 2}\n
+        interpret $c as reading {side: 3}\n
+        p := ((?<c> [upos=NOUN]) | (?<a> [upos=NOUN]) [upos=ADP] | [upos=NOUN] (?<b> [upos=ADP]))
+        measure tree(word).depth($a) as $da, tree(word).depth($b) as $db,
+                tree(word).depth($c) as $dc.
+        longest := [upos=NOUN] [upos=ADP]?.
+        short := [upos=NOUN].";
+    let hits = match_catalog("readings.lx", source, sentence);
+    let published: Vec<_> = hits
+        .iter()
+        .filter(|hit| hit.pattern == "p")
+        .map(|hit| (hit.start, hit.end, format!("{:?}", measured(hit))))
+        .collect();
+    assert_eq!(
+        published,
+        [
+            (
+                0,
+                2,
+                r#"[("da", Some(1.0), "ok"), ("db", None, "unavailable"), ("dc", None, "unavailable")]"#.to_owned()
+            ),
+            (
+                0,
+                2,
+                r#"[("da", None, "unavailable"), ("db", Some(2.0), "ok"), ("dc", None, "unavailable")]"#.to_owned()
+            ),
+        ]
+    );
+    let checks = compile_catalog(
+        PatternSource::named("readings.lx", source),
+        CompileLimits::default(),
+    )
+    .expect("the fixture compiles")
+    .no_match;
+    use lingrep_core::fsm::Containment;
+    assert_eq!(checks.containment("p", "longest"), Containment::Contained);
+    assert_eq!(checks.containment("longest", "p"), Containment::Contained);
+    assert!(matches!(
+        checks.containment("short", "p"),
+        Containment::Distinguished { span, .. } if span == (0..1)
+    ));
+}
+
+#[test]
 fn an_undefined_measure_capture_is_reported_against_the_measure_clause() {
     let error = compile_catalog(
         PatternSource::named("m.lx", "p := [] measure tree(word).depth($missing) as $n."),

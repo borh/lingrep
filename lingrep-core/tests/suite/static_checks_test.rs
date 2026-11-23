@@ -282,13 +282,16 @@ fn a_longer_match_from_an_earlier_start_is_a_difference() {
 
 #[test]
 fn a_nested_match_is_compared_under_each_definition_s_own_rule() {
-    // `&` moves a definition to the evaluator that publishes the longest match
-    // from every start, nested or not.
+    // `&` or `measure` moves a definition to the evaluator that publishes the
+    // longest match from every start, nested or not.
     const NESTING: &str = "[text=の] | [text=猫] [text=の] [text=手]";
+    const MEASURE: &str = "measure count(match.words[text=の]) as $n";
     for (left, right, expected) in [
         (NESTING.to_owned(), NESTING.to_owned(), true),
         (format!("({NESTING}) & []+"), NESTING.to_owned(), false),
         (NESTING.to_owned(), format!("({NESTING}) & []+"), true),
+        (format!("{NESTING} {MEASURE}"), NESTING.to_owned(), false),
+        (NESTING.to_owned(), format!("{NESTING} {MEASURE}"), true),
         ("[text=の]".to_owned(), format!("({NESTING}) & []+"), true),
     ] {
         let source = format!("left := {left}.\nright := {right}.");
@@ -357,6 +360,21 @@ fn body(bytes: &mut impl Iterator<Item = u8>, depth: usize) -> String {
     }
 }
 
+/// The definition `name` of `body`, alone or with the clauses that publish
+/// several records for one span: a `measure`, an interpretation, or both.
+fn definition(name: &str, body: &str, clauses: u8) -> String {
+    let measure = if clauses & 1 == 0 {
+        ""
+    } else {
+        " measure count(match.words[text=a]) as $n"
+    };
+    if clauses & 2 == 0 {
+        format!("{name} := {body}{measure}.")
+    } else {
+        format!("interpret $c as reading {{side: 1}}\n{name} := (?<c> {body}){measure}.")
+    }
+}
+
 /// The tokens the generated bodies can tell apart.
 fn alphabet() -> Vec<TokenInfo> {
     let mut alphabet = Vec::new();
@@ -411,7 +429,11 @@ fn the_verdict_agrees_with_the_matcher(tc: hegel::TestCase) {
     } else {
         body(&mut bytes, 2)
     };
-    let source = format!("left := {left}.\nright := {right}.");
+    let source = format!(
+        "{}\n{}",
+        definition("left", &left, bytes.next().unwrap_or(0)),
+        definition("right", &right, bytes.next().unwrap_or(0))
+    );
     let Ok(output) = compile_catalog(
         PatternSource::named("generated.lx", &source),
         CompileLimits::default(),
