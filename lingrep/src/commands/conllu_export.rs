@@ -364,3 +364,130 @@ fn misc_escape(value: &str) -> String {
     }
     escaped
 }
+
+#[cfg(test)]
+mod tests {
+    use std::sync::Arc;
+
+    use lingrep_core::corpus::DocumentId;
+    use lingrep_core::execution::SentenceLocation;
+    use lingrep_core::token_match::{
+        AttributeKind, BoundTokenSentence, CharSpan, ProjectedAttributeValue, SchemaAttribute,
+        SentenceSpan, TokenSchema,
+    };
+
+    use super::*;
+
+    /// Two words of an analyzer schema whose values exercise every FEATS and
+    /// MISC branch of a non-pretokenized export.
+    fn analyzed_sentence(keys: &mut Vec<AttributeKey>) -> ExecutionSentence<BoundSentenceInput> {
+        let schema = TokenSchema::new([
+            SchemaAttribute::new("text", AttributeKind::Scalar).unwrap(),
+            SchemaAttribute::new("surface", AttributeKind::Scalar).unwrap(),
+            SchemaAttribute::new("lemma", AttributeKind::Scalar).unwrap(),
+            SchemaAttribute::new("norm", AttributeKind::Scalar).unwrap(),
+            SchemaAttribute::new("upos", AttributeKind::Scalar).unwrap(),
+            SchemaAttribute::new("feat.Case", AttributeKind::StringSet).unwrap(),
+            SchemaAttribute::new("feat.Number", AttributeKind::StringSet).unwrap(),
+            SchemaAttribute::new("unidic.goshu", AttributeKind::Scalar).unwrap(),
+            SchemaAttribute::new("unidic.pron", AttributeKind::StringSet).unwrap(),
+        ])
+        .unwrap();
+        let projection = schema
+            .bind_projection(schema.keys().iter().cloned())
+            .unwrap();
+        keys.extend(schema.keys().iter().cloned());
+        keys.sort();
+        let scalar = ProjectedAttributeValue::scalar;
+        let set = |values: &[&str]| ProjectedAttributeValue::string_set(values.iter().copied());
+        let first = BTreeMap::from([
+            ("text", scalar("猫")),
+            ("surface", scalar("猫")),
+            ("lemma", scalar("猫")),
+            ("norm", scalar("ネコ")),
+            ("upos", scalar("NOUN")),
+            ("feat.Case", set(&["Nom", "Acc"])),
+            ("feat.Number", set(&[])),
+            ("unidic.goshu", scalar("和,=|%")),
+            ("unidic.pron", set(&["ネ", "コ"])),
+        ]);
+        let second = BTreeMap::from([
+            ("text", scalar("だ")),
+            ("surface", scalar("だ")),
+            ("lemma", ProjectedAttributeValue::missing_scalar()),
+            ("norm", scalar("")),
+            ("upos", scalar("AUX")),
+            ("feat.Case", set(&[])),
+            ("feat.Number", set(&["Sing"])),
+            ("unidic.goshu", scalar("")),
+            ("unidic.pron", set(&[])),
+        ]);
+        let words = BoundTokenSentence::from_projected_attribute_values(
+            &projection,
+            2,
+            [&first, &second]
+                .into_iter()
+                .flat_map(|row| {
+                    projection
+                        .keys()
+                        .iter()
+                        .map(|key| row[key.as_str()].clone())
+                })
+                .collect(),
+        )
+        .unwrap()
+        .with_char_offsets(Some(Arc::new(vec![CharSpan::new(0, 1), CharSpan::new(1, 2)])))
+        .with_spans(vec![
+            SentenceSpan {
+                kind: "bunsetsu".into(),
+                start: 0,
+                end: 2,
+                head: Some(0),
+                label: None,
+                governor: None,
+            },
+            SentenceSpan {
+                kind: "luw".into(),
+                start: 1,
+                end: 2,
+                head: None,
+                label: Some("助動詞,=".into()),
+                governor: None,
+            },
+        ])
+        .unwrap();
+        ExecutionSentence {
+            location: SentenceLocation {
+                corpus_sentence_ordinal: 7,
+                document_id: DocumentId::new(0),
+                document_ordinal: 0,
+                document_sentence_ordinal: 0,
+                source_name: Arc::from("fixture"),
+                source_metadata: None,
+                lookaround_divisions: None,
+            },
+            value: BoundSentenceInput::new(words, EnhancedGraphInput::NotRequested),
+        }
+    }
+
+    #[test]
+    fn analyzed_rows_pin_feats_misc_escaping_spans_and_spacing() {
+        let mut keys = Vec::new();
+        let sentence = analyzed_sentence(&mut keys);
+        let mut export = ConlluExport::new(false);
+        let mut output = Vec::new();
+        export.sentence(&mut output, &sentence, &keys).unwrap();
+        export.finish(&mut output, Termination::Eof).unwrap();
+        assert_eq!(
+            String::from_utf8(output).unwrap(),
+            "# sent_id = lingrep-7\n\
+             # text = 猫だ\n\
+             # lingrep_export = complete 2\n\
+             1\t猫\t猫\tNOUN\t_\tCase=Acc,Nom\t_\t_\t_\t\
+             BunsetuBILabel=B|BunsetuPositionType=SEM_HEAD|SpaceAfter=No|norm=ネコ|\
+             unidic.goshu=和%2C%3D%7C%25|unidic.pron=コ,ネ\n\
+             2\tだ\t_\tAUX\t_\tNumber=Sing\t_\t_\t_\t\
+             BunsetuBILabel=I|LUWBILabel=B|LUWPOS=助動詞%2C%3D|norm=|unidic.goshu=\n\n"
+        );
+    }
+}
