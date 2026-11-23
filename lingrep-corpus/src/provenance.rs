@@ -2328,6 +2328,52 @@ impl ProvenanceView {
         })
     }
 
+    /// Looks up the first corpus sentence of each requested authored paragraph.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the request exceeds the provenance page capacity, a
+    /// requested ID does not name a paragraph, or the provenance query fails.
+    pub async fn paragraph_starts(
+        &self,
+        ids: &BTreeSet<lingrep_core::corpus::DivisionId>,
+    ) -> Result<BTreeMap<lingrep_core::corpus::DivisionId, u64>, CorpusError> {
+        if ids.len() > crate::MAX_PROVENANCE_PAGE_SIZE {
+            return Err(CorpusError::ProvenancePageCapacity {
+                limit: crate::MAX_PROVENANCE_PAGE_SIZE,
+            });
+        }
+        if ids.is_empty() {
+            return Ok(BTreeMap::new());
+        }
+        let requested = ids
+            .iter()
+            .map(|id| sqlite_integer(id.0, "division ID"))
+            .collect::<Result<Vec<_>, _>>()?;
+        let requested = serde_json::to_string(&requested).map_err(|e| invalid(e.to_string()))?;
+        let rows = sqlx::query(
+            "SELECT d.division_id,d.first_sentence FROM json_each(?) requested
+             CROSS JOIN divisions d WHERE d.division_id=requested.value AND d.kind='paragraph'",
+        )
+        .bind(requested)
+        .fetch_all(&self.pool)
+        .await
+        .map_err(database)?;
+        if rows.len() != ids.len() {
+            return Err(invalid("requested paragraph is missing"));
+        }
+        rows.into_iter()
+            .map(|row| {
+                let id = sqlite_u64(row.try_get("division_id").map_err(database)?, "division ID")?;
+                let start = sqlite_u64(
+                    row.try_get("first_sentence").map_err(database)?,
+                    "paragraph start",
+                )?;
+                Ok((lingrep_core::corpus::DivisionId(id), start))
+            })
+            .collect()
+    }
+
     /// Returns structurally ordered regions active over one sentence.
     pub async fn active_regions(
         &self,

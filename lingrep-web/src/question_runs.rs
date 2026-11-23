@@ -11,6 +11,7 @@ use axum::{
     routing::{get, post},
 };
 use futures::StreamExt;
+use lingrep_core::corpus::{DivisionId, MetadataScalar, MetadataValue};
 use lingrep_core::execution::{
     ExecutionBatch, ExecutionLimits, SentenceAdmission, SentenceBatchSource, TokenizedAdmission,
 };
@@ -72,6 +73,7 @@ pub(crate) fn routes() -> Router<RequestStore> {
         .route("/runs/{id}/cancel", post(cancel))
         .route("/runs/{id}/documents", get(documents))
         .route("/runs/{id}/work-samples", get(work_samples))
+        .route("/runs/{id}/work-results", get(work_results))
         .route("/runs/{id}/occurrence", get(occurrence))
         .route("/runs/{id}/export", get(export))
 }
@@ -707,6 +709,61 @@ enum OccurrenceOutput {
     Matches,
     DocumentPage,
     WorkSamples,
+    WorkResults,
+}
+
+#[derive(Serialize)]
+struct WorkLocation {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    chapter: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    paragraph_start: Option<u64>,
+    sentence: u64,
+}
+
+fn work_location(
+    origin: Option<&SentenceProvenance>,
+    paragraph_starts: &BTreeMap<DivisionId, u64>,
+    sentence: u64,
+    sentence_in_work: u64,
+) -> WorkLocation {
+    let structure = origin.map(|origin| &origin.rich.structure);
+    let chapter = structure
+        .and_then(|structure| {
+            structure.divisions.iter().rev().find_map(|division| {
+                if !matches!(division.kind.as_str(), "chapter" | "section") {
+                    return None;
+                }
+                division.metadata.iter().find_map(|(key, value)| {
+                    if key == "title"
+                        && let MetadataValue::Scalar(MetadataScalar::String(title)) = value
+                        && !title.trim().is_empty()
+                    {
+                        Some(title.trim())
+                    } else {
+                        None
+                    }
+                })
+            })
+        })
+        .map(|title| {
+            if let Some((end, _)) = title.char_indices().nth(160) {
+                format!("{}…", title.get(..end).unwrap_or(title))
+            } else {
+                title.to_owned()
+            }
+        });
+    let paragraph_start = structure
+        .and_then(|structure| structure.innermost("paragraph"))
+        .and_then(|id| paragraph_starts.get(&id).copied())
+        .filter(|start| *start <= sentence)
+        .and_then(|start| start.checked_sub(sentence.checked_sub(sentence_in_work)?))
+        .map(|start| start + 1);
+    WorkLocation {
+        chapter,
+        paragraph_start,
+        sentence: sentence_in_work + 1,
+    }
 }
 
 type DecodedSentences = HashMap<u64, Option<(BoundTokenSentence, Vec<TokenRow>)>>;
@@ -830,7 +887,9 @@ async fn project_occurrences_with_provenance(
     }
     let mut page_bytes_remaining: Option<usize> = match projection {
         OccurrenceOutput::Matches => None,
-        OccurrenceOutput::DocumentPage | OccurrenceOutput::WorkSamples => Some(32 * 1024 * 1024),
+        OccurrenceOutput::DocumentPage
+        | OccurrenceOutput::WorkSamples
+        | OccurrenceOutput::WorkResults => Some(32 * 1024 * 1024),
     };
     let reader = ready
         .reader()
@@ -872,6 +931,27 @@ async fn project_occurrences_with_provenance(
     let origins_by_sentence: HashMap<u64, Option<SentenceProvenance>> =
         unique_sentences.into_iter().zip(origins_vec).collect();
     let decoded_by_sentence = decoded_res.map_err(unavailable)?.map_err(unavailable)?;
+    let include_work_location = matches!(
+        projection,
+        OccurrenceOutput::WorkSamples | OccurrenceOutput::WorkResults
+    );
+    let mut paragraph_starts = BTreeMap::new();
+    if include_work_location {
+        let paragraphs = origins_by_sentence
+            .values()
+            .flatten()
+            .filter_map(|origin| origin.rich.structure.innermost("paragraph"))
+            .collect::<std::collections::BTreeSet<_>>();
+        if !paragraphs.is_empty() {
+            paragraph_starts = ready
+                .provenance()
+                .await
+                .map_err(unavailable)?
+                .paragraph_starts(&paragraphs)
+                .await
+                .map_err(unavailable)?;
+        }
+    }
 
     let mut output = Vec::with_capacity(occurrences.len());
     for occurrence in occurrences {
@@ -887,7 +967,7 @@ async fn project_occurrences_with_provenance(
             occurrence.source_name.as_ref()
         };
         let address = || {
-            json!({
+            let mut row = json!({
                 "sequence": occurrence.sequence,
                 "pattern": pattern,
                 "span": {"start": range.start, "end": range.end},
@@ -895,7 +975,16 @@ async fn project_occurrences_with_provenance(
                 "source_name": source_name,
                 "document_ordinal": occurrence.document_ordinal,
                 "document_sentence_ordinal": occurrence.document_sentence_ordinal
-            })
+            });
+            if include_work_location {
+                row["work_location"] = json!(work_location(
+                    origin,
+                    &paragraph_starts,
+                    sentence,
+                    occurrence.document_sentence_ordinal,
+                ));
+            }
+            row
         };
         let Some((decoded, tokens)) = decoded_by_sentence.get(&sentence).and_then(Option::as_ref)
         else {
@@ -1469,7 +1558,7 @@ struct WorkSampleQuery {
     after: Option<i64>,
 }
 
-struct WorkSamplePage {
+struct WorkGroupPage {
     ordinal: u64,
     matches: u64,
     next: Option<u64>,
@@ -1531,7 +1620,7 @@ async fn work_samples(
             .await
             .map_err(unavailable)?;
         if let Some(first) = page.rows.first() {
-            pages.push(WorkSamplePage {
+            pages.push(WorkGroupPage {
                 ordinal,
                 matches: page.matches_total,
                 next: page.next,
@@ -1541,23 +1630,127 @@ async fn work_samples(
             occurrences.extend(page.rows);
         }
     }
+    let groups = project_work_groups(
+        &ready,
+        &snapshot,
+        &index,
+        &occurrences,
+        pages,
+        OccurrenceOutput::WorkSamples,
+    )
+    .await?;
+    Ok(Json(json!({"groups":groups,"total":total,"next":next})))
+}
+
+#[derive(Deserialize)]
+struct WorkResultsQuery {
+    pattern: String,
+    document: Option<u64>,
+    after: Option<i64>,
+    limit: Option<usize>,
+}
+
+async fn work_results(
+    State(store): State<RequestStore>,
+    Path(id): Path<String>,
+    query: std::result::Result<Query<WorkResultsQuery>, axum::extract::rejection::QueryRejection>,
+) -> Result<Json<Value>> {
+    let Query(query) =
+        query.map_err(|_| invalid("Choose a valid position in the work results."))?;
+    let after = query.after.unwrap_or(-1);
+    if after < -1
+        || query
+            .document
+            .is_some_and(|document| document > i64::MAX as u64)
+    {
+        return Err(invalid("Choose a valid position in the work results."));
+    }
+    let limit = query.limit.unwrap_or(80).clamp(1, MAX_DOCUMENT_PAGE_ROWS);
+    let _permit = store.coordinators.acquire_reading_permit().await;
+    let (snapshot, ready, index) = completed(&store, &id).await?;
+    let pattern = snapshot
+        .patterns
+        .iter()
+        .find(|pattern| pattern.name == query.pattern)
+        .ok_or_else(|| invalid("Choose a pattern from this search."))?
+        .key;
+    let page = index
+        .page(pattern, query.document, after, limit)
+        .await
+        .map_err(unavailable)?;
+    let total = if query.document.is_some() {
+        u64::from(page.matches_total > 0)
+    } else {
+        index.document_count(pattern).await.map_err(unavailable)?
+    };
+    let mut pages: Vec<_> = page
+        .rows
+        .chunk_by(|left, right| left.document_ordinal == right.document_ordinal)
+        .filter_map(|rows| {
+            rows.first().map(|first| WorkGroupPage {
+                ordinal: first.document_ordinal,
+                matches: 0,
+                next: None,
+                first_sentence: first.reference.sentence_index,
+                rows: rows.len(),
+            })
+        })
+        .collect();
+    let documents = pages.iter().map(|page| page.ordinal).collect::<Vec<_>>();
+    let counts = index
+        .document_matches(pattern, &documents)
+        .await
+        .map_err(unavailable)?;
+    for group in &mut pages {
+        group.matches = counts
+            .get(&group.ordinal)
+            .copied()
+            .ok_or_else(|| unavailable("result index has no count for a represented work"))?;
+    }
+    let groups = project_work_groups(
+        &ready,
+        &snapshot,
+        &index,
+        &page.rows,
+        pages,
+        OccurrenceOutput::WorkResults,
+    )
+    .await?;
+    Ok(Json(json!({
+        "groups":groups,
+        "total":total,
+        "start":page.start,
+        "next":page.next,
+        "previous":page.previous
+    })))
+}
+
+async fn project_work_groups(
+    ready: &ReadyCorpus,
+    snapshot: &CompletedSnapshot,
+    index: &ResultIndex,
+    occurrences: &[ResultOccurrence],
+    pages: Vec<WorkGroupPage>,
+    projection: OccurrenceOutput,
+) -> Result<Vec<Value>> {
     let patterns = snapshot
         .patterns
         .iter()
         .map(|p| p.name.clone())
         .collect::<Vec<_>>();
+    let include_work_cursor = matches!(projection, OccurrenceOutput::WorkSamples);
     let (projected, origins_by_sentence) = project_occurrences_with_provenance(
-        &ready,
-        &occurrences,
+        ready,
+        occurrences,
         &snapshot.capture_catalog,
         &patterns,
         index.publication_attributes(),
         INSPECTION_BYTES,
-        OccurrenceOutput::WorkSamples,
+        projection,
     )
     .await?;
     let mut rows = projected.into_iter();
-    let groups: Vec<_> = pages
+    Ok(pages
         .into_iter()
         .map(|page| {
             let origin = origins_by_sentence
@@ -1572,10 +1765,13 @@ async fn work_samples(
                 matches: page.matches,
             };
             let rows: Vec<_> = rows.by_ref().take(page.rows).collect();
-            json!({"document":document,"edition":edition,"rows":rows,"next":page.next})
+            let mut group = json!({"document":document,"edition":edition,"rows":rows});
+            if include_work_cursor {
+                group["next"] = json!(page.next);
+            }
+            group
         })
-        .collect();
-    Ok(Json(json!({"groups":groups,"total":total,"next":next})))
+        .collect())
 }
 
 async fn export(State(store): State<RequestStore>, Path(id): Path<String>) -> Result<Response> {
@@ -1709,6 +1905,73 @@ fn catalog_definitions(source: &str) -> Vec<String> {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn work_location_uses_authored_structure_and_falls_back_to_a_work_sentence() {
+        use std::collections::BTreeMap;
+        use std::sync::Arc;
+
+        use lingrep_core::corpus::{
+            Division, DivisionId, DocumentId, MetadataScalar, MetadataValue, StructuralContext,
+        };
+        use lingrep_corpus::{
+            ActiveRegion, RichSentenceMetadata, SentenceLocation, SentenceProvenance,
+        };
+        use serde_json::json;
+
+        let division = |id, kind, title: &str| {
+            Arc::new(Division {
+                source_id: None,
+                id: DivisionId(id),
+                document_id: DocumentId::new(4),
+                kind,
+                parent_id: None,
+                metadata: Box::new([(
+                    "title".into(),
+                    MetadataValue::Scalar(MetadataScalar::String(title.into())),
+                )]),
+            })
+        };
+        let mut origin = SentenceProvenance {
+            location: SentenceLocation {
+                corpus_sentence_ordinal: 77,
+                document_id: DocumentId::new(4),
+                document_ordinal: 4,
+                document_sentence_ordinal: 7,
+                source_name: Arc::from("work.md"),
+                source_metadata: None,
+                lookaround_divisions: None,
+            },
+            rich: RichSentenceMetadata {
+                structure: Arc::new(StructuralContext {
+                    observations: Default::default(),
+                    divisions: Box::new([
+                        division(90, "chapter".into(), "Chapter 2"),
+                        division(91, "section".into(), "The letter"),
+                        division(92, "paragraph".into(), ""),
+                    ]),
+                }),
+                region_labels: Box::new(["dialogue".into()]),
+                metadata_json: None,
+                sentence_metadata_json: None,
+            },
+            active_regions: Box::new([ActiveRegion {
+                label: "dialogue".into(),
+                first_sentence: 75,
+                end_sentence: 80,
+            }]),
+        };
+        let paragraphs = BTreeMap::from([(DivisionId(92), 75)]);
+        assert_eq!(
+            json!(super::work_location(Some(&origin), &paragraphs, 77, 7)),
+            json!({"chapter":"The letter","paragraph_start":6,"sentence":8})
+        );
+        origin.rich.structure = Arc::default();
+        assert_eq!(
+            json!(super::work_location(Some(&origin), &paragraphs, 77, 7)),
+            json!({"sentence":8})
+        );
+    }
+
     #[test]
     fn an_untitled_document_is_named_by_its_source_file() {
         assert_eq!(

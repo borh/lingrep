@@ -226,6 +226,7 @@ async fn work_samples_reach_later_documents_and_page_each_work_independently() {
         for (index, row) in group["rows"].as_array().unwrap().iter().enumerate() {
             let mut expected = expected_match(first_sequence + index as u64 * 2);
             expected["sentence_text"] = json!(["", "cat is", "。"]);
+            expected["work_location"] = json!({"paragraph_start":1,"sentence":index+1});
             assert_eq!(*row, expected);
         }
         assert_eq!(group["next"], first_sequence + 4);
@@ -244,6 +245,71 @@ async fn work_samples_reach_later_documents_and_page_each_work_independently() {
     assert_eq!(more["groups"].as_array().unwrap().len(), 1);
     assert_eq!(more["groups"][0]["rows"][0]["sequence"], 76);
     assert_eq!(more["groups"][0]["next"], 80);
+}
+
+#[tokio::test]
+async fn work_results_page_complete_hits_across_work_boundaries() {
+    let (_fixture, store, identity) = fixture(8);
+    let app = lingrep_web::app_router(store);
+    let id = submit(&app, SOURCE, "", Some(&identity)).await;
+    assert_eq!(
+        updates(&app, &id).await.last().unwrap()["patch"]["phase"],
+        "complete"
+    );
+    let endpoint = format!("/api/questions/runs/{id}/work-results?pattern=phrase");
+    let get = |query: &str| {
+        let address = format!("{endpoint}&{query}");
+        let app = &app;
+        async move {
+            json_response(
+                request(app, Method::GET, &address, None).await,
+                StatusCode::OK,
+            )
+            .await
+        }
+    };
+    let first = get("limit=34").await;
+    assert_eq!(first["total"], 2);
+    assert_eq!(first["start"], 0);
+    assert_eq!(first["next"], 66);
+    assert!(first["previous"].is_null());
+    assert_eq!(first["groups"].as_array().unwrap().len(), 1);
+    assert_eq!(first["groups"][0]["rows"].as_array().unwrap().len(), 34);
+
+    let second = get("limit=34&after=66").await;
+    assert_eq!(second["total"], 2);
+    assert_eq!(second["start"], 34);
+    assert!(second["next"].is_null());
+    assert_eq!(second["previous"], -1);
+    assert_eq!(second["groups"].as_array().unwrap().len(), 2);
+    for (at, (title, author, matches, sequences)) in
+        [("A Study", "A", 35, 68..70), ("B Study", "B", 7, 70..84)]
+            .into_iter()
+            .enumerate()
+    {
+        let group = &second["groups"][at];
+        assert_eq!(
+            group["document"],
+            json!({"ordinal":at,"title":title,"author":author,"matches":matches})
+        );
+        let expected = sequences.step_by(2).map(|sequence| {
+            let mut row = expected_match(sequence);
+            let sentence = row["document_sentence_ordinal"].as_u64().unwrap() + 1;
+            row["work_location"] = json!({"paragraph_start":1,"sentence":sentence});
+            row
+        });
+        assert_eq!(
+            group["rows"].as_array().unwrap(),
+            &expected.collect::<Vec<_>>()
+        );
+    }
+
+    let linked_hit = get("document=1&after=70&limit=1").await;
+    assert_eq!(linked_hit["start"], 1);
+    assert_eq!(
+        linked_hit["groups"][0]["rows"][0],
+        second["groups"][1]["rows"][1]
+    );
 }
 
 #[tokio::test]
