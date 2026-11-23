@@ -326,10 +326,25 @@ fn consumed_tokens_report_each_attribute_test_with_the_token_value() {
         tests,
         vec![
             vec![
-                ("lemma".to_owned(), "=猫".to_owned(), Some("猫".to_owned()), true),
-                ("text".to_owned(), "not in {犬}".to_owned(), Some("ねこ".to_owned()), true),
+                (
+                    "lemma".to_owned(),
+                    "=猫".to_owned(),
+                    Some("猫".to_owned()),
+                    true
+                ),
+                (
+                    "text".to_owned(),
+                    "not in {犬}".to_owned(),
+                    Some("ねこ".to_owned()),
+                    true
+                ),
             ],
-            vec![("text".to_owned(), "=だ".to_owned(), Some("だ".to_owned()), true)],
+            vec![(
+                "text".to_owned(),
+                "=だ".to_owned(),
+                Some("だ".to_owned()),
+                true
+            )],
         ]
     );
 }

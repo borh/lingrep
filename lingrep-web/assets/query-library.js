@@ -676,6 +676,15 @@ function mismatchConfirmation(row, entry, run) {
 function initCatalogTab(root, textarea) {
   const list = root.querySelector("[data-catalog-list]");
   if (!list) return;
+  list.querySelector("[data-catalog-filter]")?.addEventListener("input", (event) => {
+    const wanted = event.target.value.trim().toLowerCase();
+    let shown = 0;
+    for (const entry of list.querySelectorAll("button[data-catalog-key]")) {
+      entry.hidden = !entry.dataset.catalogKey.toLowerCase().includes(wanted);
+      if (!entry.hidden) shown += 1;
+    }
+    list.querySelector("[data-catalog-filter-empty]").hidden = shown > 0;
+  });
   list.addEventListener("click", async (event) => {
     const button = event.target.closest("button[data-catalog-key]");
     if (!button) return;

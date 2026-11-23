@@ -21,7 +21,7 @@
     <a href="neighbors" class="site-nav-link"{% if current_page == "neighbors" %} aria-current="page"{% endif %}><span data-i18n="nav.neighbors">Similar Words</span></a>
     {% endif %}
     <span class="site-nav-sep">|</span>
-    <a href="sample" target="_blank" rel="noopener" title="Open Sample Debugger in a new tab" data-i18n-title="nav.sample_new_tab" class="site-nav-link"{% if current_page == "sample" %} aria-current="page"{% endif %}><span data-i18n="nav.sample">Sample Debugger</span></a>
+    {% if current_page == "sample" %}<a href="sample" class="site-nav-link" aria-current="page"><span data-i18n="nav.sample">Sample debugger</span></a>{% else %}<a href="sample" target="_blank" rel="noopener" title="Open Sample debugger in a new tab" data-i18n-title="nav.sample_new_tab" class="site-nav-link"><span data-i18n="nav.sample">Sample debugger</span></a>{% endif %}
     <span class="site-nav-sep">|</span>
     <a href="help" target="_blank" rel="noopener" data-site-help-open aria-haspopup="dialog" aria-controls="site-help" class="site-nav-link"{% if current_page == "help" %} aria-current="page"{% endif %}><span data-i18n="nav.help">Help</span></a>
     <span class="site-nav-spacer"></span>

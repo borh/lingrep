@@ -141,6 +141,13 @@ pass does not evaluate `same_as`, `within=` lookarounds, or definitions under
 under each failure. The Sample debugger shows the explanation under each failed
 example and, for every sample line without a published match, per definition.
 
+Selecting a match in the Sample debugger lists the pattern element that
+consumed each of its tokens, the references that element was reached through,
+and each attribute test of the element with the token's value. The list comes
+from the same explanation pass and shows one derivation; when a match has
+several, the reported captures can come from another. The pass does not follow
+any-order groups, and a match that contains one has no list.
+
 The Sample debugger also writes claims. Each match has an action that adds its
 sentence to the definition's `examples`, and each definition that a sentence
 does not match has one that adds the sentence to its `counterexamples`. The

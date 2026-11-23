@@ -1,0 +1,41 @@
+<aside class="sample-detail" data-sample-detail data-collapsed aria-labelledby="sample-detail-title">
+  <h2 id="sample-detail-title" class="visually-hidden" data-i18n="sample.detail_title">Detail</h2>
+  <div class="sample-detail-tabs" role="tablist" aria-labelledby="sample-detail-title">
+    <button type="button" role="tab" id="sample-tab-explain" aria-controls="sample-panel-explain" aria-selected="false" tabindex="-1" data-sample-tab="explain"><span data-i18n="sample.tab_explain">Explain</span></button>
+    <button type="button" role="tab" id="sample-tab-token" aria-controls="sample-panel-token" aria-selected="false" tabindex="-1" data-sample-tab="token"><span data-i18n="sample.tab_token">Token</span></button>
+    {% if current_page == "sample" %}<button type="button" role="tab" id="sample-tab-reference" aria-controls="sample-panel-reference" aria-selected="true" data-sample-tab="reference"><span data-i18n="sample.tab_reference">Reference</span></button>{% endif %}
+  </div>
+  <div class="sample-detail-panel" role="tabpanel" id="sample-panel-explain" aria-labelledby="sample-tab-explain" tabindex="0" data-sample-panel="explain"{% if current_page == "sample" %} hidden{% endif %}>
+    <p class="muted" data-sample-panel-empty data-i18n="sample.explain_empty">Select a bar under a sentence to see which pattern element read each token.</p>
+    <div data-sample-panel-body></div>
+  </div>
+  <div class="sample-detail-panel" role="tabpanel" id="sample-panel-token" aria-labelledby="sample-tab-token" tabindex="0" data-sample-panel="token" hidden>
+    <p class="muted" data-sample-panel-empty data-i18n="sample.token_empty">Select a token to see its attributes.</p>
+    <div data-sample-panel-body></div>
+  </div>
+  {% if current_page == "sample" %}
+  <div class="sample-detail-panel" role="tabpanel" id="sample-panel-reference" aria-labelledby="sample-tab-reference" tabindex="0" data-sample-panel="reference">
+    <table class="sample-reference">
+      <caption data-i18n="sample.reference_syntax">Syntax</caption>
+      <tbody>
+        <tr><th scope="row"><code>pattern n := … .</code></th><td data-i18n="sample.ref_pattern">A definition that reports matches</td></tr>
+        <tr><th scope="row"><code>fragment n := … .</code></th><td data-i18n="sample.ref_fragment">A reusable part, referenced as @n</td></tr>
+        <tr><th scope="row"><code>[lemma=走る]</code></th><td data-i18n="sample.ref_token">One token whose attribute has this value</td></tr>
+        <tr><th scope="row"><code>[a=x &amp; b=y]</code></th><td data-i18n="sample.ref_and">Both tests on one token; | for either</td></tr>
+        <tr><th scope="row"><code>[lemma in {a, b}]</code></th><td data-i18n="sample.ref_in">Any of the listed values; not in negates</td></tr>
+        <tr><th scope="row"><code>[]</code></th><td data-i18n="sample.ref_any">Any one token</td></tr>
+        <tr><th scope="row"><code>a b</code> · <code>a | b</code></th><td data-i18n="sample.ref_sequence">Sequence · alternatives</td></tr>
+        <tr><th scope="row"><code>?</code> <code>*</code> <code>+</code> <code>{1,3}</code></th><td data-i18n="sample.ref_repeat">Optional and repeated</td></tr>
+        <tr><th scope="row"><code>(?&lt;name&gt; … )</code></th><td data-i18n="sample.ref_capture">A named capture</td></tr>
+        <tr><th scope="row"><code>^</code> · <code>$</code></th><td data-i18n="sample.ref_anchor">Sentence start · sentence end</td></tr>
+        <tr><th scope="row"><code>followed_by( … )</code></th><td data-i18n="sample.ref_look">Lookahead; also preceded_by and the not_ forms</td></tr>
+      </tbody>
+    </table>
+    <table class="sample-reference" data-sample-reference-attributes>
+      <caption data-i18n="sample.reference_attributes">Attributes of the sample tokenizer</caption>
+      <tbody></tbody>
+    </table>
+    <p class="muted"><span data-i18n="sample.reference_insert">Select an attribute to insert it at the cursor.</span> <button type="button" class="link-button" data-site-help-open><span data-i18n="sample.reference_more">Open the full help</span></button></p>
+  </div>
+  {% endif %}
+</aside>

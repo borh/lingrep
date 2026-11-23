@@ -4,9 +4,8 @@ use lingrep_core::token_match::TokenAttributeIndex;
 
 use crate::inspection::{CaptureInspection, CompositionItem, TokenInspection};
 use crate::revision_status::{RevisionStatus, RevisionStatusKind};
-use crate::sample::{
-    ClaimFailureKind, SampleAnalysis, SampleBinding, SampleClaims, WhyNotOutcome, WhyNotStopKind,
-};
+use crate::sample::{ClaimFailureKind, SampleBinding, SampleClaims, WhyNotOutcome, WhyNotStopKind};
+use crate::sample_view::{LaneCell, SampleNotice, SampleView};
 use crate::snapshot::CompoundCategory;
 
 /// An HTML fragment that has already been rendered by Askama, and therefore
@@ -479,11 +478,26 @@ impl TokenInspectionFragment {
     }
 }
 
-#[derive(Template)]
-#[template(path = "sample_results.html")]
 pub struct SampleResults {
     pub analysis: crate::sample::SampleAnalysis,
     pub run: Option<crate::sample::SampleRun>,
+}
+
+impl SampleResults {
+    pub fn render(&self) -> Result<String, askama::Error> {
+        SampleResultsFragment {
+            run: self.run.as_ref(),
+            view: SampleView::new(&self.analysis),
+        }
+        .render()
+    }
+}
+
+#[derive(Template)]
+#[template(path = "sample_results.html")]
+struct SampleResultsFragment<'a> {
+    run: Option<&'a crate::sample::SampleRun>,
+    view: SampleView<'a>,
 }
 
 #[derive(Template)]

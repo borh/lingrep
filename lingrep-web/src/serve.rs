@@ -354,7 +354,8 @@ async fn store_in(
         &args.reading_sidecar,
         &config.corpora,
     )?);
-    let default_pattern = crate::cli::read_default_pattern(&args.patterns);
+    let default_pattern = crate::cli::read_default_pattern(args.patterns_path());
+    let sample_seed = args.patterns.is_some().then(|| default_pattern.clone());
     let catalogs = std::sync::Arc::new(crate::catalog_index::CatalogIndex::discover(
         &crate::cli::resolve_pattern_root(args),
     ));
@@ -372,6 +373,7 @@ async fn store_in(
     let store =
         RequestStore::with_corpus_set_capacity(config, context, corpus_set, max_active_sessions)
             .with_default_pattern(default_pattern)
+            .with_sample_seed(sample_seed)
             .with_catalogs(catalogs)
             .with_frequency(frequency)
             .with_reading_sidecars(reading_sidecars);

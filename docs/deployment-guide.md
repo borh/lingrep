@@ -408,6 +408,11 @@ working directory, `/var/lib/lingrep-web`. Write the value as
 services.lingrep-web.patterns.editorSeed = "patterns/lingrep-patterns-default/sf-experimental.lx";
 ```
 
+The Sample debugger opens with the seed file only when `editorSeed` is set.
+Without it, the Sample debugger opens with a two-line starter pattern that
+matches its default sentences, and the Workbench editor opens with
+`patterns/sentence-final.lx`.
+
 If a catalog directory is itself named `patterns` (such as this repository's
 own `patterns/`, passed as `inputs.lingrep.outPath + "/patterns"`), its files
 appear under `patterns/patterns/`, for example

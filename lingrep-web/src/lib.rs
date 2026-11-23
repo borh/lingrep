@@ -30,6 +30,7 @@ pub mod result_index;
 pub mod revision;
 pub mod revision_status;
 pub mod sample;
+mod sample_view;
 pub mod section_analysis;
 pub mod section_comparison;
 pub mod section_contrast;
@@ -105,7 +106,8 @@ fn routes(store: RequestStore) -> Router {
                 .merge(handlers::section_analysis::routes())
                 .merge(handlers::inspect::routes())
                 .merge(handlers::pattern_detail::routes())
-                .merge(handlers::sample::routes())
+                // A sample result repeats one inspection fragment per token.
+                .merge(handlers::sample::routes().layer(CompressionLayer::new()))
                 .merge(handlers::export::routes())
                 .merge(handlers::permalink::routes())
                 .merge(handlers::catalogs::routes())

@@ -1,5 +1,5 @@
 {% import "macros.html" as macros %}
-<section class="sample-results" aria-live="polite">
+<section class="sample-results" data-sample-results>
 {% match run %}{% when Some with (run) %}
   <p class="sample-run" data-sample-run>{% if run.stored %}<span data-sample-stored data-i18n="sample.stored_tokens">Tokens read from the corpus artifact, analyzed by</span>{% else %}<span data-i18n="sample.tokenized_by">Sample tokenized by</span>{% endif %} <code>{{ run.analyzer }}</code>{% match run.corpus_analyzer %}{% when Some with (corpus) %} <span class="sample-run-warning" data-sample-corpus-differs><span data-i18n="sample.corpus_differs">The selected corpus uses a different token schema. Its analyzer is</span> <code>{{ corpus }}</code><span data-i18n="sample.corpus_differs_note">. Corpus searches can return different matches.</span></span>{% when None %}{% endmatch %}</p>
   {% match run.binding %}
@@ -52,111 +52,108 @@
   </section>
   {% endmatch %}
 {% when None %}{% endmatch %}
-{% match analysis %}
-{% when SampleAnalysis::Matched with { tokens, matches, constellations } %}
-  <p class="sample-summary" data-i18n="sample.summary" data-i18n-args='{"matches": {{ matches.len() }}, "tokens": {{ tokens.len() }}}'>{{ matches.len() }} match(es) in {{ tokens.len() }} tokens.</p>
-  {% for constellation in constellations %}
-  {% if constellation.groups.len() > 0 %}
-  <section class="sample-constellation" aria-label="Pattern constellation" data-i18n-aria-label="sample.constellation_title">
-    <h3 class="sample-constellation-title" data-i18n="sample.constellation_title">Pattern constellation</h3>
-    <div class="kwic-token-ribbon sample-constellation-tokens" aria-label="Sentence tokens" data-i18n-aria-label="sample.tokens_label">
-      {% for token in constellation.tokens %}<button type="button" class="kwic-token" lang="ja" data-sample-token="{{ token.index }}" aria-pressed="false"{% if !token.pos.is_empty() || !token.lemma.is_empty() %} title="{{ token.pos }}{% if !token.pos.is_empty() && !token.lemma.is_empty() %} · {% endif %}{{ token.lemma }}{% if !token.cform.is_empty() %} · {{ token.cform }}{% endif %}"{% endif %}>{{ token.orth }}</button>{% endfor %}
-    </div>
-    <ol class="sample-constellation-tree">
-    {% for group in constellation.groups %}
-      <li class="sample-constellation-node" data-depth="{{ group.depth }}" style="--constellation-depth: {{ group.depth }}">
-        <div class="sample-constellation-span" data-i18n="sample.tokens_range" data-i18n-args='{"start": {{ group.span.start }}, "end": {{ group.span.end }}}'>Tokens {{ group.span.start }}..{{ group.span.end }}</div>
-        <ul class="sample-constellation-alternatives">
-        {% for alternative in group.alternatives %}
-          <li class="sample-constellation-alternative" data-publication="{% if alternative.published.is_some() %}published{% else %}suppressed{% endif %}">
-            <code>{{ alternative.raw_name }}</code>
-            {% match alternative.published %}{% when Some with (published) %}<span class="sample-constellation-state" data-i18n="sample.published">Published</span><span class="sample-constellation-output">&rarr; {{ published.name }}</span>{% when None %}<span class="sample-constellation-state" data-i18n="sample.suppressed">Suppressed</span>{% endmatch %}
-            {% for class in alternative.classes %}<span class="sample-constellation-class">{{ class }}</span>{% endfor %}
-          </li>
-        {% endfor %}
-        </ul>
-      </li>
+{% match view.notice %}
+{% when SampleNotice::Failed with (message) %}
+  <div class="error" role="status"><span data-i18n="sample.error">The sample could not be analyzed:</span> <span lang="en">{{ message }}</span></div>
+{% when SampleNotice::EmptyPattern %}
+  <p class="empty-results" data-sample-empty="pattern" data-i18n="sample.empty_pattern">The pattern is empty. Write a definition, for example: pattern verb := [upos=VERB].</p>
+{% when SampleNotice::FragmentsOnly %}
+  <p class="empty-results" data-sample-empty="fragments" data-i18n="sample.fragments_only">This document declares only <code>fragment</code>s &mdash; nothing can match. Add a <code>pattern</code> declaration.</p>
+{% when SampleNotice::EmptySample %}
+  <p class="empty-results" data-sample-empty="sample" data-i18n="sample.empty_sample">Type or paste a sentence in the sample text. Each line is one sentence.</p>
+{% when SampleNotice::None %}
+  <p class="sample-summary" data-sample-summary data-matches="{{ view.match_count }}"><span data-i18n="sample.counts" data-i18n-args='{"matches": {{ view.match_count }}, "sentences": {{ view.sentences.len() }}, "tokens": {{ view.token_count }}}'>Matches: {{ view.match_count }} · Sentences: {{ view.sentences.len() }} · Tokens: {{ view.token_count }}</span></p>
+  {% if view.definitions.len() > 1 %}
+  <table class="sample-definitions">
+    <caption class="visually-hidden" data-i18n="sample.definitions_caption">Reported matches by definition</caption>
+    <thead><tr><th scope="col" data-i18n="sample.definition">Definition</th><th scope="col" class="numeric" data-i18n="sample.matches">Matches</th></tr></thead>
+    <tbody>
+    {% for definition in view.definitions %}
+      <tr><th scope="row"><a href="#sample-sentence-{{ definition.first_sentence }}"><code>{{ definition.name }}</code></a></th><td class="numeric">{{ definition.count }}</td></tr>
     {% endfor %}
-    </ol>
-    <h4 class="sample-composition-title" data-i18n="sample.composition_title">Published composition</h4>
-    {% if constellation.composition.len() > 0 %}
-    <ol class="sample-composition" aria-label="Published composition and gaps" data-i18n-aria-label="sample.composition_label">
-    {% for item in constellation.composition %}
-      {% match item %}
-      {% when CompositionItem::Region with (region) %}
-      <li class="sample-composition-region" data-occurrences="{{ region.occurrence_count }}">
-        <span class="sample-constellation-span" data-i18n="sample.tokens_range" data-i18n-args='{"start": {{ region.span.start }}, "end": {{ region.span.end }}}'>Tokens {{ region.span.start }}..{{ region.span.end }}</span>
-        {% for class in region.class_summary %}<span class="sample-constellation-class">{{ class }}</span>{% endfor %}
-        <span class="sample-composition-occurrences" data-i18n="sample.occurrences" data-i18n-args='{"n": {{ region.occurrence_count }}}'>{{ region.occurrence_count }} occurrence(s)</span>
-      </li>
-      {% when CompositionItem::Gap with (gap) %}
-      <li class="sample-composition-gap" data-gap-tokens="{{ gap.tokens.len() }}" data-gap-budget="{% if gap.within_initial_budget %}within{% else %}investigate{% endif %}">
-        <span class="sample-composition-gap-label" data-i18n="sample.gap" data-i18n-args='{"n": {{ gap.tokens.len() }}}'>GAP {{ gap.tokens.len() }}</span>
-        <span class="sample-constellation-span" data-i18n="sample.tokens_range" data-i18n-args='{"start": {{ gap.span.start }}, "end": {{ gap.span.end }}}'>Tokens {{ gap.span.start }}..{{ gap.span.end }}</span>
-        {% for token in gap.tokens %}
-        <span class="sample-composition-gap-token">
-          <span lang="ja">{% match token.orth %}{% when Some with (orth) %}{% if orth.is_empty() %}&empty;{% else %}{{ orth }}{% endif %}{% when None %}&mdash;{% endmatch %}</span>
-          <span class="sample-composition-gap-morph">{% match token.pos %}{% when Some with (pos) %}{{ pos }}{% when None %}{% endmatch %}{% match token.lemma %}{% when Some with (lemma) %} &middot; {{ lemma }}{% when None %}{% endmatch %}{% match token.cform %}{% when Some with (cform) %} &middot; {{ cform }}{% when None %}{% endmatch %}</span>
-        </span>
-        {% endfor %}
-        <span class="sample-composition-cue"{% if gap.within_initial_budget %} data-i18n="sample.gap_within"{% else %} data-i18n="sample.gap_investigate"{% endif %}>{% if gap.within_initial_budget %}within the initial 0&ndash;2 token expectation{% else %}gap to investigate &mdash; a missing expression, not a matcher allowance{% endif %}</span>
-      </li>
-      {% endmatch %}
-    {% endfor %}
-    </ol>
-    {% else %}
-    <p class="sample-composition-empty" data-i18n="sample.composition_empty">The matcher saw candidates, but result policy published no sentence expression on this line.</p>
-    {% endif %}
-  </section>
+    </tbody>
+  </table>
   {% endif %}
-  {% endfor %}
-  <ul class="sample-match-list">
-  {% for m in matches %}
-    <li class="sample-match">
-      <span class="sample-match-key" lang="ja">{{ m.matched_text }}</span>
-      <span class="sample-match-span">[{{ m.start }}..{{ m.end }}] {{ m.pattern_name }}</span>
-      {% match m.add_example %}{% when Some with (edit) %}<button type="button" class="btn btn-secondary btn-compact" data-claim-insert="examples" data-claim-offset="{{ edit.offset }}" data-claim-text="{{ edit.text }}" data-claim-expects="{{ edit.expects }}"><span data-i18n="sample.add_example">Add this sentence to the definition's examples</span></button>{% when None %}{% endmatch %}
-      <div class="kwic-token-ribbon">
-      {% for t in m.tokens %}<button type="button" class="kwic-token kwic-token-match" lang="ja" data-sample-token="{{ t.index }}"{% if !t.source_ranges.is_empty() %} data-source-ranges="{{ t.source_ranges }}"{% endif %} aria-pressed="false"{% if !t.pos.is_empty() || !t.lemma.is_empty() %} title="{{ t.pos }}{% if !t.pos.is_empty() && !t.lemma.is_empty() %} · {% endif %}{{ t.lemma }}{% if !t.cform.is_empty() %} · {{ t.cform }}{% endif %}"{% endif %}>{{ t.orth }}</button>{% endfor %}
+  <ol class="sample-sentences" aria-label="Sentences" data-i18n-aria-label="sample.sentences_label">
+  {% for sentence in view.sentences %}
+    <li class="sample-sentence" id="sample-sentence-{{ sentence.number }}" data-sample-sentence data-matched="{% if sentence.matches.len() > 0 %}true{% else %}false{% endif %}">
+      <span class="sample-sentence-number" aria-hidden="true">{{ sentence.number }}</span>
+      <div class="sample-sentence-body">
+      <div class="kwic-token-ribbon sample-ribbon" role="group" aria-label="Sentence {{ sentence.number }} tokens" data-i18n-aria-label="sample.ribbon_label" data-i18n-args='{"n": {{ sentence.number }}}'>
+        {% for cell in sentence.tokens %}<span class="sample-cell"><button type="button" class="kwic-token{% if cell.matched %} kwic-token-match{% endif %}" lang="ja" data-sample-token="{{ cell.token.index }}"{% if !cell.source_ranges.is_empty() %} data-source-ranges="{{ cell.source_ranges }}"{% endif %} aria-pressed="false"{% if !loop.first %} tabindex="-1"{% endif %}{% if !cell.token.pos.is_empty() || !cell.token.lemma.is_empty() %} title="{{ cell.token.pos }}{% if !cell.token.pos.is_empty() && !cell.token.lemma.is_empty() %} · {% endif %}{{ cell.token.lemma }}{% if !cell.token.cform.is_empty() %} · {{ cell.token.cform }}{% endif %}"{% endif %}>{{ cell.token.orth }}</button>{% for lane in cell.lanes %}{% match lane %}{% when LaneCell::Empty %}<span class="sample-bar-gap"></span>{% when LaneCell::Start with { bar, last } %}<button type="button" class="sample-bar sample-bar-start{% if *last %} sample-bar-end{% endif %}{% if bar.capture.is_some() %} sample-bar-capture{% endif %}" data-sample-bar="{{ bar.id() }}" data-sample-match="{{ bar.match_index }}"{% match bar.capture %}{% when Some with (ordinal) %} data-sample-capture="{{ ordinal }}"{% when None %}{% endmatch %} aria-pressed="false"><span class="sample-bar-label">{{ bar.label }}</span><span class="visually-hidden">{% if bar.first == bar.last %}<span data-i18n="sample.token_at" data-i18n-args='{"n": {{ bar.first }}}'>, token {{ bar.first }}</span>{% else %}<span data-i18n="sample.tokens_span" data-i18n-args='{"start": {{ bar.first }}, "end": {{ bar.last }}}'>, tokens {{ bar.first }}–{{ bar.last }}</span>{% endif %}</span></button>{% when LaneCell::Continue with { id, capture, last } %}<span class="sample-bar{% if *last %} sample-bar-end{% endif %}{% if *capture %} sample-bar-capture{% endif %}" data-sample-bar="{{ id }}"></span>{% endmatch %}{% endfor %}</span>{% endfor %}
       </div>
-      {% call macros::capture_lane(m.capture_lanes.iter(), "sample-capture-{}"|format(m.render_index), m.tokens.len()) %}{% endcall %}
-      {% for capture in m.captures %}
-      <div id="sample-capture-{{ m.render_index }}-{{ capture.ordinal }}">{{ capture.detail_html|safe }}</div>
-      {% endfor %}
-      <details class="sample-morph"><summary><span data-i18n="sample.morphemes">Morphemes</span></summary>
-        {% for t in m.tokens %}{{ t.inspection_html|safe }}{% endfor %}
+      {% match sentence.policy %}{% when Some with (policy) %}
+      <details class="sample-policy" data-sample-policy{% if sentence.matches.len() == 0 %} open{% endif %}>
+        <summary><span data-i18n="sample.policy_summary">Candidates the result policy did not report</span></summary>
+        <ul class="sample-policy-list">
+        {% for group in policy.groups %}{% for alternative in group.alternatives %}
+          <li data-publication="{% if alternative.published.is_some() %}published{% else %}suppressed{% endif %}">
+            <code>{{ alternative.raw_name }}</code>
+            <span class="sample-span">{% if group.span.start + 1 == group.span.end %}<span data-i18n="sample.token_n" data-i18n-args='{"n": {{ group.span.end }}}'>token {{ group.span.end }}</span>{% else %}<span data-i18n="sample.tokens_n" data-i18n-args='{"start": {{ group.span.start + 1 }}, "end": {{ group.span.end }}}'>tokens {{ group.span.start + 1 }}–{{ group.span.end }}</span>{% endif %}</span>
+            {% match alternative.published %}{% when Some with (published) %}<span class="sample-policy-state" data-i18n="sample.reported">Reported</span>{% if published.name != alternative.raw_name %} <span data-i18n="sample.reported_as">as</span> <code>{{ published.name }}</code>{% endif %}{% when None %}<span class="sample-policy-state" data-i18n="sample.hidden">Hidden by result policy</span>{% endmatch %}
+            {% for class in alternative.classes %}<span class="sample-policy-class">{{ class }}</span>{% endfor %}
+          </li>
+        {% endfor %}{% endfor %}
+        {% for item in policy.composition %}{% match item %}{% when CompositionItem::Gap with (gap) %}{% if gap.tokens.len() > 0 %}
+          <li data-gap-tokens="{{ gap.tokens.len() }}">
+            <span class="sample-policy-state" data-i18n="sample.unmatched_stretch">Unmatched stretch</span>
+            <span class="sample-span">{% if gap.span.start + 1 == gap.span.end %}<span data-i18n="sample.token_n" data-i18n-args='{"n": {{ gap.span.end }}}'>token {{ gap.span.end }}</span>{% else %}<span data-i18n="sample.tokens_n" data-i18n-args='{"start": {{ gap.span.start + 1 }}, "end": {{ gap.span.end }}}'>tokens {{ gap.span.start + 1 }}–{{ gap.span.end }}</span>{% endif %}</span>
+            <span lang="ja">{% for token in gap.tokens %}{% match token.orth %}{% when Some with (orth) %}{{ orth }}{% when None %}{% endmatch %}{% endfor %}</span>
+          </li>
+        {% endif %}{% when CompositionItem::Region with (region) %}{% endmatch %}{% endfor %}
+        </ul>
       </details>
+      {% when None %}{% endmatch %}
+      {% if sentence.why_not.len() > 0 %}
+      <div class="sample-why" data-sample-unmatched>
+        {% for why in sentence.why_not %}
+        <details class="sample-unmatched-definition"{% if sentence.why_not.len() == 1 %} open{% endif %}>
+          <summary><span data-i18n="sample.why_summary">Why not</span> <code>{{ why.definition }}</code>?</summary>
+          {% call macros::why_not(why) %}{% endcall %}
+        </details>
+        {% endfor %}
+      </div>
+      {% endif %}
+      </div>
     </li>
   {% endfor %}
-  </ul>
-  <div class="sample-token-inspections">
-    {% for t in tokens %}<div class="sample-token-detail" id="sample-token-{{ t.index }}" hidden>{{ t.inspection_html|safe }}</div>{% endfor %}
-  </div>
-{% when SampleAnalysis::NoMatches with { tokens } %}
-  <p class="empty-results" data-i18n="sample.no_matches">No matches in the sample text.</p>
-  <div class="kwic-token-ribbon">{% for t in tokens %}<button type="button" class="kwic-token" lang="ja" data-sample-token="{{ t.index }}" aria-pressed="false"{% if !t.pos.is_empty() || !t.lemma.is_empty() %} title="{{ t.pos }}{% if !t.pos.is_empty() && !t.lemma.is_empty() %} · {% endif %}{{ t.lemma }}{% if !t.cform.is_empty() %} · {{ t.cform }}{% endif %}"{% endif %}>{{ t.orth }}</button>{% endfor %}</div>
-  <div class="sample-token-inspections">
-    {% for t in tokens %}<div class="sample-token-detail" id="sample-token-{{ t.index }}" hidden>{{ t.inspection_html|safe }}</div>{% endfor %}
-  </div>
-{% when SampleAnalysis::FragmentsOnly with { tokens } %}
-  <p class="empty-results" data-i18n="sample.fragments_only">This document declares only <code>fragment</code>s &mdash; nothing can match. Add a <code>pattern</code> declaration.</p>
-{% when SampleAnalysis::Failed with (error) %}
-  <div class="error" role="status"><span data-i18n="sample.error">The sample could not be analyzed:</span> <span lang="en">{{ error.message }}</span></div>
-{% endmatch %}
-{% match run %}{% when Some with (run) %}{% if run.unmatched.len() > 0 %}
-  <section class="sample-unmatched" data-sample-unmatched>
-    <h3 class="sample-unmatched-title" data-i18n="sample.unmatched_title">Sentences without a match</h3>
-    {% for line in run.unmatched %}
-    <div class="sample-unmatched-line">
-      <p class="sample-unmatched-text" lang="ja">{{ line.text }}</p>
-      {% for why in line.definitions %}
-      <details class="sample-unmatched-definition"{% if line.definitions.len() == 1 %} open{% endif %}>
-        <summary><span data-i18n="sample.why_summary">Why not</span> <code>{{ why.definition }}</code>?</summary>
-        {% call macros::why_not(why) %}{% endcall %}
-      </details>
+  </ol>
+  {% for sentence in view.sentences %}
+  {% for cell in sentence.tokens %}<template id="sample-token-{{ cell.token.index }}"><p class="sample-detail-head"><span class="sample-match-key" lang="ja">{{ cell.token.orth }}</span> <span class="muted" data-i18n="sample.token_of_sentence" data-i18n-args='{"n": {{ loop.index }}, "sentence": {{ sentence.number }}}'>token {{ loop.index }} of sentence {{ sentence.number }}</span></p>{{ cell.token.inspection_html|safe }}</template>{% endfor %}
+  {% for m in sentence.matches %}
+  <template id="sample-match-{{ m.render_index }}">
+    <p class="sample-detail-head"><span class="sample-match-key" lang="ja">{{ m.matched_text }}</span> <code>{{ m.pattern_name }}</code>{% for class in m.classes %} <span class="sample-policy-class">{{ class }}</span>{% endfor %} <span class="muted">{% if m.start + 1 == m.end %}<span data-i18n="sample.token_of_sentence" data-i18n-args='{"n": {{ m.end }}, "sentence": {{ sentence.number }}}'>token {{ m.end }} of sentence {{ sentence.number }}</span>{% else %}<span data-i18n="sample.tokens_of_sentence" data-i18n-args='{"start": {{ m.start + 1 }}, "end": {{ m.end }}, "sentence": {{ sentence.number }}}'>tokens {{ m.start + 1 }}–{{ m.end }} of sentence {{ sentence.number }}</span>{% endif %}</span></p>
+    {% match m.consumed %}{% when Some with (rows) %}
+    <table class="sample-consumed" data-sample-consumed>
+      <caption class="visually-hidden" data-i18n="sample.consumed_caption">The pattern element that consumed each token</caption>
+      <thead><tr><th scope="col" data-i18n="sample.consumed_token">Token</th><th scope="col" data-i18n="sample.consumed_element">Pattern element and its tests</th></tr></thead>
+      <tbody>
+      {% for row in rows %}
+        <tr>
+          <th scope="row"><span class="sample-position">{{ row.token + 1 }}</span> <span lang="ja">{{ row.orth }}</span></th>
+          <td><code>{{ row.element }}</code>{% for reference in row.via %} <span class="sample-via"><span data-i18n="sample.consumed_via">in</span> <code>{{ reference }}</code></span>{% endfor %}
+            {% if row.tests.len() > 0 %}<ul class="sample-tests">{% for test in row.tests %}<li><code>{{ test.attribute }}{% if test.test.starts_with("in ") || test.test.starts_with("not in ") %} {% endif %}{{ test.test }}</code> {% match test.actual %}{% when Some with (actual) %}<span data-i18n="sample.why_token_has">token has</span> <code lang="ja">{{ actual }}</code>{% when None %}<span data-i18n="sample.why_no_value">no value</span>{% endmatch %}</li>{% endfor %}</ul>{% else %}<p class="sample-tests muted" data-i18n="sample.consumed_any">any token</p>{% endif %}</td>
+        </tr>
       {% endfor %}
-    </div>
-    {% endfor %}
-  </section>
-{% endif %}{% when None %}{% endmatch %}
+      </tbody>
+    </table>
+    <p class="why-not-note" data-i18n="sample.consumed_note">One way the pattern reads this match, from a separate explanation pass. When several readings exist, the reported captures can come from another.</p>
+    {% when None %}
+    <p class="why-not-note" data-sample-consumed="unavailable" data-i18n="sample.consumed_unavailable">No token-by-token reading is available for this match. The explanation pass does not follow any-order groups and stops at its step limit.</p>
+    {% endmatch %}
+    {% if m.captures.len() > 0 %}
+    <table class="sample-captures">
+      <caption data-i18n="sample.captures">Captures</caption>
+      <tbody>
+      {% for capture in m.captures %}
+        <tr data-sample-capture-row="{{ capture.ordinal }}"><th scope="row"><code>{{ capture.name }}</code></th><td lang="ja">{{ capture.text }}</td><td class="muted">{% if capture.start + 1 == capture.end %}<span data-i18n="sample.token_n" data-i18n-args='{"n": {{ capture.end }}}'>token {{ capture.end }}</span>{% else %}<span data-i18n="sample.tokens_n" data-i18n-args='{"start": {{ capture.start + 1 }}, "end": {{ capture.end }}}'>tokens {{ capture.start + 1 }}–{{ capture.end }}</span>{% endif %}</td></tr>
+      {% endfor %}
+      </tbody>
+    </table>
+    {% endif %}
+    {% match m.add_example %}{% when Some with (edit) %}<p><button type="button" class="btn btn-secondary btn-compact" data-claim-insert="examples" data-claim-offset="{{ edit.offset }}" data-claim-text="{{ edit.text }}" data-claim-expects="{{ edit.expects }}"><span data-i18n="sample.add_example">Add this sentence to the definition's examples</span></button></p>{% when None %}{% endmatch %}
+  </template>
+  {% endfor %}
+  {% endfor %}
+{% endmatch %}
 </section>

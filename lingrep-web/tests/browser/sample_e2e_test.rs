@@ -279,9 +279,20 @@ async fn a_sample_sentence_becomes_an_example_and_a_counterexample_that_are_chec
             .await?;
         wait_for(
             &driver,
-            "return !!document.querySelector('[data-claim-insert=examples]') \
+            "return !!document.querySelector('button[data-sample-bar]') \
              && !!document.querySelector('[data-claim-insert=counterexamples]')",
-            "both claim actions",
+            "a match bar and the counterexample action",
+        )
+        .await?;
+        // The example action belongs to a match and is shown with its detail.
+        driver
+            .execute("document.querySelector('button[data-sample-bar]').click()", vec![])
+            .await?;
+        wait_for(
+            &driver,
+            "return !!document.querySelector('[data-sample-detail] [data-claim-insert=examples]') \
+             && document.querySelector('[data-sample-detail] [data-sample-consumed]') !== null",
+            "the selected match's detail with its example action",
         )
         .await?;
         observed(&driver, claims, json!(null), "claims before any is declared").await?;
@@ -330,6 +341,58 @@ async fn a_sample_sentence_becomes_an_example_and_a_counterexample_that_are_chec
 }
 
 #[tokio::test]
+async fn a_pattern_error_marks_the_previous_results_until_the_pattern_compiles_again()
+-> WebDriverResult<()> {
+    let Some(driver) = driver().await? else {
+        return Ok(());
+    };
+    let served = serve().await;
+    let set = "const field = document.querySelector(arguments[0]); field.value = arguments[1]; \
+               field.dispatchEvent(new Event('input', {bubbles: true}));";
+    let shows = |stale: bool, bars: usize| {
+        format!(
+            "return !document.querySelector('[data-sample-stale]').hidden === {stale} \
+             && document.querySelector('#sample-results').hasAttribute('data-stale') === {stale} \
+             && document.querySelectorAll('button[data-sample-bar]').length === {bars}"
+        )
+    };
+    let result: WebDriverResult<()> = async {
+        driver.goto(&served.base).await?;
+        wait_for(&driver, CHECKED, "the editor's first check").await?;
+        driver
+            .execute(set, vec![json!("#sample-text"), json!("猫")])
+            .await?;
+        driver
+            .execute(
+                set,
+                vec![json!("#sample-pattern"), json!("pattern p := [text=猫].\n")],
+            )
+            .await?;
+        wait_for(&driver, &shows(false, 1), "results of a valid pattern").await?;
+        driver
+            .execute(
+                set,
+                vec![json!("#sample-pattern"), json!("pattern p := [text=猫\n")],
+            )
+            .await?;
+        wait_for(&driver, &shows(true, 1), "the same results, marked").await?;
+        driver
+            .execute(
+                set,
+                vec![json!("#sample-pattern"), json!("pattern p := [text=犬].\n")],
+            )
+            .await?;
+        wait_for(&driver, &shows(false, 0), "results of the repaired pattern")
+            .await
+            .map(drop)
+    }
+    .await;
+    driver.quit().await?;
+    served.server.abort();
+    result
+}
+
+#[tokio::test]
 async fn a_match_token_and_the_pattern_element_that_consumed_it_highlight_each_other()
 -> WebDriverResult<()> {
     let Some(driver) = driver().await? else {
@@ -347,7 +410,7 @@ async fn a_match_token_and_the_pattern_element_that_consumed_it_highlight_each_o
     };
     let place_cursor = "return import(new URL('assets/editor/pattern-editor.js', document.baseURI).href) \
         .then((editor) => { editor.selectSource(document.querySelector('#sample-pattern'), arguments[0]); return true; })";
-    let consumed = "return [...document.querySelectorAll('.sample-match [data-source-hit]')] \
+    let consumed = "return [...document.querySelectorAll('[data-sample-token][data-source-hit]')] \
         .map((token) => token.textContent.trim())";
     let result: WebDriverResult<()> = async {
         driver.goto(&served.base).await?;
@@ -360,15 +423,15 @@ async fn a_match_token_and_the_pattern_element_that_consumed_it_highlight_each_o
             .await?;
         wait_for(
             &driver,
-            "return document.querySelectorAll('.sample-match').length === 1 \
-             && document.querySelectorAll('.sample-match [data-source-ranges]').length === 3",
+            "return document.querySelectorAll('button[data-sample-bar]').length === 1 \
+             && document.querySelectorAll('.kwic-token-match[data-source-ranges]').length === 3",
             "one match of three tokens with source ranges",
         )
         .await?;
 
         driver
             .execute(
-                "document.querySelector('.sample-match [data-source-ranges]').click()",
+                "document.querySelector('.kwic-token-match[data-source-ranges]').click()",
                 vec![],
             )
             .await?;
@@ -715,7 +778,7 @@ async fn a_hit_opens_in_the_sample_debugger_with_stored_tokens_until_the_text_is
         wait_for(
             &driver,
             "return document.querySelector('#sample-pattern').value === 'handed := [text=x].' \
-               && document.querySelectorAll('.sample-match').length === 1 \
+               && document.querySelectorAll('button[data-sample-bar]').length === 1 \
                && document.querySelector('#sample-text').value === 'x'",
             "the Workbench pattern matching the stored sentence",
         )

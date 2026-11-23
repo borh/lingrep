@@ -120,7 +120,7 @@ mod handlers_test {
     #[tokio::test]
     async fn the_sample_page_carries_its_own_pattern_editor() {
         let app = make_sample_page_app()
-            .with_state(RequestStore::default().with_default_pattern("seed := []."));
+            .with_state(RequestStore::default().with_sample_seed(Some("seed := [].")));
         let response = app
             .oneshot(
                 Request::builder()
@@ -150,13 +150,32 @@ mod handlers_test {
         ] {
             assert!(html.contains(hook), "missing sample-page hook: {hook}");
         }
-        // Seeded from `--patterns`, exactly as the index is.
+        // Seeded from `--patterns` when the operator named a file.
         assert!(html.contains("seed := []."));
         // The two pages do not share one live textarea.
         assert!(!html.contains(r#"id="corpus-pattern""#));
         assert!(!html.contains(r##"hx-include="#corpus-pattern""##));
         // Nothing corpus-bound reaches this page.
         assert!(!html.contains("api/search/"));
+    }
+
+    #[tokio::test]
+    async fn the_sample_page_opens_with_a_starter_unless_a_patterns_file_was_named() {
+        let app = make_sample_page_app()
+            .with_state(RequestStore::default().with_default_pattern("seed := []."));
+        let response = app
+            .oneshot(
+                Request::builder()
+                    .uri("/sample")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        let body = response.into_body().collect().await.unwrap().to_bytes();
+        let html = String::from_utf8(body.to_vec()).unwrap();
+        assert!(html.contains("pattern thought :="), "{html}");
+        assert!(!html.contains("seed := []."));
     }
 
     #[tokio::test]
@@ -176,8 +195,8 @@ mod handlers_test {
         let html = String::from_utf8(body.to_vec()).unwrap();
         assert_eq!(html.matches(r#"aria-current="page""#).count(), 1);
         let marker = html
-            .split_once(">Sample Debugger</span></a>")
-            .expect("Sample Debugger nav link present")
+            .split_once(">Sample debugger</span></a>")
+            .expect("Sample debugger nav link present")
             .0;
         assert!(
             marker
@@ -423,11 +442,12 @@ mod handlers_test {
             assert!(html.contains("href=\"help\""), "missing Help on {path}");
             assert!(
                 html.contains("href=\"sample\""),
-                "missing Sample Debugger on {path}"
+                "missing Sample debugger on {path}"
             );
-            assert!(
+            assert_eq!(
                 html.contains("href=\"sample\" target=\"_blank\" rel=\"noopener\""),
-                "Sample must preserve the current page on {path}"
+                path != "/sample",
+                "Sample opens in a new tab from every page but its own: {path}"
             );
             assert!(
                 html.contains(
@@ -447,7 +467,7 @@ mod handlers_test {
             }
 
             if path == "/sample" {
-                assert!(html.contains(">Sample Debugger</span></a>"));
+                assert!(html.contains(">Sample debugger</span></a>"));
                 continue;
             }
 
