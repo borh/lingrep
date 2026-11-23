@@ -305,7 +305,7 @@ impl Program {
                 continue;
             }
             if captures.is_none() {
-                captures = Some(self.public_captures(&candidate, &replay.budget.output)?);
+                captures = Some(self.public_captures(&candidate, replay.budget.output)?);
             }
             let comparisons = histories.len().max(1).ilog2() as usize + 1;
             replay.charge(

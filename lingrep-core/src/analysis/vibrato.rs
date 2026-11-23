@@ -589,18 +589,11 @@ fn featurize_selected(
             .as_deref()
             .expect("tag is computed whenever needs_pos is true");
         let (pos, _) = resolve_pos(orth, tag, next_tag.as_deref());
-        if pos.is_empty() {
-            #[expect(
-                clippy::panic,
-                reason = "a resolved token always carries a non-empty pos field"
-            )]
-            {
-                panic!(
-                    "Empty 'pos' field encountered for surface {:?}",
-                    token.surface()
-                );
-            }
-        }
+        assert!(
+            !pos.is_empty(),
+            "Empty 'pos' field encountered for surface {:?}",
+            token.surface()
+        );
         values[Pos as usize] = Some(pos);
     }
 

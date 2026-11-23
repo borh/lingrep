@@ -53,7 +53,7 @@ impl CapturePlan {
         matched.captures = self
             .0
             .extract(
-                &budget.output,
+                budget.output,
                 predicates,
                 tokens,
                 matched.start,

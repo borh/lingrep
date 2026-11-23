@@ -683,7 +683,7 @@ impl Program {
                         )?
                     } else {
                         (
-                            self.public_captures(candidate, &budget.output)?,
+                            self.public_captures(candidate, budget.output)?,
                             Box::default(),
                         )
                     };
