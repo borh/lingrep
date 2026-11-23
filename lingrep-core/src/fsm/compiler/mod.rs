@@ -649,6 +649,11 @@ fn compile_program(
         capture_key::editable_capture_keys(&catalog_policy, &execution, &bound.sources);
     analyze_program(&mut execution, &bound.sources)?;
     let lowered = lower_to_nfa(&bound, &nfa_limits, &execution, &assertions.occurrences)?;
+    let tree_evaluated = execution
+        .iter()
+        .filter(|definition| definition.capability.evaluates_whole_definition())
+        .map(|definition| definition.name.clone())
+        .collect();
     let matcher = CompiledCatalog::from_parts(CompiledCatalogParts {
         patterns: lowered.patterns,
         state_machine: lowered.state_machine,
@@ -711,7 +716,7 @@ fn compile_program(
         diagnostics,
         stats: *stats,
         analysis,
-        no_match: NoMatchExplainer::new(bound),
+        no_match: NoMatchExplainer::new(bound, tree_evaluated),
     })
 }
 
