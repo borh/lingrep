@@ -478,11 +478,11 @@ word without a string-set attribute holds no member of it, so
 count satisfies no range, including `{0}` and `{0,}`. Write a range directly
 without `not`.
 
-To measure the count for every head, bind it with `as` and use the
-bare binding in `key:` for a histogram. Each verb contributes one record.
-The JSON graph binding carries a number, including zero, or `null` when
-the count is unknown. An unknown value leaves the key unfilled.
-A count range before `as` also filters the head.
+To group heads by the number of matching dependents, bind the count with
+`as` and use the bare binding in `key:`. Each matching occurrence carries
+one JSON binding of kind `count` with an integer, including zero, or `null`
+for an unknown count. An unknown value leaves the key unfilled. Put a count
+range before `as` to select heads by count.
 
 ```pattern
 key: [$nominals]
@@ -687,10 +687,12 @@ annotated or inconsistent tree gives `invalid_tree`. These three non-`ok`
 statuses carry a `null` value. Using such a binding in `key:` leaves the record
 unkeyed; `ling summarize` reports how many records had no key.
 
-On a valid tree, `measure count($v -[L]-> [T])` counts the same links as
-`where $v -[L]-> [T] as $n`. If every word has a usable basic dependency
-but the edges fail tree validation, the measure returns `invalid_tree`.
-The `where` count can still use the observed edges.
+Use a [`where` count range](#counting-direct-dependents) to select heads by
+the number of qualifying links. Use `measure count($v -[L]-> [T])` to report
+the value and status of a count for each selected occurrence. Both forms
+count the same links on a valid tree. When every word has a usable basic
+dependency but the edges fail tree validation, the `where` count can read
+those edges and the measure reports `invalid_tree`.
 
 Measures are published in JSON match records only. When a pattern with
 `interpret` entries has several readings of one occurrence, readings with the
