@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 
+import os
 import re
 import shlex
 import subprocess
@@ -17,8 +18,7 @@ def passed_count(line):
     return int(summary.group(1)) if summary else 0
 
 
-def main():
-    command = ["cargo", "test", *sys.argv[1:]]
+def run_selected(command):
     passed = 0
     pending = b""
     with subprocess.Popen(
@@ -37,6 +37,24 @@ def main():
         print(f"no tests executed: {shlex.join(command)}", file=sys.stderr)
         return 1
     return 0
+
+
+def main():
+    if sys.argv[1:2] != ["--screen"]:
+        return run_selected(["cargo", "test", *sys.argv[1:]])
+
+    command = sys.argv[2:]
+    if os.environ["CARGO_PKG_NAME"] != "lingrep-core":
+        os.execv(command[0], command)
+
+    status = run_selected([*command, "::instrumentation_"])
+    if status:
+        return status
+    return run_selected([
+        *command,
+        "fsm::compiler::published_baseline::repository_catalog_published_records",
+        "--exact",
+    ])
 
 
 if __name__ == "__main__":

@@ -191,14 +191,23 @@ run_full_tests_and_extras() {
 }
 
 run_screen_lane() {
-    echo "Running lingrep-perf with the counted-work screen enabled"
-    cargo test -p lingrep-perf --features screen --quiet 2>&1 | tee "${TMPDIR:-/tmp}/cargo-test-lingrep-perf.log"
+    echo "Running counted-work screen and matcher instrumentation tests"
+    local packages=(-p lingrep-core -p lingrep-perf --features lingrep-perf/screen)
+    local targets=(--lib --bins)
+    local integration_tests target
+    integration_tests=$(cargo metadata --no-deps --format-version=1 | jq -r '
+        .packages[] | select(.name == "lingrep-perf") | .targets[]
+        | select(.test and (.kind == ["test"])) | .name
+    ')
+    while IFS= read -r target; do
+        [[ -z $target ]] || targets+=(--test "$target")
+    done <<< "$integration_tests"
 
-    local core_tests=(scripts/cargo-test-selected.py -p lingrep-core --features testing,bench-instrumentation --lib)
-    "${core_tests[@]}" -- ::instrumentation_ --quiet 2>&1 |
-        tee "${TMPDIR:-/tmp}/cargo-test-lingrep-core-instrumentation.log"
-    "${core_tests[@]}" -- fsm::compiler::published_baseline::repository_catalog_published_records --exact --quiet 2>&1 |
-        tee -a "${TMPDIR:-/tmp}/cargo-test-lingrep-core-instrumentation.log"
+    local runner='target."cfg(all())".runner=["scripts/cargo-test-selected.py","--screen"]'
+    {
+        cargo test "${packages[@]}" "${targets[@]}" --config "$runner" --quiet
+        cargo test "${packages[@]}" --doc --quiet
+    } 2>&1 | tee "${TMPDIR:-/tmp}/cargo-test-screen.log"
 }
 
 run_doc_lane() {

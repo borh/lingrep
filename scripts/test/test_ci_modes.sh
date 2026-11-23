@@ -75,6 +75,10 @@ cat >"$temporary/bin/jq" <<'EOF'
 set -euo pipefail
 printf 'jq:%s\n' "$*" >>"$LINGREP_CI_TEST_LOG"
 cat >/dev/null
+if [[ ${1:-} == -r ]]; then
+    printf '%s\n' archived_campaigns additional_perf_suite
+    exit 0
+fi
 exit 1
 EOF
 
@@ -120,11 +124,14 @@ assert_lacks_prefix() {
     fi
 }
 
+screen_test_command='cargo:test -p lingrep-core -p lingrep-perf --features lingrep-perf/screen --lib --bins --test archived_campaigns --test additional_perf_suite --config target."cfg(all())".runner=["scripts/cargo-test-selected.py","--screen"] --quiet'
+screen_doctest_command='cargo:test -p lingrep-core -p lingrep-perf --features lingrep-perf/screen --doc --quiet'
+
 assert_instrumentation_contract() {
-    local selection='script-args:cargo-test-selected.py -p lingrep-core --features testing,bench-instrumentation --lib --'
-    assert_has "$selection ::instrumentation_ --quiet"
-    assert_has "$selection fsm::compiler::published_baseline::repository_catalog_published_records --exact --quiet"
-    assert_lacks_prefix "cargo:test -p lingrep-core --features testing,bench-instrumentation --lib --quiet"
+    assert_has "$screen_test_command"
+    assert_has "$screen_doctest_command"
+    assert_lacks_prefix "cargo:test -p lingrep-perf --features screen"
+    assert_lacks_prefix "script-args:cargo-test-selected.py -p lingrep-core"
 }
 
 assert_full_contract() {
@@ -220,6 +227,8 @@ for failure in \
     cargo-test-selected.py \
     'cargo:fmt --check --all' \
     'cargo:test --config .cargo/test.toml --workspace --tests --example measure_spacy_process --bench prepared_tokens --quiet' \
+    "$screen_test_command" \
+    "$screen_doctest_command" \
     check-live-launchers.py
 do
     export LINGREP_CI_FAIL_STEP=$failure

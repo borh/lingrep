@@ -1,3 +1,4 @@
+import json
 import os
 import select
 from pathlib import Path
@@ -11,6 +12,40 @@ RUNNER = Path(__file__).resolve().parents[1] / "cargo-test-selected.py"
 
 
 class SelectedCargoTests(unittest.TestCase):
+    def test_screen_runner_requires_each_core_selection(self):
+        publication = "fsm::compiler::published_baseline::repository_catalog_published_records"
+        with tempfile.TemporaryDirectory() as temporary:
+            binary = Path(temporary) / "test-binary"
+            binary.write_text(
+                f"#!{sys.executable}\n"
+                "import json, os, sys\n"
+                "args = sys.argv[1:]\n"
+                "print(json.dumps(args))\n"
+                "passed = int(os.environ['EMPTY_FILTER'] not in args)\n"
+                "print(f'test result: ok. {passed} passed;')\n"
+            )
+            binary.chmod(0o755)
+            instrumentation_args = ["--quiet", "::instrumentation_"]
+            publication_args = ["--quiet", publication, "--exact"]
+            for package, empty_filter, status, arguments in [
+                ("lingrep-perf", "", 0, [["--quiet"]]),
+                ("lingrep-core", "", 0, [instrumentation_args, publication_args]),
+                ("lingrep-core", "::instrumentation_", 1, [instrumentation_args]),
+                ("lingrep-core", publication, 1, [instrumentation_args, publication_args]),
+            ]:
+                with self.subTest(package=package, empty_filter=empty_filter):
+                    result = subprocess.run(
+                        [sys.executable, str(RUNNER), "--screen", str(binary), "--quiet"],
+                        env=os.environ | {"CARGO_PKG_NAME": package, "EMPTY_FILTER": empty_filter},
+                        capture_output=True,
+                        text=True,
+                    )
+                    self.assertEqual(result.returncode, status, result.stdout + result.stderr)
+                    self.assertEqual(
+                        [json.loads(line) for line in result.stdout.splitlines() if line.startswith("[")],
+                        arguments,
+                    )
+
     def test_selected_tests_must_execute_and_failures_preserve_the_cargo_status(self):
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
