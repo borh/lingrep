@@ -32,7 +32,9 @@ impl<T> PagedResult<T>
 where
     T: serde::de::DeserializeOwned,
 {
-    pub(crate) fn new(store: Arc<PagedStore<T>>) -> std::io::Result<Self> {
+    /// Reads the initial page from `store` on a worker thread before handing
+    /// the ready [`PagedResult`] to the Elm model.
+    pub(crate) fn load_initial(store: Arc<PagedStore<T>>) -> std::io::Result<Self> {
         let window = store.read_window(0, DEFAULT_PAGE_ROWS)?;
         Ok(Self {
             store,
@@ -45,13 +47,16 @@ where
         usize::try_from(self.store.len()).unwrap_or(usize::MAX)
     }
 
-    pub fn ensure_window(&mut self, start: usize) -> std::io::Result<()> {
-        let start = start.min(self.len().saturating_sub(1));
-        if start != self.window_start {
-            self.window = self.store.read_window(start as u64, DEFAULT_PAGE_ROWS)?;
-            self.window_start = start;
-        }
-        Ok(())
+    /// Returns the clamped window start if `start` differs from the currently
+    /// loaded window, or `None` when the requested window is already resident.
+    pub(crate) fn window_start_to_load(&self, start: usize) -> Option<usize> {
+        let clamped = start.min(self.len().saturating_sub(1));
+        (clamped != self.window_start).then_some(clamped)
+    }
+
+    pub(crate) fn install_window(&mut self, window_start: usize, window: Vec<T>) {
+        self.window_start = window_start;
+        self.window = window;
     }
 }
 
@@ -66,7 +71,7 @@ where
         for row in rows {
             writer.push(row).unwrap();
         }
-        Self::new(writer.finish().unwrap()).unwrap()
+        Self::load_initial(writer.finish().unwrap()).unwrap()
     }
 }
 

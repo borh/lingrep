@@ -1,10 +1,12 @@
 use crate::tui::cache::{KwicLine, ResultCache, SurfaceEntry};
+use crate::tui::command::Command;
 use crate::tui::types::{
     AppMode, LoadStatus, PatternId, PlaygroundFocus, Progress, RequestId, Tab,
 };
-use crate::tui::watcher::PatternWatcher;
 use lingrep_cli_common::sanitize_terminal;
 use std::collections::HashMap;
+use std::path::PathBuf;
+use std::sync::Arc;
 use unicode_width::UnicodeWidthStr;
 
 pub struct ViewModel<'a> {
@@ -135,6 +137,7 @@ pub struct Model {
     pub selected_pattern: Option<PatternId>,
     pub scroll: ScrollState,
     pub request_seq: u64,
+    pub(crate) page_request_seq: u64,
     pub pattern_names: HashMap<String, PatternId>,
     pub pattern_ids: HashMap<PatternId, String>,
     pub sort_mode: SortMode,
@@ -144,7 +147,7 @@ pub struct Model {
     pub playground_request_id: Option<RequestId>,
     pub playground_matches: Vec<PlaygroundMatch>,
     pub playground_error: Option<String>,
-    pub pattern_watcher: Option<PatternWatcher>,
+    pub pattern_file: Option<PathBuf>,
     pub reload_status: Option<String>,
 }
 
@@ -210,6 +213,7 @@ pub struct SubTaskLoadState {
     pub displayed_request_id: Option<RequestId>,
     pub pattern_id: Option<PatternId>,
     pub received_lines: usize,
+    pub(crate) page_request_id: Option<u64>,
 }
 
 impl SubTaskLoadState {
@@ -233,16 +237,20 @@ impl Model {
         self
     }
 
-    pub fn with_pattern_file(mut self, path: std::path::PathBuf) -> Self {
-        if path.exists() && path != std::path::PathBuf::new() {
-            self.pattern_watcher = Some(PatternWatcher::new(path));
-        }
+    pub fn with_pattern_file(mut self, path: PathBuf) -> Self {
+        self.pattern_file = (!path.as_os_str().is_empty()).then_some(path);
         self
     }
 
     pub fn next_request_id(&mut self) -> RequestId {
         let id = RequestId(self.request_seq);
         self.request_seq += 1;
+        id
+    }
+
+    pub(crate) fn next_page_request_id(&mut self) -> u64 {
+        let id = self.page_request_seq;
+        self.page_request_seq += 1;
         id
     }
 
@@ -285,41 +293,62 @@ impl Model {
         patterns
     }
 
-    pub fn ensure_visible_window(&mut self) {
-        let Some(pattern_id) = self.selected_pattern else {
-            return;
-        };
-        let result = match self.mode {
-            AppMode::Viewing { tab: Tab::Surface } => self
-                .tasks
-                .surface
-                .active_request_id()
-                .and_then(|req_id| self.cache.surface.get_mut(&(req_id, pattern_id)))
-                .map(|result| {
-                    self.scroll.surface.offset = self
-                        .scroll
-                        .surface
-                        .offset
-                        .min(result.len().saturating_sub(1));
-                    result.ensure_window(self.scroll.surface.offset)
-                }),
-            AppMode::Viewing { tab: Tab::Context } => self
-                .tasks
-                .kwic
-                .active_request_id()
-                .and_then(|req_id| self.cache.kwic.get_mut(&(req_id, pattern_id)))
-                .map(|result| {
+    /// Clamps the active tab's scroll position against the cached result's
+    /// known row count and returns an asynchronous window-load command whenever
+    /// the resident page window does not start at the clamped offset.
+    ///
+    /// Pure: performs no disk or filesystem I/O.
+    pub(crate) fn clamp_scroll_and_plan_window_load(&mut self) -> Option<Command> {
+        let pattern_id = self.selected_pattern?;
+        match self.mode {
+            AppMode::Viewing { tab: Tab::Surface } => {
+                let request_id = self.tasks.surface.active_request_id()?;
+                let (last, load_plan) = {
+                    let result = self.cache.surface.peek(&(request_id, pattern_id))?;
                     let last = result.len().saturating_sub(1);
-                    self.scroll.context.offset = self.scroll.context.offset.min(last);
-                    self.selected_kwic_line = self.selected_kwic_line.min(last);
-                    result.ensure_window(self.scroll.context.offset)
-                }),
+                    let clamped = self.scroll.surface.offset.min(last);
+                    let plan = result
+                        .window_start_to_load(clamped)
+                        .map(|start| (Arc::clone(&result.store), start));
+                    (last, plan)
+                };
+                self.scroll.surface.offset = self.scroll.surface.offset.min(last);
+                let (store, start) = load_plan?;
+                let page_request_id = self.next_page_request_id();
+                self.tasks.surface.page_request_id = Some(page_request_id);
+                Some(Command::LoadSurfaceWindow {
+                    request_id,
+                    pattern_id,
+                    page_request_id,
+                    store,
+                    start,
+                })
+            }
+            AppMode::Viewing { tab: Tab::Context } => {
+                let request_id = self.tasks.kwic.active_request_id()?;
+                let (last, load_plan) = {
+                    let result = self.cache.kwic.peek(&(request_id, pattern_id))?;
+                    let last = result.len().saturating_sub(1);
+                    let clamped = self.scroll.context.offset.min(last);
+                    let plan = result
+                        .window_start_to_load(clamped)
+                        .map(|start| (Arc::clone(&result.store), start));
+                    (last, plan)
+                };
+                self.scroll.context.offset = self.scroll.context.offset.min(last);
+                self.selected_kwic_line = self.selected_kwic_line.min(last);
+                let (store, start) = load_plan?;
+                let page_request_id = self.next_page_request_id();
+                self.tasks.kwic.page_request_id = Some(page_request_id);
+                Some(Command::LoadKwicWindow {
+                    request_id,
+                    pattern_id,
+                    page_request_id,
+                    store,
+                    start,
+                })
+            }
             _ => None,
-        };
-        if let Some(Err(error)) = result {
-            self.mode = AppMode::Error {
-                message: format!("failed to read result page: {error}"),
-            };
         }
     }
 }
@@ -523,7 +552,7 @@ mod tests {
             }]),
         );
         model.mode = AppMode::Viewing { tab: Tab::Context };
-        model.ensure_visible_window();
+        assert!(model.clamp_scroll_and_plan_window_load().is_none());
 
         let vm = derive_viewmodel(&model, 20);
         assert_eq!(model.selected_kwic_line, 0);
@@ -531,7 +560,18 @@ mod tests {
     }
 
     #[test]
-    fn high_cardinality_results_seek_pages_without_materializing_the_corpus() {
+    fn with_pattern_file_stores_path_purely_without_touching_disk() {
+        let missing = PathBuf::from("/nonexistent/lingrep-pure-test/patterns.lx");
+        let model = Model::new().with_pattern_file(missing.clone());
+        assert_eq!(model.pattern_file, Some(missing));
+        assert_eq!(
+            Model::new().with_pattern_file(PathBuf::new()).pattern_file,
+            None
+        );
+    }
+
+    #[test]
+    fn high_cardinality_results_plan_page_loads_without_materializing_the_corpus() {
         use crate::tui::cache::{KwicLine, SurfaceEntry};
         use crate::tui::paged_store::DEFAULT_PAGE_ROWS;
 
@@ -570,7 +610,19 @@ mod tests {
 
         model.mode = AppMode::Viewing { tab: Tab::Surface };
         model.scroll.surface.offset = DEFAULT_PAGE_ROWS - 1;
-        model.ensure_visible_window();
+        let Some(Command::LoadSurfaceWindow { store, start, .. }) =
+            model.clamp_scroll_and_plan_window_load()
+        else {
+            panic!("expected async surface window load command");
+        };
+        assert_eq!(start, DEFAULT_PAGE_ROWS - 1);
+        let loaded = store.read_window(start as u64, DEFAULT_PAGE_ROWS).unwrap();
+        model
+            .cache
+            .surface
+            .get_mut(&key)
+            .unwrap()
+            .install_window(start, loaded);
         let surface = derive_viewmodel(&model, 30);
         assert_eq!(surface.surface_total, rows);
         assert_eq!(surface.surface_window_start, DEFAULT_PAGE_ROWS - 1);
@@ -587,7 +639,19 @@ mod tests {
         model.mode = AppMode::Viewing { tab: Tab::Context };
         model.scroll.context.offset = DEFAULT_PAGE_ROWS * 2 + 3;
         model.selected_kwic_line = model.scroll.context.offset;
-        model.ensure_visible_window();
+        let Some(Command::LoadKwicWindow { store, start, .. }) =
+            model.clamp_scroll_and_plan_window_load()
+        else {
+            panic!("expected async kwic window load command");
+        };
+        assert_eq!(start, DEFAULT_PAGE_ROWS * 2 + 3);
+        let loaded = store.read_window(start as u64, DEFAULT_PAGE_ROWS).unwrap();
+        model
+            .cache
+            .kwic
+            .get_mut(&key)
+            .unwrap()
+            .install_window(start, loaded);
         let kwic = derive_viewmodel(&model, 30);
         assert_eq!(kwic.kwic_total, rows);
         assert_eq!(kwic.kwic_window_start, DEFAULT_PAGE_ROWS * 2 + 3);

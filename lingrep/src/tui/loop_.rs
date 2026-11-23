@@ -3,7 +3,7 @@ use crate::tui::message::{ExplorerMessage, UiMsg};
 use crate::tui::model::{Model, PlaygroundMatch};
 use crate::tui::types::{AppMode, LoadStatus, Tab, TaskKind};
 use crate::tui::update::update;
-use crate::tui::workers::TaskHandles;
+use crate::tui::workers::{IoJob, TaskHandles, WatcherGuard};
 use crossbeam_channel::{Receiver, Sender};
 use crossterm::event::{self, Event, KeyCode, KeyModifiers};
 use lingrep_cli_common::sanitize_terminal;
@@ -16,13 +16,12 @@ use ratatui::{
     style::{Color, Modifier, Style},
     widgets::{Block, Borders, Cell, Paragraph, Row, Table},
 };
-use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 pub fn run(
     terminal: &mut Terminal<CrosstermBackend<std::io::Stderr>>,
-    mut model: Model,
+    model: Model,
     execution: Arc<crate::interactive_execution::InteractiveExecution>,
     process_cancellation: &CancellationFlag,
 ) -> Result<super::ExplorerOutcome, std::io::Error> {
@@ -33,21 +32,16 @@ pub fn run(
     let tick_rate = Duration::from_millis(50);
     let mut last_tick = Instant::now();
 
-    // Auto-start pattern processing if pattern_draft is non-empty
-    let initial_cmd = if model.pattern_draft.trim().is_empty() {
-        None
-    } else {
-        let request_id = model.next_request_id();
-        model.tasks.pattern.status = LoadStatus::Loading;
-        model.tasks.pattern.request_id = Some(request_id);
-        model.tasks.pattern.displayed_request_id = Some(request_id);
-        model.cache.frequencies.put(request_id, HashMap::new());
-        Some(Command::StartPattern {
-            request_id,
-            pattern_text: model.pattern_draft.clone(),
-        })
-    };
+    // Watch the authored pattern file off the UI thread; the guard stops the
+    // watcher cleanly on every exit path.
+    let _watcher = model
+        .pattern_file
+        .clone()
+        .map(|path| WatcherGuard::spawn(path, tick_rate, tx.clone()));
 
+    // Route startup auto-submit through pure `update()` instead of mutating
+    // `Model` directly in the runtime loop.
+    let (mut model, initial_cmd) = update(ExplorerMessage::Ui(UiMsg::SubmitPattern), model);
     if let Some(cmd) = initial_cmd {
         run_command(cmd, &tx, &mut handles, &execution);
     }
@@ -89,20 +83,6 @@ pub fn run(
         }
 
         if last_tick.elapsed() >= tick_rate {
-            if let Some(ref mut watcher) = model.pattern_watcher
-                && let Some(change) = watcher.check()
-            {
-                let (new_model, cmd) = update(ExplorerMessage::PatternFileChanged(change), model);
-                model = new_model;
-                if let Some(c) = cmd {
-                    run_command(c, &tx, &mut handles, &execution);
-                }
-                last_tick = Instant::now();
-                terminal.draw(|f| view(f, &model))?;
-                std::thread::sleep(Duration::from_millis(16));
-                continue;
-            }
-
             let (new_model, cmd) = update(ExplorerMessage::Tick, model);
             model = new_model;
             if let Some(c) = cmd {
@@ -267,24 +247,11 @@ fn run_command(
                 h.cancel.cancel();
             }
 
-            let matcher = match compile_pattern(&pattern_text) {
-                Ok(matcher) => Arc::new(matcher),
-                Err(error) => {
-                    let _ = tx.send(ExplorerMessage::SurfaceFailed {
-                        request_id,
-                        pattern_id,
-                        code: Some(crate::tui::types::ErrorCode::PatternError),
-                        error,
-                    });
-                    return;
-                }
-            };
-
             let handle = crate::tui::workers::SurfaceWorker::spawn(
                 request_id,
                 pattern_id,
                 pattern_name,
-                matcher,
+                pattern_text,
                 execution.clone(),
                 tx.clone(),
             );
@@ -302,24 +269,11 @@ fn run_command(
                 h.cancel.cancel();
             }
 
-            let matcher = match compile_pattern(&pattern_text) {
-                Ok(matcher) => Arc::new(matcher),
-                Err(error) => {
-                    let _ = tx.send(ExplorerMessage::KwicFailed {
-                        request_id,
-                        pattern_id,
-                        code: Some(crate::tui::types::ErrorCode::PatternError),
-                        error,
-                    });
-                    return;
-                }
-            };
-
             let handle = crate::tui::workers::KwicWorker::spawn(
                 request_id,
                 pattern_id,
                 pattern_name,
-                matcher,
+                pattern_text,
                 execution.clone(),
                 tx.clone(),
             );
@@ -343,6 +297,45 @@ fn run_command(
                 };
                 let _ = tx.send(message);
             });
+        }
+        Command::ReloadPatternFile { path, reload_count } => {
+            handles.dispatch_io(IoJob::ReloadPatternFile { path, reload_count }, tx);
+        }
+        Command::LoadSurfaceWindow {
+            request_id,
+            pattern_id,
+            page_request_id,
+            store,
+            start,
+        } => {
+            handles.dispatch_io(
+                IoJob::LoadSurfaceWindow {
+                    request_id,
+                    pattern_id,
+                    page_request_id,
+                    store,
+                    start,
+                },
+                tx,
+            );
+        }
+        Command::LoadKwicWindow {
+            request_id,
+            pattern_id,
+            page_request_id,
+            store,
+            start,
+        } => {
+            handles.dispatch_io(
+                IoJob::LoadKwicWindow {
+                    request_id,
+                    pattern_id,
+                    page_request_id,
+                    store,
+                    start,
+                },
+                tx,
+            );
         }
     }
 }
@@ -1014,7 +1007,29 @@ mod tests {
                     .collect::<Vec<_>>(),
             ),
         );
-        model.ensure_visible_window();
+        let Some(Command::LoadKwicWindow {
+            request_id: load_req,
+            pattern_id: load_pat,
+            page_request_id,
+            store,
+            start,
+        }) = model.clamp_scroll_and_plan_window_load()
+        else {
+            panic!("expected kwic window load command");
+        };
+        let loaded = store
+            .read_window(start as u64, crate::tui::paged_store::DEFAULT_PAGE_ROWS)
+            .unwrap();
+        let (model, _) = crate::tui::update::update(
+            ExplorerMessage::KwicWindowLoaded {
+                request_id: load_req,
+                pattern_id: load_pat,
+                page_request_id,
+                window_start: start,
+                result: Ok(loaded),
+            },
+            model,
+        );
 
         let backend = TestBackend::new(160, 30);
         let mut terminal = Terminal::new(backend).unwrap();
@@ -1059,7 +1074,7 @@ mod tests {
             ExplorerMessage::KwicFinished {
                 request_id: request,
                 pattern_id: pattern,
-                store: result.store.clone(),
+                result,
             },
             model,
         );
@@ -1172,32 +1187,38 @@ mod tests {
                 false,
             ),
         ] {
-            let (tx, rx) = crossbeam_channel::unbounded();
+            let (tx, rx) = crossbeam_channel::bounded(1);
+            tx.send(ExplorerMessage::Tick).unwrap();
             let mut handles = TaskHandles::default();
+            // Even on a full bounded channel, invalid detail drafts compile on
+            // the worker thread without blocking the UI loop.
             run_command(command, &tx, &mut handles, &execution);
-            let messages = rx.try_iter().collect::<Vec<_>>();
-            assert_eq!(messages.len(), 1, "{messages:?}");
+            assert!(matches!(rx.recv().unwrap(), ExplorerMessage::Tick));
+            let message = rx
+                .recv_timeout(Duration::from_secs(5))
+                .expect("worker should deliver compile failure asynchronously");
             if is_expected {
                 assert!(matches!(
-                    messages[0],
+                    message,
                     ExplorerMessage::SurfaceFailed {
                         request_id: RequestId(41),
                         pattern_id: PatternId(7),
+                        code: Some(crate::tui::types::ErrorCode::PatternError),
                         ..
                     }
                 ));
             } else {
                 assert!(matches!(
-                    messages[0],
+                    message,
                     ExplorerMessage::KwicFailed {
                         request_id: RequestId(42),
                         pattern_id: PatternId(8),
+                        code: Some(crate::tui::types::ErrorCode::PatternError),
                         ..
                     }
                 ));
             }
-            assert!(handles.surface.is_none());
-            assert!(handles.kwic.is_none());
+            assert!(rx.try_recv().is_err());
         }
     }
 
@@ -1222,7 +1243,7 @@ mod tests {
             ExplorerMessage::KwicFinished {
                 request_id: request,
                 pattern_id: pattern,
-                store: result.store.clone(),
+                result,
             },
             model,
         );
@@ -1299,6 +1320,82 @@ mod tests {
             } if matches.len() == 1
                 && matches[0].matched_text == "猫"
                 && matches[0].pattern_name.as_deref() == Some("p")
+        ));
+    }
+
+    #[test]
+    fn io_commands_execute_off_ui_thread_without_blocking_full_channel() {
+        let (directory, execution) = crate::interactive_execution::direct_test_execution("猫。\n");
+        let path = directory.path().join("reload.lx");
+        std::fs::write(&path, "reloaded := [text=猫].").unwrap();
+
+        let (tx, rx) = crossbeam_channel::bounded(1);
+        tx.send(ExplorerMessage::Tick).unwrap();
+
+        let mut handles = TaskHandles::default();
+        run_command(
+            Command::ReloadPatternFile {
+                path: path.clone(),
+                reload_count: 3,
+            },
+            &tx,
+            &mut handles,
+            &execution,
+        );
+        let store = PagedResult::from_rows(&[
+            KwicLine {
+                pre: "p0".into(),
+                key: "k0".into(),
+                post: "a0".into(),
+                match_start: 0,
+                match_end: 1,
+            },
+            KwicLine {
+                pre: "p1".into(),
+                key: "k1".into(),
+                post: "a1".into(),
+                match_start: 1,
+                match_end: 2,
+            },
+        ])
+        .store;
+        run_command(
+            Command::LoadKwicWindow {
+                request_id: RequestId(7),
+                pattern_id: PatternId(2),
+                page_request_id: 5,
+                store,
+                start: 1,
+            },
+            &tx,
+            &mut handles,
+            &execution,
+        );
+
+        assert!(matches!(rx.recv().unwrap(), ExplorerMessage::Tick));
+        let reload_msg = rx
+            .recv_timeout(Duration::from_secs(5))
+            .expect("io worker delivers reloaded pattern file");
+        assert!(matches!(
+            reload_msg,
+            ExplorerMessage::PatternFileLoaded {
+                path: ref got_path,
+                reload_count: 3,
+                result: Ok(ref source),
+            } if got_path == &path && source == "reloaded := [text=猫]."
+        ));
+        let window_msg = rx
+            .recv_timeout(Duration::from_secs(5))
+            .expect("io worker delivers loaded kwic window");
+        assert!(matches!(
+            window_msg,
+            ExplorerMessage::KwicWindowLoaded {
+                request_id: RequestId(7),
+                pattern_id: PatternId(2),
+                page_request_id: 5,
+                window_start: 1,
+                result: Ok(ref rows),
+            } if rows.len() == 1 && rows[0].key == "k1"
         ));
     }
 }

@@ -1,8 +1,7 @@
-use std::sync::Arc;
+use std::path::PathBuf;
 
-use crate::tui::cache::{KwicLine, SurfaceEntry};
+use crate::tui::cache::{KwicLine, PagedResult, SurfaceEntry};
 use crate::tui::model::PlaygroundMatch;
-use crate::tui::paged_store::PagedStore;
 use crate::tui::types::{ErrorCode, PatternId, RequestId, Tab, TaskKind};
 use crate::tui::watcher::PatternFileChanged;
 use crossterm::event::{KeyEvent, MouseEvent};
@@ -12,6 +11,11 @@ pub(crate) enum ExplorerMessage {
     Ui(UiMsg),
 
     PatternFileChanged(PatternFileChanged),
+    PatternFileLoaded {
+        path: PathBuf,
+        reload_count: u64,
+        result: Result<String, String>,
+    },
 
     PatternProgress {
         request_id: RequestId,
@@ -34,7 +38,14 @@ pub(crate) enum ExplorerMessage {
     SurfaceFinished {
         request_id: RequestId,
         pattern_id: PatternId,
-        store: Arc<PagedStore<SurfaceEntry>>,
+        result: PagedResult<SurfaceEntry>,
+    },
+    SurfaceWindowLoaded {
+        request_id: RequestId,
+        pattern_id: PatternId,
+        page_request_id: u64,
+        window_start: usize,
+        result: Result<Vec<SurfaceEntry>, String>,
     },
     SurfaceFailed {
         request_id: RequestId,
@@ -46,7 +57,14 @@ pub(crate) enum ExplorerMessage {
     KwicFinished {
         request_id: RequestId,
         pattern_id: PatternId,
-        store: Arc<PagedStore<KwicLine>>,
+        result: PagedResult<KwicLine>,
+    },
+    KwicWindowLoaded {
+        request_id: RequestId,
+        pattern_id: PatternId,
+        page_request_id: u64,
+        window_start: usize,
+        result: Result<Vec<KwicLine>, String>,
     },
     KwicFailed {
         request_id: RequestId,

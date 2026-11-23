@@ -9,12 +9,24 @@ pub fn update(msg: ExplorerMessage, mut model: Model) -> (Model, Option<Command>
     match msg {
         ExplorerMessage::Ui(ui_msg) => handle_ui(ui_msg, model),
 
-        ExplorerMessage::PatternFileChanged(change) => {
-            let source = match lingrep_core::text_input::read_utf8_file(&change.path) {
+        ExplorerMessage::PatternFileChanged(change) => (
+            model,
+            Some(Command::ReloadPatternFile {
+                path: change.path,
+                reload_count: change.reload_count,
+            }),
+        ),
+
+        ExplorerMessage::PatternFileLoaded {
+            path,
+            reload_count,
+            result,
+        } => {
+            let source = match result {
                 Ok(source) => source,
                 Err(error) => {
                     model.mode = AppMode::Error {
-                        message: format!("failed to reload {}: {error}", change.path.display()),
+                        message: format!("failed to reload {}: {error}", path.display()),
                     };
                     return (model, None);
                 }
@@ -22,37 +34,9 @@ pub fn update(msg: ExplorerMessage, mut model: Model) -> (Model, Option<Command>
             model.pattern_draft = source;
             let pattern_count = model.pattern_names.len();
             model.reload_status = Some(format!(
-                "Reloaded patterns ({}) - #{}",
-                pattern_count, change.reload_count
+                "Reloaded patterns ({pattern_count}) - #{reload_count}"
             ));
-
-            let (model, cmd) = if model.pattern_draft.trim().is_empty() {
-                (model, None)
-            } else {
-                let pattern_text = model.pattern_draft.clone();
-                let request_id = model.next_request_id();
-
-                model.tasks.pattern.status = LoadStatus::Loading;
-                model.tasks.pattern.request_id = Some(request_id);
-                model.tasks.pattern.displayed_request_id = Some(request_id);
-                model.tasks.pattern.progress = Default::default();
-                model.tasks.surface.displayed_request_id = None;
-                model.tasks.kwic.displayed_request_id = None;
-                model
-                    .cache
-                    .frequencies
-                    .put(request_id, std::collections::HashMap::new());
-
-                (
-                    model,
-                    Some(Command::StartPattern {
-                        request_id,
-                        pattern_text,
-                    }),
-                )
-            };
-
-            (model, cmd)
+            start_pattern_scan(model)
         }
 
         ExplorerMessage::PatternProgress {
@@ -134,25 +118,43 @@ pub fn update(msg: ExplorerMessage, mut model: Model) -> (Model, Option<Command>
         ExplorerMessage::SurfaceFinished {
             request_id,
             pattern_id,
-            store,
+            result,
         } => {
             if model.tasks.surface.request_id != Some(request_id) {
                 return (model, None);
             }
-            match crate::tui::cache::PagedResult::new(store) {
-                Ok(result) => {
-                    model.tasks.surface.received_lines = result.len();
-                    model.cache.surface.put((request_id, pattern_id), result);
-                    model.scroll.surface.offset = 0;
-                    model.tasks.surface.status = LoadStatus::Complete;
-                    model.tasks.surface.displayed_request_id = Some(request_id);
-                    model.tasks.surface.request_id = None;
+            model.tasks.surface.received_lines = result.len();
+            model.cache.surface.put((request_id, pattern_id), result);
+            model.scroll.surface.offset = 0;
+            model.tasks.surface.page_request_id = None;
+            model.tasks.surface.status = LoadStatus::Complete;
+            model.tasks.surface.displayed_request_id = Some(request_id);
+            model.tasks.surface.request_id = None;
+            (model, None)
+        }
+
+        ExplorerMessage::SurfaceWindowLoaded {
+            request_id,
+            pattern_id,
+            page_request_id,
+            window_start,
+            result,
+        } => {
+            if model.tasks.surface.active_request_id() != Some(request_id)
+                || model.tasks.surface.page_request_id != Some(page_request_id)
+            {
+                return (model, None);
+            }
+            model.tasks.surface.page_request_id = None;
+            match result {
+                Ok(window) => {
+                    if let Some(entry) = model.cache.surface.get_mut(&(request_id, pattern_id)) {
+                        entry.install_window(window_start, window);
+                    }
                 }
                 Err(error) => {
-                    model.tasks.surface.status = LoadStatus::Failed;
-                    model.tasks.surface.request_id = None;
                     model.mode = AppMode::Error {
-                        message: error.to_string(),
+                        message: format!("failed to read result page: {error}"),
                     };
                 }
             }
@@ -169,6 +171,7 @@ pub fn update(msg: ExplorerMessage, mut model: Model) -> (Model, Option<Command>
                 return (model, None);
             }
             model.tasks.surface.request_id = None;
+            model.tasks.surface.page_request_id = None;
             if code == Some(ErrorCode::Cancelled) {
                 model.tasks.surface.status = LoadStatus::Idle;
                 model.tasks.surface.displayed_request_id = None;
@@ -184,26 +187,44 @@ pub fn update(msg: ExplorerMessage, mut model: Model) -> (Model, Option<Command>
         ExplorerMessage::KwicFinished {
             request_id,
             pattern_id,
-            store,
+            result,
         } => {
             if model.tasks.kwic.request_id != Some(request_id) {
                 return (model, None);
             }
-            match crate::tui::cache::PagedResult::new(store) {
-                Ok(result) => {
-                    model.tasks.kwic.received_lines = result.len();
-                    model.cache.kwic.put((request_id, pattern_id), result);
-                    model.scroll.context.offset = 0;
-                    model.selected_kwic_line = 0;
-                    model.tasks.kwic.status = LoadStatus::Complete;
-                    model.tasks.kwic.displayed_request_id = Some(request_id);
-                    model.tasks.kwic.request_id = None;
+            model.tasks.kwic.received_lines = result.len();
+            model.cache.kwic.put((request_id, pattern_id), result);
+            model.scroll.context.offset = 0;
+            model.selected_kwic_line = 0;
+            model.tasks.kwic.page_request_id = None;
+            model.tasks.kwic.status = LoadStatus::Complete;
+            model.tasks.kwic.displayed_request_id = Some(request_id);
+            model.tasks.kwic.request_id = None;
+            (model, None)
+        }
+
+        ExplorerMessage::KwicWindowLoaded {
+            request_id,
+            pattern_id,
+            page_request_id,
+            window_start,
+            result,
+        } => {
+            if model.tasks.kwic.active_request_id() != Some(request_id)
+                || model.tasks.kwic.page_request_id != Some(page_request_id)
+            {
+                return (model, None);
+            }
+            model.tasks.kwic.page_request_id = None;
+            match result {
+                Ok(window) => {
+                    if let Some(entry) = model.cache.kwic.get_mut(&(request_id, pattern_id)) {
+                        entry.install_window(window_start, window);
+                    }
                 }
                 Err(error) => {
-                    model.tasks.kwic.status = LoadStatus::Failed;
-                    model.tasks.kwic.request_id = None;
                     model.mode = AppMode::Error {
-                        message: error.to_string(),
+                        message: format!("failed to read result page: {error}"),
                     };
                 }
             }
@@ -220,6 +241,7 @@ pub fn update(msg: ExplorerMessage, mut model: Model) -> (Model, Option<Command>
                 return (model, None);
             }
             model.tasks.kwic.request_id = None;
+            model.tasks.kwic.page_request_id = None;
             if code == Some(ErrorCode::Cancelled) {
                 model.tasks.kwic.status = LoadStatus::Idle;
                 model.tasks.kwic.displayed_request_id = None;
@@ -281,34 +303,7 @@ fn handle_ui(msg: UiMsg, mut model: Model) -> (Model, Option<Command>) {
             (model, cmd)
         }
 
-        UiMsg::SubmitPattern => {
-            if model.pattern_draft.trim().is_empty() {
-                return (model, None);
-            }
-
-            let pattern_text = model.pattern_draft.clone();
-            let request_id = model.next_request_id();
-
-            model.tasks.pattern.status = LoadStatus::Loading;
-            model.tasks.pattern.request_id = Some(request_id);
-            model.tasks.pattern.displayed_request_id = Some(request_id);
-            model.tasks.pattern.progress = Default::default();
-            model.tasks.surface.displayed_request_id = None;
-            model.tasks.kwic.displayed_request_id = None;
-
-            model
-                .cache
-                .frequencies
-                .put(request_id, std::collections::HashMap::new());
-
-            (
-                model,
-                Some(Command::StartPattern {
-                    request_id,
-                    pattern_text,
-                }),
-            )
-        }
+        UiMsg::SubmitPattern => start_pattern_scan(model),
 
         UiMsg::Cancel(TaskKind::Pattern) => {
             let Some(active_id) = model.tasks.pattern.request_id else {
@@ -427,8 +422,8 @@ fn handle_ui(msg: UiMsg, mut model: Model) -> (Model, Option<Command>) {
             if matches!(model.mode, AppMode::Viewing { tab: Tab::Context }) {
                 model.selected_kwic_line = model.scroll.context.offset;
             }
-            model.ensure_visible_window();
-            (model, None)
+            let cmd = model.clamp_scroll_and_plan_window_load();
+            (model, cmd)
         }
 
         UiMsg::ScrollDown => {
@@ -438,8 +433,8 @@ fn handle_ui(msg: UiMsg, mut model: Model) -> (Model, Option<Command>) {
             if matches!(model.mode, AppMode::Viewing { tab: Tab::Context }) {
                 model.selected_kwic_line = model.scroll.context.offset;
             }
-            model.ensure_visible_window();
-            (model, None)
+            let cmd = model.clamp_scroll_and_plan_window_load();
+            (model, cmd)
         }
 
         UiMsg::PageUp => {
@@ -449,8 +444,8 @@ fn handle_ui(msg: UiMsg, mut model: Model) -> (Model, Option<Command>) {
             if matches!(model.mode, AppMode::Viewing { tab: Tab::Context }) {
                 model.selected_kwic_line = model.scroll.context.offset;
             }
-            model.ensure_visible_window();
-            (model, None)
+            let cmd = model.clamp_scroll_and_plan_window_load();
+            (model, cmd)
         }
 
         UiMsg::PageDown => {
@@ -460,8 +455,8 @@ fn handle_ui(msg: UiMsg, mut model: Model) -> (Model, Option<Command>) {
             if matches!(model.mode, AppMode::Viewing { tab: Tab::Context }) {
                 model.selected_kwic_line = model.scroll.context.offset;
             }
-            model.ensure_visible_window();
-            (model, None)
+            let cmd = model.clamp_scroll_and_plan_window_load();
+            (model, cmd)
         }
 
         UiMsg::ToggleSort => {
@@ -496,8 +491,8 @@ fn handle_ui(msg: UiMsg, mut model: Model) -> (Model, Option<Command>) {
             if matches!(model.mode, AppMode::Viewing { tab: Tab::Context }) {
                 model.selected_kwic_line = model.scroll.context.offset;
             }
-            model.ensure_visible_window();
-            (model, None)
+            let cmd = model.clamp_scroll_and_plan_window_load();
+            (model, cmd)
         }
 
         UiMsg::KeyPress(key) => {
@@ -568,6 +563,37 @@ fn handle_ui(msg: UiMsg, mut model: Model) -> (Model, Option<Command>) {
     }
 }
 
+fn start_pattern_scan(mut model: Model) -> (Model, Option<Command>) {
+    if model.pattern_draft.trim().is_empty() {
+        return (model, None);
+    }
+
+    let pattern_text = model.pattern_draft.clone();
+    let request_id = model.next_request_id();
+
+    model.tasks.pattern.status = LoadStatus::Loading;
+    model.tasks.pattern.request_id = Some(request_id);
+    model.tasks.pattern.displayed_request_id = Some(request_id);
+    model.tasks.pattern.progress = Default::default();
+    model.tasks.surface.displayed_request_id = None;
+    model.tasks.surface.page_request_id = None;
+    model.tasks.kwic.displayed_request_id = None;
+    model.tasks.kwic.page_request_id = None;
+
+    model
+        .cache
+        .frequencies
+        .put(request_id, std::collections::HashMap::new());
+
+    (
+        model,
+        Some(Command::StartPattern {
+            request_id,
+            pattern_text,
+        }),
+    )
+}
+
 fn start_surface_if_selected(mut model: Model) -> (Model, Option<Command>) {
     if let Some(pid) = model.selected_pattern
         && let Some(pattern_name) = model.pattern_ids.get(&pid).cloned()
@@ -580,6 +606,7 @@ fn start_surface_if_selected(mut model: Model) -> (Model, Option<Command>) {
         model.tasks.surface.displayed_request_id = Some(request_id);
         model.tasks.surface.pattern_id = Some(pid);
         model.tasks.surface.received_lines = 0;
+        model.tasks.surface.page_request_id = None;
         model.scroll.surface.offset = 0;
 
         return (
@@ -607,6 +634,7 @@ fn start_kwic_if_selected(mut model: Model) -> (Model, Option<Command>) {
         model.tasks.kwic.displayed_request_id = Some(request_id);
         model.tasks.kwic.pattern_id = Some(pid);
         model.tasks.kwic.received_lines = 0;
+        model.tasks.kwic.page_request_id = None;
         model.scroll.context.offset = 0;
         model.selected_kwic_line = 0;
 
@@ -636,6 +664,59 @@ mod tests {
         Model::new()
     }
 
+    fn run_window_command(model: Model, cmd: Option<Command>) -> Model {
+        match cmd {
+            Some(Command::LoadKwicWindow {
+                request_id,
+                pattern_id,
+                page_request_id,
+                store,
+                start,
+            }) => {
+                let result = store
+                    .read_window(start as u64, crate::tui::paged_store::DEFAULT_PAGE_ROWS)
+                    .map_err(|error| error.to_string());
+                let (model, next) = update(
+                    ExplorerMessage::KwicWindowLoaded {
+                        request_id,
+                        pattern_id,
+                        page_request_id,
+                        window_start: start,
+                        result,
+                    },
+                    model,
+                );
+                assert!(next.is_none());
+                model
+            }
+            Some(Command::LoadSurfaceWindow {
+                request_id,
+                pattern_id,
+                page_request_id,
+                store,
+                start,
+            }) => {
+                let result = store
+                    .read_window(start as u64, crate::tui::paged_store::DEFAULT_PAGE_ROWS)
+                    .map_err(|error| error.to_string());
+                let (model, next) = update(
+                    ExplorerMessage::SurfaceWindowLoaded {
+                        request_id,
+                        pattern_id,
+                        page_request_id,
+                        window_start: start,
+                        result,
+                    },
+                    model,
+                );
+                assert!(next.is_none());
+                model
+            }
+            None => model,
+            other => panic!("unexpected command: {other:?}"),
+        }
+    }
+
     fn paged_kwic_model(rows: usize, selected: usize) -> Model {
         let mut model = Model::new();
         let pattern = model.get_or_create_pattern_id("paged");
@@ -658,36 +739,94 @@ mod tests {
                     .collect::<Vec<_>>(),
             ),
         );
-        model.ensure_visible_window();
-        model
+        let cmd = model.clamp_scroll_and_plan_window_load();
+        run_window_command(model, cmd)
     }
 
     #[test]
     fn kwic_selection_crosses_windows_and_clamps_to_exact_ends() {
         let model = paged_kwic_model(300, 255);
-        let (model, _) = update(ExplorerMessage::Ui(UiMsg::ScrollDown), model);
+        let (model, cmd) = update(ExplorerMessage::Ui(UiMsg::ScrollDown), model);
         assert_eq!(model.selected_kwic_line, 256);
         assert_eq!(model.scroll.context.offset, 256);
+        assert!(matches!(
+            cmd,
+            Some(Command::LoadKwicWindow { start: 256, .. })
+        ));
+        let model = run_window_command(model, cmd);
         let view = crate::tui::model::derive_viewmodel(&model, 30);
         assert_eq!(view.kwic_window_start, 256);
         assert_eq!(view.selected_kwic_idx, Some(0));
         assert_eq!(view.kwic_lines[0].key, "key-256");
 
-        let (model, _) = update(ExplorerMessage::Ui(UiMsg::ScrollUp), model);
+        let (model, cmd) = update(ExplorerMessage::Ui(UiMsg::ScrollUp), model);
         assert_eq!(model.selected_kwic_line, 255);
         assert_eq!(model.scroll.context.offset, 255);
+        assert!(matches!(
+            cmd,
+            Some(Command::LoadKwicWindow { start: 255, .. })
+        ));
+        let model = run_window_command(model, cmd);
         let view = crate::tui::model::derive_viewmodel(&model, 30);
         assert_eq!(view.selected_kwic_idx, Some(0));
         assert_eq!(view.kwic_lines[0].key, "key-255");
 
         let model = paged_kwic_model(300, 299);
-        let (model, _) = update(ExplorerMessage::Ui(UiMsg::ScrollDown), model);
+        let (model, cmd) = update(ExplorerMessage::Ui(UiMsg::ScrollDown), model);
+        assert!(
+            cmd.is_none(),
+            "clamped scroll at already-loaded end emits no redundant I/O command"
+        );
         assert_eq!(model.selected_kwic_line, 299);
         assert_eq!(model.scroll.context.offset, 299);
         let view = crate::tui::model::derive_viewmodel(&model, 30);
         assert_eq!(view.kwic_lines.len(), 1);
         assert_eq!(view.selected_kwic_idx, Some(0));
         assert_eq!(view.kwic_lines[0].key, "key-299");
+    }
+
+    #[test]
+    fn stale_window_load_reply_is_ignored_after_newer_scroll() {
+        let model = paged_kwic_model(300, 10);
+        let (model, cmd1) = update(ExplorerMessage::Ui(UiMsg::ScrollDown), model);
+        let Some(Command::LoadKwicWindow {
+            request_id,
+            pattern_id,
+            page_request_id: stale_page_id,
+            ..
+        }) = cmd1
+        else {
+            panic!("expected first window command");
+        };
+        let (model, cmd2) = update(ExplorerMessage::Ui(UiMsg::ScrollDown), model);
+        assert!(matches!(
+            cmd2,
+            Some(Command::LoadKwicWindow { start: 12, .. })
+        ));
+
+        // Stale reply from first scroll must not overwrite window or clear pending page id.
+        let (model, _) = update(
+            ExplorerMessage::KwicWindowLoaded {
+                request_id,
+                pattern_id,
+                page_request_id: stale_page_id,
+                window_start: 11,
+                result: Ok(vec![KwicLine {
+                    pre: "stale".into(),
+                    key: "stale".into(),
+                    post: "stale".into(),
+                    match_start: 0,
+                    match_end: 1,
+                }]),
+            },
+            model,
+        );
+        assert!(model.tasks.kwic.page_request_id.is_some());
+        let model = run_window_command(model, cmd2);
+        assert!(model.tasks.kwic.page_request_id.is_none());
+        let view = crate::tui::model::derive_viewmodel(&model, 30);
+        assert_eq!(view.kwic_window_start, 12);
+        assert_eq!(view.kwic_lines[0].key, "key-12");
     }
 
     #[test]
@@ -708,7 +847,7 @@ mod tests {
             ExplorerMessage::SurfaceFinished {
                 request_id: RequestId(101),
                 pattern_id: pattern,
-                store: short_surface.store.clone(),
+                result: short_surface,
             },
             surface,
         );
@@ -736,7 +875,7 @@ mod tests {
             ExplorerMessage::KwicFinished {
                 request_id: RequestId(102),
                 pattern_id: pattern,
-                store: short_kwic.store.clone(),
+                result: short_kwic,
             },
             kwic,
         );
@@ -1273,26 +1412,57 @@ mod tests {
     }
 
     #[test]
-    fn pattern_file_change_reloads_the_changed_source_before_rescan() {
-        let directory = tempfile::tempdir().unwrap();
-        let path = directory.path().join("patterns.lx");
-        std::fs::write(&path, "new := [text=猫].").unwrap();
+    fn pattern_file_change_requests_async_reload_without_disk_io_and_reloads_on_reply() {
+        let path = std::path::PathBuf::from("/nonexistent/pure-elm/patterns.lx");
         let mut model = make_model();
         model.pattern_draft = "old := [text=犬].".into();
 
+        // Step 1: PatternFileChanged emits a ReloadPatternFile command purely without reading disk.
         let (model, command) = update(
             ExplorerMessage::PatternFileChanged(crate::tui::watcher::PatternFileChanged {
-                path,
+                path: path.clone(),
                 reload_count: 1,
             }),
             model,
         );
+        assert_eq!(model.pattern_draft, "old := [text=犬].");
+        assert!(matches!(
+            command,
+            Some(Command::ReloadPatternFile {
+                path: ref cmd_path,
+                reload_count: 1,
+            }) if cmd_path == &path
+        ));
 
+        // Step 2: PatternFileLoaded(Ok) updates draft and emits StartPattern.
+        let (model, command) = update(
+            ExplorerMessage::PatternFileLoaded {
+                path: path.clone(),
+                reload_count: 1,
+                result: Ok("new := [text=猫].".into()),
+            },
+            model,
+        );
         assert_eq!(model.pattern_draft, "new := [text=猫].");
         assert!(matches!(
             command,
             Some(Command::StartPattern { pattern_text, .. })
                 if pattern_text == "new := [text=猫]."
+        ));
+
+        // Step 3: PatternFileLoaded(Err) enters Error mode purely.
+        let (model, command) = update(
+            ExplorerMessage::PatternFileLoaded {
+                path,
+                reload_count: 2,
+                result: Err("permission denied".into()),
+            },
+            model,
+        );
+        assert!(command.is_none());
+        assert!(matches!(
+            model.mode,
+            AppMode::Error { ref message } if message.contains("permission denied")
         ));
     }
 
@@ -1326,7 +1496,7 @@ mod tests {
             ExplorerMessage::SurfaceFinished {
                 request_id: surface_req0,
                 pattern_id: alpha_pid,
-                store: old_surface.store.clone(),
+                result: old_surface,
             },
             model,
         );
@@ -1344,7 +1514,7 @@ mod tests {
             ExplorerMessage::KwicFinished {
                 request_id: kwic_req0,
                 pattern_id: alpha_pid,
-                store: old_kwic.store.clone(),
+                result: old_kwic,
             },
             model,
         );
@@ -1392,7 +1562,7 @@ mod tests {
             ExplorerMessage::SurfaceFinished {
                 request_id: surface_req1,
                 pattern_id: alpha_pid,
-                store: new_surface.store.clone(),
+                result: new_surface,
             },
             model,
         );
@@ -1421,7 +1591,7 @@ mod tests {
             ExplorerMessage::KwicFinished {
                 request_id: kwic_req1,
                 pattern_id: alpha_pid,
-                store: new_kwic.store.clone(),
+                result: new_kwic,
             },
             model,
         );

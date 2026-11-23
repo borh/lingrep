@@ -7,14 +7,14 @@ use crossbeam_channel::Sender;
 use lingrep_core::execution::{
     CancellationFlag, ExecutionError, MatchSink, RunOutcome, SentenceLocation, SinkControl,
 };
-use lingrep_core::fsm::{CompiledCatalog, Match};
+use lingrep_core::fsm::Match;
 use lingrep_core::spill::{SortedRunCounts, SpillPolicy};
 use serde::{Deserialize, Serialize};
 
 use super::TaskHandle;
 use crate::direct_source::matched_surface;
 use crate::interactive_execution::InteractiveExecution;
-use crate::tui::cache::SurfaceEntry;
+use crate::tui::cache::{PagedResult, SurfaceEntry};
 use crate::tui::message::ExplorerMessage;
 use crate::tui::paged_store::{PagedStore, PagedStoreWriter};
 use crate::tui::types::{PatternId, RequestId};
@@ -23,7 +23,7 @@ pub(crate) struct SurfaceWorker {
     request_id: RequestId,
     pattern_id: PatternId,
     pattern_name: String,
-    matcher: Arc<CompiledCatalog>,
+    pattern_text: String,
     execution: Arc<InteractiveExecution>,
     cancel: CancellationFlag,
 }
@@ -33,7 +33,7 @@ impl SurfaceWorker {
         request_id: RequestId,
         pattern_id: PatternId,
         pattern_name: String,
-        matcher: Arc<CompiledCatalog>,
+        pattern_text: String,
         execution: Arc<InteractiveExecution>,
         tx: Sender<ExplorerMessage>,
     ) -> TaskHandle {
@@ -42,7 +42,7 @@ impl SurfaceWorker {
                 request_id,
                 pattern_id,
                 pattern_name,
-                matcher,
+                pattern_text,
                 execution,
                 cancel,
             }
@@ -51,6 +51,18 @@ impl SurfaceWorker {
     }
 
     pub(crate) fn run(self, tx: Sender<ExplorerMessage>) {
+        let matcher = match crate::tui::compile_catalog_source("tui.lx", &self.pattern_text) {
+            Ok(matcher) => matcher,
+            Err(error) => {
+                let _ = tx.send(ExplorerMessage::SurfaceFailed {
+                    request_id: self.request_id,
+                    pattern_id: self.pattern_id,
+                    code: Some(ErrorCode::PatternError),
+                    error,
+                });
+                return;
+            }
+        };
         let budget = self.execution.temp_budget();
         let mut sink = match SurfaceSink::new(self.pattern_name, budget.clone()) {
             Ok(sink) => sink,
@@ -59,23 +71,22 @@ impl SurfaceWorker {
                 return;
             }
         };
-        let result = self.execution.execute(
-            &self.matcher,
-            &self.cancel,
-            &mut sink,
-            &mut |_progress, _| {},
-        );
+        let result =
+            self.execution
+                .execute(&matcher, &self.cancel, &mut sink, &mut |_progress, _| {});
         match result {
-            Ok(RunOutcome::Completed(_)) => match sink.finish(budget) {
-                Ok(store) => {
-                    let _ = tx.send(ExplorerMessage::SurfaceFinished {
-                        request_id: self.request_id,
-                        pattern_id: self.pattern_id,
-                        store,
-                    });
+            Ok(RunOutcome::Completed(_)) => {
+                match sink.finish(budget).and_then(PagedResult::load_initial) {
+                    Ok(result) => {
+                        let _ = tx.send(ExplorerMessage::SurfaceFinished {
+                            request_id: self.request_id,
+                            pattern_id: self.pattern_id,
+                            result,
+                        });
+                    }
+                    Err(error) => send_failure(&tx, self.request_id, self.pattern_id, error),
                 }
-                Err(error) => send_failure(&tx, self.request_id, self.pattern_id, error),
-            },
+            }
             Ok(RunOutcome::Cancelled(_)) => {
                 let _ = tx.send(ExplorerMessage::SurfaceFailed {
                     request_id: self.request_id,
@@ -324,10 +335,7 @@ mod tests {
             request_id: RequestId(9),
             pattern_id: PatternId(4),
             pattern_name: "p".into(),
-            matcher: Arc::new(
-                crate::tui::compile_catalog_source("surface.lx", "p := [text=猫].")
-                    .expect("compile fixture"),
-            ),
+            pattern_text: "p := [text=猫].".into(),
             execution,
             cancel: CancellationFlag::new(),
         };
