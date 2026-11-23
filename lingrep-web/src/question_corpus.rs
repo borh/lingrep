@@ -566,58 +566,74 @@ async fn collect_distribution(
     Ok((values, None))
 }
 
-enum MetadataScanFailure {
-    Corrupt,
-    Invalid(&'static str),
+/// A corpus's summary, or the display limit its metadata exceeds.
+pub(crate) type MetadataSummaryOutcome = Result<Arc<CachedMetadataSummary>, &'static str>;
+
+fn unreadable_metadata(message: &str) -> lingrep_corpus::CorpusError {
+    lingrep_corpus::CorpusError::InvalidFormat {
+        component: "provenance.sqlite",
+        message: message.to_owned(),
+    }
 }
 
+/// Holds a reading permit for the scan only, so a request waiting on another
+/// request's scan holds none.
 async fn load_metadata_summary(
+    store: &RequestStore,
     ready: &ReadyCorpus,
+    provenance: Arc<lingrep_corpus::ProvenanceView>,
+) -> Result<MetadataSummaryOutcome, lingrep_corpus::CorpusError> {
+    let coordinators = Arc::clone(&store.coordinators);
+    crate::corpus_context::detached_memo(
+        ready.metadata_summary_cache(),
+        Arc::clone(&ready.artifact),
+        Arc::ptr_eq,
+        move || async move {
+            let _permit = coordinators.acquire_reading_permit().await;
+            scan_metadata_summary(&provenance).await
+        },
+    )
+    .await
+}
+
+async fn scan_metadata_summary(
     provenance: &lingrep_corpus::ProvenanceView,
-) -> Result<Arc<CachedMetadataSummary>, MetadataScanFailure> {
-    let cache = ready.metadata_summary_cache();
-    let mut guard = cache.lock().await;
-    if let Some((cached_artifact, summary)) = guard.as_ref()
-        && Arc::ptr_eq(cached_artifact, &ready.artifact)
-    {
-        return Ok(Arc::clone(summary));
-    }
+) -> Result<MetadataSummaryOutcome, lingrep_corpus::CorpusError> {
     let mut summary = MetadataSummary::default();
     let mut cursor = 0u64;
     loop {
         let before = cursor;
-        let page = provenance
-            .document_metadata_page(cursor)
-            .await
-            .map_err(|_| MetadataScanFailure::Corrupt)?;
+        let page = provenance.document_metadata_page(cursor).await?;
         let Some(last) = page.last() else {
             break;
         };
         cursor = last.first_sentence.saturating_add(last.sentence_count);
         let (updated, status) = tokio::task::spawn_blocking(move || {
             for row in page {
-                let value = match serde_json::from_str(row.metadata_json.as_deref().unwrap_or("{}"))
-                {
-                    Ok(value) => value,
-                    Err(_) => return (summary, Err(MetadataScanFailure::Corrupt)),
+                let Ok(value) = serde_json::from_str(row.metadata_json.as_deref().unwrap_or("{}"))
+                else {
+                    return (
+                        summary,
+                        Err(unreadable_metadata("document metadata is not JSON")),
+                    );
                 };
                 if let Err(message) = summary.observe_document(value) {
-                    return (summary, Err(MetadataScanFailure::Invalid(message)));
+                    return (summary, Ok(Err(message)));
                 }
             }
-            (summary, Ok(()))
+            (summary, Ok(Ok(())))
         })
         .await
-        .map_err(|_| MetadataScanFailure::Corrupt)?;
-        status?;
+        .map_err(|_| unreadable_metadata("the metadata scan stopped"))?;
+        if let Err(message) = status? {
+            return Ok(Err(message));
+        }
         summary = updated;
         if cursor <= before {
-            return Err(MetadataScanFailure::Corrupt);
+            return Err(unreadable_metadata("the document cursor did not advance"));
         }
     }
-    let cached = Arc::new(summary.into_cached());
-    *guard = Some((Arc::clone(&ready.artifact), Arc::clone(&cached)));
-    Ok(cached)
+    Ok(Ok(Arc::new(summary.into_cached())))
 }
 
 async fn metadata(
@@ -635,17 +651,14 @@ async fn metadata(
         Ok(value) => value,
         Err((status, message)) => return error(status, message),
     };
-    let permit = store.coordinators.acquire_reading_permit().await;
     let provenance = match ready.provenance().await {
         Ok(view) => view,
         Err(_) => return corrupt(&runtime, &ready).await,
     };
-    let cached = match load_metadata_summary(&ready, &provenance).await {
-        Ok(summary) => summary,
-        Err(MetadataScanFailure::Corrupt) => return corrupt(&runtime, &ready).await,
-        Err(MetadataScanFailure::Invalid(message)) => {
-            return error(StatusCode::UNPROCESSABLE_ENTITY, message);
-        }
+    let cached = match load_metadata_summary(&store, &ready, Arc::clone(&provenance)).await {
+        Ok(Ok(summary)) => summary,
+        Ok(Err(message)) => return error(StatusCode::UNPROCESSABLE_ENTITY, message),
+        Err(_) => return corrupt(&runtime, &ready).await,
     };
     if let Some(field) = query.field.as_deref()
         && cached.oversized_fields.contains(field)
@@ -662,6 +675,7 @@ async fn metadata(
         next: None,
     };
     if let Some(field) = query.field.as_deref() {
+        let _permit = store.coordinators.acquire_reading_permit().await;
         match collect_distribution(
             provenance.document_metadata_distribution(field),
             &query,
@@ -694,7 +708,6 @@ async fn metadata(
             }
         }
     }
-    drop(permit);
     Json(result).into_response()
 }
 
@@ -1343,13 +1356,24 @@ mod tests {
         assert_eq!(body["error"], "The corpus is not ready. Try again shortly.");
     }
 
-    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-    async fn metadata_summary_memoizes_per_artifact_and_enforces_per_field_oversized_limit() {
+    fn string_metadata(key: &str, value: String) -> (String, lingrep_core::corpus::MetadataValue) {
+        use lingrep_core::corpus::{MetadataScalar, MetadataValue};
+        (
+            key.to_owned(),
+            MetadataValue::Scalar(MetadataScalar::String(value)),
+        )
+    }
+
+    /// A ready one-document corpus carrying `metadata`, with the store that
+    /// serves it. The directory holds the artifact.
+    async fn metadata_corpus(
+        metadata: Vec<(String, lingrep_core::corpus::MetadataValue)>,
+    ) -> (tempfile::TempDir, RequestStore, ReadyCorpus) {
         use std::path::PathBuf;
 
         use lingrep_core::corpus::{
             AdmittedCorpusEvent, AdmittedSentence, DiscoveryReport, DocumentId, InventoryStats,
-            MetadataScalar, MetadataValue, SourceDocument, TraversalHighWater, TraversalLimits,
+            SourceDocument, TraversalHighWater, TraversalLimits,
         };
         use lingrep_core::spill::TempBudget;
         use lingrep_core::token_match::TokenInfo;
@@ -1397,19 +1421,7 @@ mod tests {
             .push_corpus_event(&AdmittedCorpusEvent::DocumentStart {
                 id: DocumentId::new(0),
                 source_name: logical.clone(),
-                metadata: vec![
-                    (
-                        "author".into(),
-                        MetadataValue::Scalar(MetadataScalar::String("夏目漱石".into())),
-                    ),
-                    (
-                        "huge".into(),
-                        MetadataValue::Scalar(MetadataScalar::String(
-                            "x".repeat(MAX_VALUE_BYTES + 1),
-                        )),
-                    ),
-                ]
-                .into_boxed_slice(),
+                metadata: metadata.into_boxed_slice(),
             })
             .unwrap();
         let loc = builder
@@ -1457,7 +1469,33 @@ mod tests {
             Arc::clone(&store.context),
         ));
         let ready = runtime.ready().await.unwrap();
-        let app = routes().with_state(RequestStore::with_runtime(store.config.clone(), runtime));
+        let store = RequestStore::with_runtime(store.config.clone(), runtime);
+        (directory, store, ready)
+    }
+
+    async fn every_reading_permit(store: &RequestStore) -> Vec<tokio::sync::OwnedSemaphorePermit> {
+        let mut permits = Vec::new();
+        for _ in 0..crate::coordinator::READING_CONCURRENCY {
+            permits.push(store.coordinators.acquire_reading_permit().await);
+        }
+        permits
+    }
+
+    fn metadata_request(field: &str) -> axum::http::Request<axum::body::Body> {
+        axum::http::Request::builder()
+            .uri(format!("/data/default/metadata?field={field}"))
+            .body(axum::body::Body::empty())
+            .unwrap()
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn metadata_summary_memoizes_per_artifact_and_enforces_per_field_oversized_limit() {
+        let (_directory, store, ready) = metadata_corpus(vec![
+            string_metadata("author", "夏目漱石".into()),
+            string_metadata("huge", "x".repeat(MAX_VALUE_BYTES + 1)),
+        ])
+        .await;
+        let app = routes().with_state(store);
 
         // First call populates cache; querying `author` succeeds even though `huge` has >4 KiB value.
         let r1 = app
@@ -1474,7 +1512,14 @@ mod tests {
         let b1 = r1.into_body().collect().await.unwrap().to_bytes();
         let cached_ptr = {
             let guard = ready.metadata_summary_cache().lock().await;
-            Arc::clone(&guard.as_ref().expect("summary must be cached").1)
+            Arc::clone(
+                guard
+                    .as_ref()
+                    .expect("summary must be cached")
+                    .1
+                    .as_ref()
+                    .expect("the summary is within the display limits"),
+            )
         };
 
         // Second call reuses the exact same cached Arc and returns identical bytes.
@@ -1493,7 +1538,10 @@ mod tests {
         assert_eq!(b1, b2);
         {
             let guard = ready.metadata_summary_cache().lock().await;
-            assert!(Arc::ptr_eq(&cached_ptr, &guard.as_ref().unwrap().1));
+            assert!(Arc::ptr_eq(
+                &cached_ptr,
+                guard.as_ref().unwrap().1.as_ref().unwrap()
+            ));
         }
 
         // Querying the oversized field still returns 422 from the cached oversized_fields set.
@@ -1507,5 +1555,94 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(r3.status(), StatusCode::UNPROCESSABLE_ENTITY);
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn a_corpus_over_the_field_limit_is_scanned_once() {
+        let (_directory, store, ready) = metadata_corpus(
+            (0..=MAX_FIELDS)
+                .map(|field| string_metadata(&format!("field{field}"), "x".into()))
+                .collect(),
+        )
+        .await;
+        let app = routes().with_state(store);
+        for _ in 0..2 {
+            let response = app
+                .clone()
+                .oneshot(metadata_request("field0"))
+                .await
+                .unwrap();
+            assert_eq!(response.status(), StatusCode::UNPROCESSABLE_ENTITY);
+            let body: Value =
+                serde_json::from_slice(&response.into_body().collect().await.unwrap().to_bytes())
+                    .unwrap();
+            assert_eq!(
+                body["error"],
+                "This corpus has too many metadata fields to display."
+            );
+        }
+        let guard = ready.metadata_summary_cache().lock().await;
+        let (artifact, outcome) = guard.as_ref().expect("the outcome is cached");
+        assert!(Arc::ptr_eq(artifact, &ready.artifact));
+        assert_eq!(
+            outcome.as_ref().err(),
+            Some(&"This corpus has too many metadata fields to display.")
+        );
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn a_request_waiting_on_another_requests_summary_holds_no_reading_permit() {
+        let (_directory, store, ready) =
+            metadata_corpus(vec![string_metadata("author", "夏目漱石".into())]).await;
+        let app = routes().with_state(store.clone());
+        let scanning = ready.metadata_summary_cache().lock().await;
+        let waiting = tokio::spawn(app.oneshot(metadata_request("author")));
+        tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+        assert!(!waiting.is_finished());
+        let permits = tokio::time::timeout(
+            std::time::Duration::from_secs(5),
+            every_reading_permit(&store),
+        )
+        .await
+        .expect("every reading permit is free while the request waits");
+        drop(permits);
+        drop(scanning);
+        assert_eq!(waiting.await.unwrap().unwrap().status(), StatusCode::OK);
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn a_summary_scan_whose_request_is_cancelled_finishes_and_is_cached() {
+        let (_directory, store, ready) =
+            metadata_corpus(vec![string_metadata("author", "夏目漱石".into())]).await;
+        let app = routes().with_state(store.clone());
+        // With every reading permit taken, the scan starts and stops at its
+        // own permit while it holds the memo. A request only reading the memo
+        // releases it at once, so a memo held across the pause is the scan's.
+        let permits = every_reading_permit(&store).await;
+        let request = tokio::spawn(app.clone().oneshot(metadata_request("author")));
+        let cache = ready.metadata_summary_cache();
+        let pause = std::time::Duration::from_millis(50);
+        tokio::time::timeout(std::time::Duration::from_secs(10), async {
+            loop {
+                if cache.try_lock().is_err() {
+                    tokio::time::sleep(pause).await;
+                    if cache.try_lock().is_err() {
+                        break;
+                    }
+                }
+                tokio::task::yield_now().await;
+            }
+        })
+        .await
+        .expect("the scan starts");
+        request.abort();
+        assert!(request.await.expect_err("aborted request").is_cancelled());
+        drop(permits);
+        assert!(
+            cache.lock().await.is_some(),
+            "the scan the cancelled request started is cached"
+        );
+        let response = app.oneshot(metadata_request("author")).await.unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
     }
 }

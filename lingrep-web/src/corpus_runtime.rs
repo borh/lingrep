@@ -173,7 +173,7 @@ impl ProvenanceCache {
 
 pub(crate) type MetadataSummaryMemo = crate::corpus_context::Memo<
     Arc<CorpusArtifact>,
-    Arc<crate::question_corpus::CachedMetadataSummary>,
+    crate::question_corpus::MetadataSummaryOutcome,
 >;
 
 #[derive(Clone)]
