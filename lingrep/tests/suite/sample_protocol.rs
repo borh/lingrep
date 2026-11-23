@@ -402,6 +402,7 @@ fn retained_matches_preserve_exact_counts_and_full_record_evidence() {
             .cloned()
             .collect::<Vec<_>>()
     };
+    let full_evidence = evidence(&full);
     let complete =
         |events: &[Value]| events.iter().find(|v| v["type"] == "complete").unwrap()["data"].clone();
     for capacity in ["1", "20", "2000"] {
@@ -415,12 +416,12 @@ fn retained_matches_preserve_exact_counts_and_full_record_evidence() {
             end["counters"]["matches_found"],
             complete(&full)["counters"]["matches_found"]
         );
-        assert_eq!(end["retained_matches"]["seen"], evidence(&full).len());
+        assert_eq!(end["retained_matches"]["seen"], full_evidence.len());
         assert_eq!(end["retained_matches"]["retained"], rows.len());
         assert_eq!(end["counters"]["records_emitted"], rows.len());
         assert_eq!(rows.len(), capacity.parse::<usize>().unwrap().min(1000));
         for row in &rows {
-            assert!(evidence(&full).contains(row));
+            assert!(full_evidence.contains(row));
         }
         if capacity == "20" {
             assert!(

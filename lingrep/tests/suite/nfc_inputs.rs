@@ -80,7 +80,8 @@ fn an_nfd_literal_matches_as_its_nfc_form_and_the_run_names_it() {
     for (operator, catalog) in catalogs.iter().enumerate() {
         let nfc = write(directory.path(), "nfc", "g.lx", &catalog(GLASS_NFC));
         let nfd = write(directory.path(), "nfd", "g.lx", &catalog(GLASS_NFD));
-        let expected = events(&matches(&nfc, &corpus), "match");
+        let nfc_output = matches(&nfc, &corpus);
+        let expected = events(&nfc_output, "match");
         assert_eq!(expected.len(), 1, "{operator}");
         let output = matches(&nfd, &corpus);
         assert_eq!(events(&output, "match"), expected, "{operator}");
@@ -94,9 +95,7 @@ fn an_nfd_literal_matches_as_its_nfc_form_and_the_run_names_it() {
             message.contains("`g`") && message.contains(GLASS_NFD) && message.contains(GLASS_NFC),
             "{message}"
         );
-        assert!(
-            !String::from_utf8_lossy(&matches(&nfc, &corpus).stderr).contains("literal_normalized")
-        );
+        assert!(!String::from_utf8_lossy(&nfc_output.stderr).contains("literal_normalized"));
     }
 }
 

@@ -15,6 +15,7 @@
 use std::io::{Read, pipe};
 use std::process::Stdio;
 
+use lingrep_core::testing::MiniDictionary;
 use tempfile::TempDir;
 
 use crate::support::{assert_success, dict_path, fixture, lingrep, lingrep_std, parse_jsonl};
@@ -373,6 +374,7 @@ fn both_contracts_are_discoverable_from_the_cli() {
 
 #[test]
 fn scope_counts_equal_summarize_counters_for_the_same_clause() {
+    let dictionary = MiniDictionary::new();
     let directory = TempDir::new().unwrap();
     let root = directory.path().join("corpus");
     std::fs::create_dir(&root).unwrap();
@@ -398,7 +400,7 @@ fn scope_counts_equal_summarize_counters_for_the_same_clause() {
     assert_success(
         &lingrep()
             .args(["corpus", "build", "--dict-path"])
-            .arg(dict_path())
+            .arg(dictionary.path())
             .arg("--output")
             .arg(&artifact)
             .arg(&root)
@@ -415,7 +417,7 @@ fn scope_counts_equal_summarize_counters_for_the_same_clause() {
         if prepared {
             command.arg("--corpus").arg(&artifact);
         } else {
-            command.arg("--dict-path").arg(dict_path()).arg(&root);
+            command.arg("--dict-path").arg(dictionary.path()).arg(&root);
         }
         let output = command.output().unwrap();
         assert_success(&output);

@@ -76,7 +76,8 @@ fn a_folded_text_literal_finds_the_plain_spellings_records_and_the_run_names_it(
         };
         let plain_catalog = catalog("plain.lx", plain);
         let written_catalog = catalog("written.lx", written);
-        let expected = events(&run("matches", &plain_catalog, &corpus, "plain"), "match");
+        let plain_output = run("matches", &plain_catalog, &corpus, "plain");
+        let expected = events(&plain_output, "match");
         assert_eq!(expected.len(), 1, "{plain}");
         let output = run("matches", &written_catalog, &corpus, "plain");
         assert_eq!(events(&output, "match"), expected, "{written}");
@@ -89,13 +90,7 @@ fn a_folded_text_literal_finds_the_plain_spellings_records_and_the_run_names_it(
             "{}",
             messages[0]
         );
-        assert!(
-            notices(
-                &run("matches", &plain_catalog, &corpus, "plain"),
-                "literal_folded"
-            )
-            .is_empty()
-        );
+        assert!(notices(&plain_output, "literal_folded").is_empty());
 
         let summary = run("summarize", &written_catalog, &corpus, "plain");
         let expected = events(
