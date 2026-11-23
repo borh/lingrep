@@ -1,42 +1,22 @@
 :root {
   --pattern-font-mono: ui-monospace, SFMono-Regular, Consolas, "Noto Sans Mono CJK JP", "Hiragino Kaku Gothic ProN", monospace;
-  --pattern-caret: #111827;
-  --pattern-selection: rgb(37 99 235 / 25%);
-  --pattern-mirror-border: #9ca3af;
-  --pattern-mirror-text: #1f2937;
-  --pattern-status-text: #4b5563;
-  --pattern-tooltip-bg: #ffffff;
-  --pattern-focus: #4b6cb7;
-  --pattern-lint-error: #c00;
-  --pattern-keyword: #7c3aed;
-  --pattern-comment: #566377;
-  --pattern-string: #047857;
-  --pattern-property: #0369a1;
-  --pattern-definition: #9d174d;
-  --pattern-variable: #1d4ed8;
-  --pattern-punctuation: #475569;
+  --pattern-caret: light-dark(#111827, #e6e6e6);
+  --pattern-selection: light-dark(rgb(37 99 235 / 25%), rgb(96 165 250 / 35%));
+  --pattern-mirror-border: light-dark(#9ca3af, #4b5563);
+  --pattern-mirror-text: light-dark(#1f2937, #d1d5db);
+  --pattern-status-text: light-dark(#4b5563, #9aa0a6);
+  --pattern-tooltip-bg: light-dark(#ffffff, #23252b);
+  --pattern-focus: light-dark(#4b6cb7, #8ab4f8);
+  --pattern-lint-error: light-dark(#c00, #ff9aa2);
+  --pattern-keyword: light-dark(#7c3aed, #c4b5fd);
+  --pattern-comment: light-dark(#566377, #94a3b8);
+  --pattern-string: light-dark(#047857, #6ee7b7);
+  --pattern-property: light-dark(#0369a1, #7dd3fc);
+  --pattern-definition: light-dark(#9d174d, #f9a8d4);
+  --pattern-variable: light-dark(#1d4ed8, #93c5fd);
+  --pattern-punctuation: light-dark(#475569, #9ca3af);
 }
 
-@media (prefers-color-scheme: dark) {
-  :root {
-    --pattern-caret: #e6e6e6;
-    --pattern-selection: rgb(96 165 250 / 35%);
-    --pattern-mirror-border: #4b5563;
-    --pattern-mirror-text: #d1d5db;
-    --pattern-status-text: #9aa0a6;
-    --pattern-tooltip-bg: #23252b;
-    --pattern-focus: #8ab4f8;
-    --pattern-lint-error: #ff9aa2;
-    --pattern-keyword: #c4b5fd;
-    --pattern-comment: #94a3b8;
-    --pattern-string: #6ee7b7;
-    --pattern-property: #7dd3fc;
-    --pattern-definition: #f9a8d4;
-    --pattern-variable: #93c5fd;
-    --pattern-punctuation: #9ca3af;
-  }
-  .pattern-diagnostic-excerpt, .lx-diagnostic-excerpt { background: #3a2a12; color: #fbbf24; }
-}
 
 .pattern-editor {
   display: grid;
@@ -80,7 +60,7 @@
    references, depth 5, 547 NFA states."); keep it from crowding the editor on
    a narrow viewport. */
 .pattern-editor-status { color: var(--pattern-status-text); font-size: 0.8rem; margin: 0.35rem 0 0; overflow-wrap: anywhere; }
-.pattern-diagnostic-excerpt, .lx-diagnostic-excerpt { margin: .25rem 0; padding: .4rem; background: #fff7ed; color: #9a3412; white-space: pre-wrap; }
+.pattern-diagnostic-excerpt, .lx-diagnostic-excerpt { margin: .25rem 0; padding: .4rem; background: light-dark(#fff7ed, #3a2a12); color: light-dark(#9a3412, #fbbf24); white-space: pre-wrap; }
 .pattern-diagnostic-excerpt:empty, .lx-diagnostic-excerpt:empty { display: none; }
 .pattern-diagnostic-excerpt code, .pattern-diagnostic-caret, .lx-diagnostic-excerpt code, .lx-diagnostic-caret { display: block; font: inherit; white-space: pre-wrap; overflow-wrap: anywhere; }
 

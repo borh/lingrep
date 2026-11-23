@@ -94,7 +94,10 @@ async fn export_links_display_rejections_and_save_without_extra_tabs() -> WebDri
             get(|| async {
                 (
                     [(header::CONTENT_TYPE, "text/css")],
-                    include_str!("../../assets/app.css"),
+                    concat!(
+                        include_str!("../../question-ui/site.css"),
+                        include_str!("../../assets/app.css")
+                    ),
                 )
             }),
         );

@@ -768,7 +768,7 @@ mod tests {
             .expect("the controls row closes")
             .0;
         assert!(!controls.contains("data-editor-help-open"));
-        let nav = html.split_once("</nav>").expect("the header closes").0;
+        let nav = html.split_once("</header>").expect("the header closes").0;
         assert!(nav.contains("data-editor-help-open"));
         assert!(nav.contains("href=\"help\""));
         assert_eq!(html.matches("data-editor-help-open").count(), 1);

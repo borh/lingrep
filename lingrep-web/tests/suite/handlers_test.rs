@@ -82,7 +82,7 @@ mod handlers_test {
         assert!(html.contains(r#"<script type="module" src="assets/editor/pattern-editor.js">"#));
         assert_eq!(html.matches(r#"aria-current="page""#).count(), 1);
         let corpus_marker = html
-            .split_once(">Analysis tools</span></a>")
+            .split_once(">Analysis tools</a>")
             .expect("Analysis tools nav link present")
             .0;
         assert!(
@@ -195,7 +195,7 @@ mod handlers_test {
         let html = String::from_utf8(body.to_vec()).unwrap();
         assert_eq!(html.matches(r#"aria-current="page""#).count(), 1);
         let marker = html
-            .split_once(">Sample debugger</span></a>")
+            .split_once(">Sample debugger</a>")
             .expect("Sample debugger nav link present")
             .0;
         assert!(
@@ -462,12 +462,12 @@ mod handlers_test {
             assert_eq!(html.matches("aria-current=\"page\"").count(), 1, "{path}");
             assert!(!html.contains("github.com/anomalyco/lingrep#pattern-syntax"));
             if path == "/workbench" {
-                assert!(html.contains(">Analysis tools</span></a>"));
+                assert!(html.contains(">Analysis tools</a>"));
                 continue;
             }
 
             if path == "/sample" {
-                assert!(html.contains(">Sample debugger</span></a>"));
+                assert!(html.contains(">Sample debugger</a>"));
                 continue;
             }
 
@@ -485,7 +485,7 @@ mod handlers_test {
                 assert!(html.contains(title), "missing help example: {title}");
             }
             let help_marker = html
-                .split_once(">Help</span></a>")
+                .split_once(">Help</a>")
                 .expect("Help nav link present")
                 .0;
             assert!(
@@ -513,6 +513,8 @@ mod handlers_test {
         // count too, because an inline `style` attribute is a legitimate place
         // to set one — `--constellation-depth` is set per node that way.
         let mut defined = definitions(css);
+        // Every page that loads app.css loads the shared tokens first.
+        defined.extend(definitions(include_str!("../../question-ui/site.css")));
         let templates = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("templates");
         for path in template_sources(&templates) {
             let source = std::fs::read_to_string(&path)

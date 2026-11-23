@@ -38,23 +38,42 @@ pub(crate) fn page(seed: Value, frequency_view: bool) -> Html<String> {
     )
 }
 
-/// The header's route links, shared by the question page and the
-/// Frequencies and Compare pages, with `current` (`question`, `frequencies`
-/// or `compare`) marked as the current page. Frequencies and Compare are
-/// offered only when a count table is served.
+/// The header's route links, the same on every page, with `current` marked
+/// as the current page. Frequencies and Compare are offered only when a
+/// count table is served, and Similar Words only with word vectors.
+///
+/// The Sample debugger opens in a new tab from every page but its own, so
+/// that following the link keeps the page's unsaved state.
 pub(crate) fn site_routes(current: &str, frequency_view: bool) -> String {
-    let link = |href: &str, page: &str, question_key: &str, key: &str, label: &str| {
+    let link = |href: &str, page: &str, question_key: &str, key: &str, label: &str, extra: &str| {
         let marked = if page == current {
             r#" aria-current="page""#
         } else {
             ""
         };
-        format!(r#"<a href="{href}"{marked} data-t="{question_key}" data-i18n="{key}">{label}</a>"#)
+        format!(
+            r#"<a href="{href}"{extra}{marked} data-t="{question_key}" data-i18n="{key}">{label}</a>"#
+        )
     };
     let mut routes = String::from(
         r#"<nav class="routes" aria-label="lingrep"><a class="brand" href="./">lingrep</a>"#,
     );
-    routes += &link("./", "question", "questionNav", "nav.question", "Question");
+    routes += &link(
+        "./",
+        "question",
+        "questionNav",
+        "nav.question",
+        "Question",
+        "",
+    );
+    routes += &link(
+        "workbench",
+        "corpus",
+        "incumbentNav",
+        "nav.workbench",
+        "Analysis tools",
+        "",
+    );
     if frequency_view {
         routes += &link(
             "frequencies",
@@ -62,18 +81,54 @@ pub(crate) fn site_routes(current: &str, frequency_view: bool) -> String {
             "frequencyNav",
             "nav.frequencies",
             "Frequencies",
+            "",
         );
-        routes += &link("compare", "compare", "compareNav", "nav.compare", "Compare");
+        routes += &link(
+            "compare",
+            "compare",
+            "compareNav",
+            "nav.compare",
+            "Compare",
+            "",
+        );
     }
+    if crate::patterns::has_word_vectors() {
+        routes += &link(
+            "neighbors",
+            "neighbors",
+            "neighborsNav",
+            "nav.neighbors",
+            "Similar Words",
+            "",
+        );
+    }
+    let new_tab = if current == "sample" {
+        ""
+    } else {
+        r#" target="_blank" rel="noopener""#
+    };
+    routes += &link(
+        "sample",
+        "sample",
+        "sampleNav",
+        "nav.sample",
+        "Sample debugger",
+        new_tab,
+    );
     let help_dialog = if current == "question" {
         ""
     } else {
         r#" data-site-help-open aria-haspopup="dialog" aria-controls="site-help""#
     };
-    routes += &format!(
-        r#"<a href="help" target="_blank" rel="noopener"{help_dialog} data-t="helpNav" data-i18n="nav.help">Help</a></nav>"#
+    routes += &link(
+        "help",
+        "help",
+        "helpNav",
+        "nav.help",
+        "Help",
+        &format!(r#" target="_blank" rel="noopener"{help_dialog}"#),
     );
-    routes
+    routes + "</nav>"
 }
 
 async fn asset(Path(name): Path<String>, headers: HeaderMap) -> Response {
@@ -81,6 +136,10 @@ async fn asset(Path(name): Path<String>, headers: HeaderMap) -> Response {
         "site.css" => (
             "text/css; charset=utf-8",
             include_str!("../question-ui/site.css"),
+        ),
+        "theme.js" => (
+            "text/javascript; charset=utf-8",
+            include_str!("../question-ui/theme.js"),
         ),
         "style.css" => (
             "text/css; charset=utf-8",
@@ -167,6 +226,15 @@ mod tests {
         let plain = header(false);
         assert!(!plain.contains("frequencies"));
         assert!(plain.contains(r#"<a href="help""#));
+        // Every page lists the same places, the question page included.
+        for html in [&served, &plain] {
+            assert!(html.contains(r#"<a href="workbench" data-t="incumbentNav""#));
+            assert!(
+                html.contains(
+                    r#"<a href="sample" target="_blank" rel="noopener" data-t="sampleNav""#
+                )
+            );
+        }
     }
 
     #[tokio::test]
@@ -180,6 +248,7 @@ mod tests {
             "/research/tools/workbench",
             "/research/tools/assets/questions/style.css",
             "/research/tools/assets/questions/site.css",
+            "/research/tools/assets/questions/theme.js",
             "/research/tools/assets/questions/app.js",
             "/research/tools/assets/questions/service.js",
             "/research/tools/assets/questions/dependency.js",

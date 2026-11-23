@@ -731,7 +731,6 @@
   "detail.sort_ascending": "Ascending",
   "detail.sort_descending": "Descending",
   "detail.sort_help": "Sort retained hits only. Left context is compared from the match outward.",
-  "nav.sample_new_tab": "Open Sample debugger in a new tab",
   "editor.grouping": "Group matches",
   "editor.grouping_pattern": "Pattern",
   "editor.grouping_attribute": "Group capture by",

@@ -1,31 +1,18 @@
 .fq, .fq-pop {
-  --fq-accent: #1f6a4a;
-  --fq-accent-wash: #e5efe9;
-  --fq-accent-mid: #5e957a;
-  --fq-accent-faint: #c5dace;
-  --fq-on-accent: #ffffff;
-  --fq-bar-off: #d3dbd6;
+  --fq-accent: light-dark(#1f6a4a, #8fc9d9);
+  --fq-accent-wash: light-dark(#e5efe9, #213441);
+  --fq-accent-mid: light-dark(#5e957a, #4f8191);
+  --fq-accent-faint: light-dark(#c5dace, #2d4653);
+  --fq-on-accent: light-dark(#ffffff, #10181e);
+  --fq-bar-off: light-dark(#d3dbd6, #34404a);
   --fq-rule: var(--border-light);
   --fq-soft: var(--text-muted);
-  --fq-shadow: rgba(29, 41, 36, 0.5);
+  --fq-shadow: light-dark(rgba(29, 41, 36, 0.5), rgba(0, 0, 0, 0.6));
   --fq-chevron: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='10' height='6'%3E%3Cpath d='M1 1l4 4 4-4' fill='none' stroke='black' stroke-width='1.6'/%3E%3C/svg%3E");
-  --fq-mark: #1a7a4c;
+  --fq-mark: light-dark(#1a7a4c, #3aa0c2);
   --fq-size: 21px;
   --fq-lead: 30px;
 }
-@media (prefers-color-scheme: dark) {
-  .fq, .fq-pop {
-    --fq-accent: #8fc9d9;
-    --fq-accent-wash: #213441;
-    --fq-accent-mid: #4f8191;
-    --fq-accent-faint: #2d4653;
-    --fq-on-accent: #10181e;
-    --fq-bar-off: #34404a;
-    --fq-mark: #3aa0c2;
-    --fq-shadow: rgba(0, 0, 0, 0.6);
-  }
-}
-
 .fq {
   max-width: 72rem;
   margin: 0 auto;
