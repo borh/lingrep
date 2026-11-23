@@ -788,6 +788,7 @@ impl<I> AdmittedCorpus<I> {
         if self.observations.len() >= MAX_DIVISION_KINDS && !self.observations.contains_key(&kind) {
             return Err(Self::invalid("too many observed division kinds"));
         }
+        self.cached_structure = None;
         self.observations
             .entry(kind.clone())
             .or_insert(DivisionObservation::Observed);
@@ -801,7 +802,6 @@ impl<I> AdmittedCorpus<I> {
         });
         self.active_divisions
             .insert(division.id, (Arc::clone(&division), bytes));
-        self.cached_structure = None;
         Ok(division)
     }
 

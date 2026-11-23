@@ -676,6 +676,11 @@ test("a local syntax error names an unprefixed attribute outside the portable se
   for (const text of ["lemma=", " := [upos=", "unidic.cform~連用形", "猫"]) {
     assert.deepEqual(localSyntaxMessage(text), { key: "editor.diag_syntax_local", args: null }, text);
   }
+  // `=` for `:=` at the start of a definition is not a token test.
+  for (const preceding of ["", "."]) {
+    assert.deepEqual(localSyntaxMessage("verb = [upos=VERB].", preceding), { key: "editor.diag_syntax_local", args: null });
+  }
+  assert.equal(localSyntaxMessage("orth=猫", "&").key, "editor.diag_unknown_attribute_written");
 });
 
 test("the definition at an offset is the pattern or fragment whose line is the last before it", async () => {

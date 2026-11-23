@@ -103,8 +103,11 @@ captures, `&` and references. A definition with a lookaround, a position
 assertion, an any-order group, `same_as` or a `where` clause is listed as not
 compared, and a pair whose tests use a regex is omitted. Spans are compared,
 not records: captures, keys and the result policy are outside the comparison.
-Under a `resolve` that ranks the containing definition first, the contained
-one is never published.
+The comparison is of matches from one start. A definition also drops a match
+nested inside its own longer match from an earlier start, so on a given
+sentence the containing definition can omit a span the contained one publishes:
+with `inner := [text=の].` and `outer := [text=の] | [text=猫] [text=の] [text=手].`,
+`猫の手` yields `outer` over all three tokens and `inner` over `の`.
 
 The Sample debugger of `ling serve` and the Workbench "Test on sample" drawer
 use the server's Vibrato dictionary to tokenize each example and counterexample

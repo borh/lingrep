@@ -1,10 +1,10 @@
 //! The sample-text debugger: the `GET /sample` page and the `POST /api/sample`
 //! endpoint that page (and nothing else) drives.
 //!
-//! The page is standalone by construction. It reads no corpus, holds no
-//! workbench and takes no revision, so it renders while every declared corpus
-//! is still building, and it does not re-post the corpus search's live
-//! pattern.
+//! The page holds no workbench and takes no revision, and it does not re-post
+//! the corpus search's live pattern. It reads a corpus only to load the stored
+//! sentence a `sentence` reference names; without one it renders while every
+//! declared corpus is still building.
 //!
 //! Admission runs in strict order so the cheapest checks reject first: size
 //! caps (413) need no dictionary or worker slot; the semaphore (429) needs no

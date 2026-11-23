@@ -73,6 +73,22 @@ fn satisfiable_and_undecided_tests_are_not_reported() {
 }
 
 #[test]
+fn a_policy_reference_does_not_report_the_definition_twice() {
+    let findings = unsatisfiable(concat!(
+        "fragment dead := [upos=VERB & upos=NOUN].\n",
+        "live := [upos=NOUN].\n",
+        "policy\n  exclude @live with: @dead, relation: within, evidence: raw.\nend\n",
+    ));
+    assert_eq!(
+        findings
+            .iter()
+            .map(|(definition, _, _)| definition.as_str())
+            .collect::<Vec<_>>(),
+        vec!["dead", "dead"],
+    );
+}
+
+#[test]
 fn a_body_that_requires_an_unsatisfiable_test_matches_nothing() {
     let findings = unsatisfiable(concat!(
         "fragment DEAD := [text=x & text=y].\n",

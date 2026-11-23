@@ -15,6 +15,7 @@ use crate::protocol::diff::{
     RunSide, Side, Span, UnpairedDefinition,
 };
 use crate::protocol::write_jsonl;
+use lingrep_cli_common::SafeText;
 
 use super::CommandOutcome;
 
@@ -23,7 +24,7 @@ const QUERY_SCHEMA: &str = "lingrep.query/v2";
 /// The match-record fields that do not belong to the published record:
 /// positions in the stream, the sentence's address, and text derived from
 /// the corpus.
-const UNCOMPARED_FIELDS: [&str; 12] = [
+const UNCOMPARED_FIELDS: [&str; 13] = [
     "sequence",
     "pattern",
     "char_span",
@@ -36,6 +37,7 @@ const UNCOMPARED_FIELDS: [&str; 12] = [
     "source_name",
     "document_ordinal",
     "document_sentence_ordinal",
+    "source_metadata",
 ];
 
 pub fn run(args: &DiffArgs, mode: OutputMode) -> Result<CommandOutcome, CliError> {
@@ -125,15 +127,28 @@ fn read_stream(path: &Path, label: &str) -> Result<Stream, CliError> {
         }
         match kind.as_str() {
             "definition" => {
+                // Records carry the published name, which several
+                // definitions can share.
                 if data["body"]["kind"] == "pattern"
-                    && let Some(name) = data["name"].as_str()
+                    && let Some(name) = data["metadata"]["output_name"]
+                        .as_str()
+                        .or_else(|| data["name"].as_str())
+                    && !patterns.iter().any(|known| known == name)
                 {
                     patterns.push(name.to_owned());
                 }
             }
-            "match" => records.push(
-                record(data).ok_or_else(|| invalid("the match record lacks a required field"))?,
-            ),
+            "match" => {
+                let record = record(data)
+                    .ok_or_else(|| invalid("the match record lacks a required field"))?;
+                if !patterns.contains(&record.pattern) {
+                    return Err(invalid(&format!(
+                        "the match names `{}`, which no definition event of the stream publishes",
+                        record.pattern
+                    )));
+                }
+                records.push(record);
+            }
             "complete" => complete = Some(data),
             other => return Err(invalid(&format!("unexpected `{other}` event"))),
         }
@@ -657,15 +672,16 @@ impl Comparison {
         writeln!(writer, "compared: {}", self.scanned())?;
         for pair in &self.pairs {
             let diff = &pair.diff;
+            let safe = |text: &str| SafeText::from_untrusted(text).to_string();
             let names = if diff.a == diff.b {
-                diff.a.clone()
+                safe(&diff.a)
             } else {
-                format!("{} (A) / {} (B)", diff.a, diff.b)
+                format!("{} (A) / {} (B)", safe(&diff.a), safe(&diff.b))
             };
             let roles = if diff.roles.is_empty() {
                 String::new()
             } else {
-                format!(" [roles {}]", diff.roles.join(","))
+                format!(" [roles {}]", safe(&diff.roles.join(",")))
             };
             writeln!(
                 writer,
@@ -680,12 +696,12 @@ impl Comparison {
                 writeln!(
                     writer,
                     "  {status}\t{} {}:{}\t{}\t{}\t{}",
-                    occurrence.source_name,
+                    safe(&occurrence.source_name),
                     occurrence.document_ordinal,
                     occurrence.document_sentence_ordinal,
-                    occurrence.unit,
-                    occurrence.surface,
-                    occurrence.sentence.as_deref().unwrap_or_default(),
+                    safe(&occurrence.unit),
+                    safe(&occurrence.surface),
+                    safe(occurrence.sentence.as_deref().unwrap_or_default()),
                 )?;
             }
         }
@@ -697,7 +713,8 @@ impl Comparison {
                 writeln!(
                     writer,
                     "{} is defined only in {side}: {} record(s)",
-                    definition.name, definition.records
+                    SafeText::from_untrusted(&definition.name),
+                    definition.records
                 )?;
             }
         }

@@ -28,6 +28,8 @@ use crate::revision::{AttemptPhase, ErrorCategory, RevisionId, WorkbenchId};
 use crate::snapshot::{CaptureDescriptor, CompletedSnapshot, PatternKey};
 use crate::state::RequestStore;
 
+/// Every row of a document page is decoded before the response size is checked.
+const MAX_DOCUMENT_PAGE_ROWS: usize = 200;
 const REVISION: RevisionId = RevisionId(1);
 const INSPECTION_BYTES: usize = 1024 * 1024;
 const PREVIEW_BYTES: usize = 4 * 1024 * 1024;
@@ -1396,7 +1398,7 @@ async fn documents(
     let continuous = query.continuous == Some(1);
     let scoped = if continuous { None } else { query.document };
     let mut after = query.after.unwrap_or(-1);
-    let limit = query.limit.unwrap_or(20).max(1);
+    let limit = query.limit.unwrap_or(20).clamp(1, MAX_DOCUMENT_PAGE_ROWS);
     let filter_q = query.q.as_deref().unwrap_or_default();
     if continuous
         && let Some(selected_doc) = query.document

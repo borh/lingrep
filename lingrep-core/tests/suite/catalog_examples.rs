@@ -320,6 +320,25 @@ fn the_verified_nesting_claim_counts_are_what_the_catalogs_contain() {
 }
 
 #[test]
+fn relaxing_the_element_under_a_required_repetition_distinguishes_a_counterexample() {
+    use lingrep_core::fsm::RelaxationOutcome;
+    for body in ["[text=猫]+ [text=の]", "[text=猫]{2,} [text=の]"] {
+        let output = compile_catalog(
+            PatternSource::named("repeat.lx", &format!("p := {body}.")),
+            CompileLimits::default(),
+        )
+        .expect("the fixture compiles");
+        assert!(
+            matches!(
+                output.relax_definition("p", &tokenize_japanese("の")[..]),
+                RelaxationOutcome::Distinguished { .. }
+            ),
+            "{body}"
+        );
+    }
+}
+
+#[test]
 fn a_counterexample_no_single_relaxation_matches_is_vacuous() {
     use lingrep_core::fsm::RelaxationOutcome;
     let (name, text) = tracked_catalog_sources()

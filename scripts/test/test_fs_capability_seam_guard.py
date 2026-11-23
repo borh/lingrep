@@ -54,6 +54,7 @@ class FsCapabilitySeamGuard(unittest.TestCase):
             "rustix linkat": 'fn f() { rustix::fs::linkat(a, "a", b, "b", flags).unwrap(); }\n',
             "rustix link import": 'use rustix::fs::link as make_link;\n',
             "DELETE journal": 'const P: &str = "PRAGMA journal_mode=DELETE";\n',
+            "WAL setter": 'fn f() { db.set_journal_mode("WAL"); }\n',
             "DELETE journal enum": 'fn f() { opts.journal_mode(SqliteJournalMode::Delete); }\n',
             "WAL checkpoint": 'const P: &str = "PRAGMA wal_checkpoint(TRUNCATE)";\n',
             "WAL checkpoint option": 'fn f() { opts.pragma("wal_checkpoint", "TRUNCATE"); }\n',
