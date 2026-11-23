@@ -64,6 +64,10 @@ TEST_MODULE_FILE = re.compile(
 PATH_ATTRIBUTE = re.compile(r'#\[path\s*=\s*"([^"]*)"\]')
 
 
+RAW_STRING_START = re.compile(r'b?r(#*)"')
+CHARACTER_LITERAL = re.compile(r"'(\\.|[^\\'\n])'")
+
+
 def code_mask(text, blank_literals=True):
     """Blank comments and, unless `blank_literals` is false, literal contents."""
     out = list(text)
@@ -91,12 +95,16 @@ def code_mask(text, blank_literals=True):
                     j += 1
             blank(i, j)
             i = j
-        elif (m := re.match(r'b?r(#*)"', text[i:])) and (i == 0 or not (text[i - 1].isalnum() or text[i - 1] == "_")):
+        elif (
+            text[i] in "br"
+            and (i == 0 or not (text[i - 1].isalnum() or text[i - 1] == "_"))
+            and (m := RAW_STRING_START.match(text, i))
+        ):
             closing = '"' + m.group(1)
-            end = text.find(closing, i + m.end())
+            end = text.find(closing, m.end())
             end = n if end < 0 else end + len(closing)
             if blank_literals:
-                blank(i + m.end(), end - len(closing))
+                blank(m.end(), end - len(closing))
             i = end
         elif text[i] == '"':
             j = i + 1
@@ -105,10 +113,10 @@ def code_mask(text, blank_literals=True):
             if blank_literals:
                 blank(i + 1, j)
             i = j + 1
-        elif m := re.match(r"'(\\.|[^\\'\n])'", text[i:]):
+        elif text[i] == "'" and (m := CHARACTER_LITERAL.match(text, i)):
             if blank_literals:
-                blank(i + 1, i + m.end() - 1)
-            i += m.end()
+                blank(i + 1, m.end() - 1)
+            i = m.end()
         else:
             i += 1
     return "".join(out)
