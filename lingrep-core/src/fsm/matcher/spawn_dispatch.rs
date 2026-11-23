@@ -233,8 +233,8 @@ mod index_tests {
             .matcher
             .dense_for_test()
             .spawn_table
-            .dispatch
-            .clone()
+            .dispatch_for_test()
+            .cloned()
     }
 
     /// The tracked catalogs' index shapes, as
@@ -421,11 +421,11 @@ tail := [unidic.pos1=VERB] $.
         let predicates = compiled.matcher.predicates_for_test().clone();
         let dense = compiled.matcher.dense_for_test().clone();
         assert!(
-            dense.spawn_table.dispatch.is_some(),
+            dense.spawn_table.dispatch_for_test().is_some(),
             "fixture must build an index"
         );
         let mut undispatched = dense.clone();
-        undispatched.spawn_table.dispatch = None;
+        undispatched.spawn_table.clear_dispatch_for_test();
 
         let mut total = 0usize;
         for tokens in streams(0x9e37_79b9, 400, 17) {
@@ -456,11 +456,11 @@ tail := [unidic.pos1=VERB] $.
             .unwrap();
             let predicates = compiled.matcher.predicates_for_test().clone();
             let dense = compiled.matcher.dense_for_test().clone();
-            if dense.spawn_table.dispatch.is_none() {
+            if dense.spawn_table.dispatch_for_test().is_none() {
                 continue;
             }
             let mut undispatched = dense.clone();
-            undispatched.spawn_table.dispatch = None;
+            undispatched.spawn_table.clear_dispatch_for_test();
 
             // Every value any group's canonical atom accepts, so a generated
             // token can satisfy a real discriminator rather than only miss.
@@ -530,7 +530,7 @@ tail := [unidic.pos1=VERB] $.
         let predicates = compiled.matcher.predicates_for_test().clone();
         let dense = compiled.matcher.dense_for_test().clone();
         let mut undispatched = dense.clone();
-        undispatched.spawn_table.dispatch = None;
+        undispatched.spawn_table.clear_dispatch_for_test();
 
         let mut total = 0usize;
         for tokens in streams(0x51ed_2701, 100, 12) {

@@ -32,7 +32,21 @@ use std::collections::{BTreeMap, BTreeSet};
 /// transition are never materialized; they cannot affect any observable
 /// output (they emit nothing and produce no successors).
 #[derive(Clone, Default)]
-pub(crate) struct SpawnTable {
+pub(crate) enum SpawnTable {
+    /// No consuming entry states are reachable from state 0 (e.g. an empty
+    /// machine or a catalog whose definitions are all tree-evaluated).
+    #[default]
+    Empty,
+    /// Built closure prefilter with at least one consuming entry state.
+    Active(ActiveSpawnTable),
+    /// Construction exceeded its bounds. The executor then uses per-position
+    /// epsilon closure, preserving matching semantics at higher cost; the
+    /// fallback is logged when the table is built.
+    Declined(SpawnDecline),
+}
+
+#[derive(Clone)]
+pub(crate) struct ActiveSpawnTable {
     /// Deduplicated assertions guarding pre-consume paths (`^`,
     /// `preceded_by(...)`); indexes are bit positions in a `u64` mask.
     conditions: Vec<CompiledPositionAssertion>,
@@ -49,14 +63,9 @@ pub(crate) struct SpawnTable {
     /// Union of every entry's alternative masks; conditions outside it can
     /// never gate a spawn and are not evaluated at runtime.
     referenced_conditions: u64,
-    /// Construction exceeded its bounds. The executor then uses per-position
-    /// epsilon closure, preserving matching semantics at higher cost; the
-    /// fallback is logged when the table is built.
-    fallback: bool,
-    /// Compile-time candidate index. `None` for a declined table or one with
-    /// fewer than two groups, which uses the per-group scan.
-    pub(crate) dispatch: Option<SpawnDispatch>,
-    pub(crate) decline: Option<SpawnDecline>,
+    /// Compile-time candidate index. `None` for a table with fewer than two
+    /// groups, which uses the per-group scan.
+    dispatch: Option<SpawnDispatch>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -103,17 +112,21 @@ impl SpawnTable {
     /// A declined table uses per-position epsilon closure. Differential tests
     /// treat that path as the reference semantics.
     fn declined(decline: SpawnDecline) -> Self {
-        Self {
-            conditions: Vec::new(),
-            entries: Vec::new(),
-            predicate_groups: Vec::new(),
-            predicate_entry_indexes: Vec::new(),
-            #[cfg(feature = "bench-instrumentation")]
-            shape_count: 0,
-            referenced_conditions: 0,
-            fallback: true,
-            dispatch: None,
-            decline: Some(decline),
+        Self::Declined(decline)
+    }
+
+    pub(crate) fn decline(&self) -> Option<&SpawnDecline> {
+        match self {
+            Self::Declined(decline) => Some(decline),
+            Self::Empty | Self::Active(_) => None,
+        }
+    }
+
+    pub(crate) fn bind_attributes(&mut self, projection: &crate::token_match::BoundProjection) {
+        if let Self::Active(table) = self
+            && let Some(dispatch) = &mut table.dispatch
+        {
+            dispatch.bind_attributes(projection);
         }
     }
 
@@ -129,7 +142,7 @@ impl SpawnTable {
             Self::declined(decline)
         };
         if transitions.is_empty() {
-            return Self::default();
+            return Self::Empty;
         }
 
         let mut conditions: Vec<CompiledPositionAssertion> = Vec::new();
@@ -199,6 +212,9 @@ impl SpawnTable {
             })
             .collect();
         build_entries.sort_by_key(|entry| entry.state);
+        if build_entries.is_empty() {
+            return Self::Empty;
+        }
         let mut grouped_entries: Vec<(PredicateId, Vec<usize>)> = Vec::new();
         for (entry_index, entry) in build_entries.iter().enumerate() {
             for &transition_index in &entry.consume_transitions {
@@ -268,7 +284,7 @@ impl SpawnTable {
                 .collect::<Vec<_>>(),
         );
 
-        Self {
+        Self::Active(ActiveSpawnTable {
             conditions,
             entries,
             predicate_groups,
@@ -276,26 +292,24 @@ impl SpawnTable {
             #[cfg(feature = "bench-instrumentation")]
             shape_count,
             referenced_conditions,
-            fallback: false,
             dispatch,
-            decline: None,
-        }
+        })
     }
 
     #[cfg(feature = "bench-instrumentation")]
     pub(crate) fn spawn_candidate_catalog_metrics(&self) -> SpawnCandidateCatalogMetrics {
-        if self.fallback {
+        let Self::Active(table) = self else {
             return SpawnCandidateCatalogMetrics::default();
-        }
+        };
         let mut metrics = SpawnCandidateCatalogMetrics {
-            spawn_groups: self.predicate_groups.len(),
+            spawn_groups: table.predicate_groups.len(),
             ..SpawnCandidateCatalogMetrics::default()
         };
         let mut scheme_a_attributes = BTreeSet::new();
         let mut scheme_b_attributes = BTreeSet::new();
         let mut safe_atoms = BTreeMap::new();
         let mut shapes = BTreeMap::new();
-        for group in &self.predicate_groups {
+        for group in &table.predicate_groups {
             match group.descriptor.finite_atoms.len() {
                 0 => metrics.zero_safe_groups += 1,
                 1 => metrics.one_safe_groups += 1,
@@ -343,17 +357,52 @@ impl SpawnTable {
 
     #[cfg(feature = "bench-instrumentation")]
     pub(crate) fn spawn_candidate_dimensions(&self) -> (usize, usize) {
-        (self.predicate_groups.len(), self.shape_count)
+        match self {
+            Self::Active(table) => (table.predicate_groups.len(), table.shape_count),
+            Self::Empty | Self::Declined(_) => (0, 0),
+        }
     }
 
     /// Each group's predicate and its finite-positive classification, in
     /// table order.
     #[cfg(test)]
     pub(crate) fn groups_for_test(&self) -> Vec<(PredicateId, SpawnPredicateDescriptor)> {
-        self.predicate_groups
-            .iter()
-            .map(|group| (group.predicate, group.descriptor.clone()))
-            .collect()
+        match self {
+            Self::Active(table) => table
+                .predicate_groups
+                .iter()
+                .map(|group| (group.predicate, group.descriptor.clone()))
+                .collect(),
+            Self::Empty | Self::Declined(_) => Vec::new(),
+        }
+    }
+
+    #[cfg(test)]
+    pub(crate) fn dispatch_for_test(&self) -> Option<&SpawnDispatch> {
+        match self {
+            Self::Active(table) => table.dispatch.as_ref(),
+            Self::Empty | Self::Declined(_) => None,
+        }
+    }
+
+    #[cfg(test)]
+    pub(crate) fn clear_dispatch_for_test(&mut self) {
+        if let Self::Active(table) = self {
+            table.dispatch = None;
+        }
+    }
+
+    #[cfg(test)]
+    fn is_declined(&self) -> bool {
+        matches!(self, Self::Declined(_))
+    }
+
+    #[cfg(test)]
+    fn active_for_test(&self) -> Option<&ActiveSpawnTable> {
+        match self {
+            Self::Active(table) => Some(table),
+            Self::Empty | Self::Declined(_) => None,
+        }
     }
 }
 
@@ -369,7 +418,7 @@ impl SpawnTable {
 #[inline(always)]
 #[allow(clippy::too_many_arguments)]
 fn inject_group<S: TokenSequence + ?Sized>(
-    table: &SpawnTable,
+    table: &ActiveSpawnTable,
     predicates: &PredicateSession<'_>,
     tokens: &S,
     index: usize,
@@ -445,24 +494,23 @@ pub(crate) fn inject_spawns<S: TokenSequence + ?Sized, F>(
         start_token: index,
         position: index,
     };
-    if dense.spawn_table.fallback {
-        // Full epsilon closure for machines the bounded table construction
-        // declined.
-        Matcher::epsilon_closure_into(
-            dense,
-            std::iter::once(spawn),
-            Some((tokens, index)),
-            scratch,
-            assertion_holds,
-            frontier,
-        );
-        return;
-    }
-
-    let table = &dense.spawn_table;
-    if table.entries.is_empty() {
-        return;
-    }
+    let table = match &dense.spawn_table {
+        SpawnTable::Empty => return,
+        SpawnTable::Declined(_) => {
+            // Full epsilon closure for machines the bounded table construction
+            // declined.
+            Matcher::epsilon_closure_into(
+                dense,
+                std::iter::once(spawn),
+                Some((tokens, index)),
+                scratch,
+                assertion_holds,
+                frontier,
+            );
+            return;
+        }
+        SpawnTable::Active(table) => table,
+    };
     #[cfg(feature = "bench-instrumentation")]
     predicates.begin_spawn_position();
     let mut holds = 0u64;
@@ -570,6 +618,9 @@ tail := [unidic.pos1=VERB] $.
     }
 
     fn derived_unconditional_group_count(table: &SpawnTable) -> usize {
+        let Some(table) = table.active_for_test() else {
+            return 0;
+        };
         table
             .predicate_groups
             .iter()
@@ -698,11 +749,15 @@ tail := [unidic.pos1=VERB] $.
         {
             let (dense, _) = dense_for(&source);
             let table = &dense.spawn_table;
-            let actual = (
-                table.referenced_conditions,
-                table.predicate_groups.len(),
-                derived_unconditional_group_count(table),
-            );
+            assert!(!table.is_declined(), "{name} spawn table declined");
+            let actual = match table {
+                SpawnTable::Active(active) => (
+                    active.referenced_conditions,
+                    active.predicate_groups.len(),
+                    derived_unconditional_group_count(table),
+                ),
+                SpawnTable::Empty | SpawnTable::Declined(_) => (0, 0, 0),
+            };
             let pinned = expected.remove(name.as_str());
             if pinned != Some(actual) {
                 moved.push(format!("  {name}: pinned {pinned:?}, measured {actual:?}"));
@@ -813,12 +868,14 @@ tail := [unidic.pos1=VERB] $.
     #[test]
     fn spawn_table_is_equivalent_to_closure_injection() {
         let (dense, predicates) = dense_for(DIFFERENTIAL_PATTERN);
-        assert!(!dense.spawn_table.fallback);
-        let table = &dense.spawn_table;
-        let unconditional = derived_unconditional_group_count(table);
+        let active = dense
+            .spawn_table
+            .active_for_test()
+            .expect("differential pattern builds an active spawn table");
+        let unconditional = derived_unconditional_group_count(&dense.spawn_table);
         assert!(unconditional > 0, "fixture needs an unconditional group");
         assert!(
-            unconditional < table.predicate_groups.len(),
+            unconditional < active.predicate_groups.len(),
             "fixture needs a conditional group"
         );
         let fallback = with_forced_fallback(&dense);
@@ -898,8 +955,10 @@ tail := [unidic.pos1=VERB] $.
     #[test]
     fn spawn_table_records_assertion_conditions() {
         let (dense, _) = dense_for(DIFFERENTIAL_PATTERN);
-        let table = &dense.spawn_table;
-        assert!(!table.fallback);
+        let table = dense
+            .spawn_table
+            .active_for_test()
+            .expect("differential pattern builds an active spawn table");
         assert!(
             table
                 .conditions
@@ -955,15 +1014,17 @@ tail := [unidic.pos1=VERB] $.
                 .collect::<Vec<_>>(),
             &mut predicates,
         );
-        assert!(table.fallback);
+        assert!(table.is_declined());
     }
 
     #[test]
     fn mixed_catalogs_build_through_the_supported_condition_limit() {
         for count in [1, 8, 32, 63, 64] {
             let (dense, _) = dense_for(&mixed_catalog_pattern(count));
-            let table = &dense.spawn_table;
-            assert!(!table.fallback, "{count} assertion branches");
+            let table = dense
+                .spawn_table
+                .active_for_test()
+                .expect("assertion branches within limit must stay active");
             assert_eq!(table.conditions.len(), count, "{count} assertion branches");
         }
     }
@@ -973,7 +1034,7 @@ tail := [unidic.pos1=VERB] $.
         let (dense, _) = dense_for(&mixed_catalog_pattern(65));
         let table = &dense.spawn_table;
         assert!(
-            table.fallback,
+            table.is_declined(),
             "the sixty-fifth condition exceeds the u64 mask"
         );
     }
@@ -991,7 +1052,7 @@ tail := [unidic.pos1=VERB] $.
                 dense_for(&sequential_assertion_antichain_pattern(*level))
                     .0
                     .spawn_table
-                    .fallback
+                    .is_declined()
             })
             .expect("twelve binary assertion levels must cross the set bound");
         assert_eq!(

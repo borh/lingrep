@@ -136,7 +136,7 @@ impl DenseMachine {
     }
 
     pub(crate) fn spawn_decline(&self) -> Option<&SpawnDecline> {
-        self.spawn_table.decline.as_ref()
+        self.spawn_table.decline()
     }
 
     #[inline(always)]

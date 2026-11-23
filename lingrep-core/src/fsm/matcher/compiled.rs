@@ -1742,9 +1742,7 @@ impl CompiledCatalog {
         for plan in &mut self.evaluated_plans {
             plan.0.bind_attributes(projection);
         }
-        if let Some(dispatch) = &mut self.dense.spawn_table.dispatch {
-            dispatch.bind_attributes(projection);
-        }
+        self.dense.spawn_table.bind_attributes(projection);
     }
 
     /// Static finite-positive classification of this catalog's spawn groups.
