@@ -207,6 +207,40 @@ mod tests {
     }
 
     #[test]
+    fn pattern_scan_over_a_conllu_root_counts_dependency_matches() {
+        let worker = PatternWorker {
+            request_id: RequestId(14),
+            pattern_text: "subject := [upos=NOUN & dep.rel=nsubj].\nverb := [upos=VERB].".into(),
+            execution: crate::interactive_execution::conllu_test_execution(),
+            cancel: CancellationFlag::new(),
+        };
+        let (tx, rx) = crossbeam_channel::unbounded();
+
+        worker.run(tx);
+        let messages = rx.try_iter().collect::<Vec<_>>();
+
+        let mut counts = BTreeMap::new();
+        for message in &messages {
+            match message {
+                ExplorerMessage::PatternDelta { delta_counts, .. } => {
+                    for (pattern, count) in delta_counts {
+                        *counts.entry(pattern.as_str()).or_insert(0) += count;
+                    }
+                }
+                ExplorerMessage::PatternFailed { error, .. } => panic!("scan failed: {error}"),
+                _ => {}
+            }
+        }
+        assert_eq!(counts, BTreeMap::from([("subject", 3), ("verb", 5)]));
+        assert!(matches!(
+            messages.last(),
+            Some(ExplorerMessage::PatternFinished {
+                request_id: RequestId(14)
+            })
+        ));
+    }
+
+    #[test]
     fn pattern_sink_counts_one_hit_per_pattern_per_sentence() {
         let (tx, rx) = crossbeam_channel::unbounded();
         let mut sink = PatternSink {

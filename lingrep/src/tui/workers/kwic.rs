@@ -202,4 +202,30 @@ mod tests {
                 .any(|message| matches!(message, ExplorerMessage::KwicFinished { .. }))
         );
     }
+
+    #[test]
+    fn kwic_scan_over_a_conllu_root_renders_token_surfaces() {
+        let worker = KwicWorker {
+            request_id: RequestId(10),
+            pattern_id: PatternId(5),
+            pattern_name: "subject".into(),
+            pattern_text: "subject := [text=子ども & dep.rel=nsubj].".into(),
+            execution: crate::interactive_execution::conllu_test_execution(),
+            cancel: CancellationFlag::new(),
+        };
+        let (tx, rx) = crossbeam_channel::unbounded();
+
+        worker.run(tx);
+        let messages = rx.try_iter().collect::<Vec<_>>();
+
+        let [ExplorerMessage::KwicFinished { result, .. }] = messages.as_slice() else {
+            panic!("expected one completed KWIC result, got {messages:?}");
+        };
+        let lines = result
+            .window
+            .iter()
+            .map(|line| (line.pre.as_str(), line.key.as_str(), line.post.as_str()))
+            .collect::<Vec<_>>();
+        assert_eq!(lines, [("新聞を", "子ども", "が読む")]);
+    }
 }

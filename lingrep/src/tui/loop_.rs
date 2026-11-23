@@ -102,7 +102,9 @@ fn translate_event(ev: Event, model: &Model) -> Option<UiMsg> {
         Event::Key(key) if matches!(model.mode, AppMode::Error { .. }) => {
             match (key.modifiers, key.code) {
                 (KeyModifiers::NONE, KeyCode::Esc | KeyCode::Enter) => Some(UiMsg::DismissError),
-                (KeyModifiers::CONTROL, KeyCode::Char('q')) => Some(UiMsg::Exit),
+                (KeyModifiers::NONE | KeyModifiers::CONTROL, KeyCode::Char('q')) => {
+                    Some(UiMsg::Exit)
+                }
                 _ => None,
             }
         }
@@ -484,7 +486,7 @@ fn get_key_hints(model: &Model) -> String {
             }
         },
         AppMode::EditingPattern => " Enter: submit | Esc: cancel | Tab: view ".to_string(),
-        AppMode::Error { .. } => " Enter/Esc: dismiss | Ctrl-q: quit ".to_string(),
+        AppMode::Error { .. } => " Enter/Esc: dismiss | q: quit ".to_string(),
         AppMode::Exiting => String::new(),
     }
 }
@@ -932,7 +934,14 @@ mod tests {
             ),
             Some(UiMsg::Exit)
         ));
-        assert_eq!(get_key_hints(&model), " Enter/Esc: dismiss | Ctrl-q: quit ");
+        assert!(matches!(
+            translate_event(
+                Event::Key(KeyEvent::new(KeyCode::Char('q'), KeyModifiers::NONE)),
+                &model,
+            ),
+            Some(UiMsg::Exit)
+        ));
+        assert_eq!(get_key_hints(&model), " Enter/Esc: dismiss | q: quit ");
     }
 
     #[test]
