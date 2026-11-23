@@ -34,6 +34,52 @@ in neighboring sentences. To return both endpoints of an annotated relation
 across sentences, use an
 [external join](cli-usage-guide.md#joining-annotated-relations-across-sentences).
 
+### Which matches a definition publishes
+
+A definition's body can match many spans of one sentence. The definition
+publishes these, and the rule is the same whichever constructs the body uses:
+
+1. From each start token, the longest match. An
+   [`any_order`](#operators-and-precedence) group keeps the longest match of
+   each surface permutation, so it can keep several spans from one start. A
+   `where` clause and a span annotation remove a match before this step, so a
+   shorter match that passes survives a longer one that fails.
+2. Of the spans step 1 keeps, a span is dropped when another of them starts at
+   an earlier token and ends at a later token. A span that ends where an
+   earlier-starting span ends is kept, and two spans from one start never drop
+   each other.
+
+```pattern
+paw := [text=の] | [text=猫] [text=の] [text=手].
+run := [text=a]+.
+```
+
+On `猫 の 手`, `paw` matches all three tokens from `猫` and `の` alone from
+`の`. It publishes the three-token span only, because that span starts earlier
+and ends later. Appending `& []+`, a capture, or
+`measure count(match.words[]) as $n` to the body leaves the same single span.
+On `a a b`, `run` publishes `a a` and the second `a`: both end at the same
+token.
+
+The rule selects spans, not records. Every record of a kept span is published,
+such as [readings with different measures](#occurrence-measurements), and every
+record of a dropped span is dropped. A match that consumes no token is never
+published.
+
+The rule applies within one definition. Matches of different definitions never
+drop each other at this stage; the [policy block](#policy-block) decides
+between definitions afterwards and receives only the spans this rule keeps.
+`ling matches --raw-matches` bypasses policy and not this rule. To publish a
+span that lies inside a longer match of its own definition, write it as a
+separate definition. [Lexicons](#lexicons) are exempt and publish every member
+occurrence.
+
+Releases through 0.9.1 applied step 2 only to a definition without `&`,
+`measure`, `where`, a span annotation, `same_as` and `any_order`. Applying it
+to every definition advances
+the matcher semantics identity to `lingrep-core-matcher/v3`, so a count stored
+before it is stale.
+
 ## Reserved names
 
 `pattern`, `fragment`, `lexicon`, `set`, `test`, `group`, `defaults`, `schema`,
@@ -361,7 +407,7 @@ condition to that named capture. For a dependency, each capture must be
 nonempty and wholly inside its respective span, and the dependent span must
 point directly to the governor span. A missing span, label, head, capture or
 edge required by the query yields no witness. These annotations filter each
-candidate before longest-match selection. Sentence anchors and lookaround
+candidate before [longest-match selection](#which-matches-a-definition-publishes). Sentence anchors and lookaround
 still use the sentence context. Token-level `where` constraints can be
 combined with both annotations. A reference to a definition expands its token
 expression. Its emission constraints apply when that definition emits.
@@ -575,7 +621,7 @@ The ordinary relation projections retain the full label, including `@pass`.
 
 A multi-label bracket is one disjunctive constraint, not an independent count for
 every member. Candidates admitted by its labels compete in the definition's
-per-start longest-candidate selection, so a key's published count can change when
+[match selection](#which-matches-a-definition-publishes), so a key's published count can change when
 sibling labels are added to or removed from the bracket. For a keyness table
 whose rows must be each label's own pattern count, generate one definition per
 label. `matches --raw-matches` bypasses catalog policy; it does not expose
@@ -653,10 +699,20 @@ The clause's own diagnostics:
 
 ### Ordering against publication
 
-The clause filters candidate matches before keep-longest publication filtering
-and before policy, so a shorter passing candidate survives a longer failing one.
-An assignment that fails the clause does not hide a passing assignment reaching
-the same position.
+The clause filters candidate matches before
+[match selection](#which-matches-a-definition-publishes) and before policy, so
+a shorter passing candidate survives a longer failing one. An assignment that
+fails the clause does not hide a passing assignment reaching the same position.
+
+Selection then applies to the passing matches. A relation instance whose span
+lies inside a longer passing match of the same definition, starting later and
+ending earlier, is not published. With
+`(?<h> [upos=VERB]) []* (?<d> [upos=NOUN]) where $h -[obj]-> $d`, a sentence
+`V1 V2 N2 N1` in which `N2` is the object of `V2` and `N1` the object of `V1`
+publishes `V1 … N1` only. To count every instance, use a body whose spans
+cannot nest, such as a one-token body that captures the head and tests the
+dependent with
+[a token test in dependent position](#a-token-test-in-dependent-position).
 
 A catalog with a basic token dependency constraint requires `dep.head` and `dep.rel` at binding, so a
 morphology-only corpus is rejected by name before matching. Only basic edges are
@@ -1045,8 +1101,9 @@ lexicon segmentation_counts by [text, norm] := {"大学院", "行う"}.
 
 Without a key, `summarize` groups by the authored `term`, not observed surface.
 `segments(text)` and `segments(norm)` preserve the actual token sequence as a
-list. Prefixes and overlaps are retained, unlike ordinary-pattern containment
-filtering. Missing or empty `by` values break that projection's run and are
+list. Prefixes, overlaps and members inside a longer member are retained;
+[match selection](#which-matches-a-definition-publishes) does not apply to a
+lexicon. Missing or empty `by` values break that projection's run and are
 reported by `coverage --json`; changing versioned `norm` can therefore change
 lexical results and catalog identity.
 
@@ -1196,7 +1253,8 @@ matches":
 | `keep` | the block without its `resolve` statements; a later statement with `evidence: current` then receives the records that `resolve` would have dropped |
 | `longest` | the block, followed by `resolve patterns rank: [longest, start, end, pattern].` when the block declares no `resolve`; a block with a `resolve` runs as written |
 
-All three retain per-start longest-candidate selection within each definition.
+All three retain [match selection](#which-matches-a-definition-publishes)
+within each definition.
 The `run` record
 carries `overlaps` when the value is not `catalog`.
 

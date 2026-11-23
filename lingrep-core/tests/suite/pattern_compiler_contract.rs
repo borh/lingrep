@@ -263,7 +263,7 @@ fn public_pattern_identity_constants_are_pinned() {
     // different records, so a change to one has to be a change someone wrote
     // down rather than a change someone noticed later.
     assert_eq!(POLICY_SEMANTICS_IDENTITY, "lingrep-core-policy/v1");
-    assert_eq!(MATCHER_SEMANTICS_IDENTITY, "lingrep-core-matcher/v2");
+    assert_eq!(MATCHER_SEMANTICS_IDENTITY, "lingrep-core-matcher/v3");
 }
 
 #[test]

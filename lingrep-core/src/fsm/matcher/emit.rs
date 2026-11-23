@@ -59,8 +59,34 @@ impl<'a> MatchSink<'a> {
     }
 }
 
-/// For each pattern, discard zero-width matches and matches contained by a
-/// longer match. Overlaps between different patterns remain independent.
+/// The sweep over one definition's published spans in ascending start order
+/// that applies the nested-match rule: a span is dropped when a span of the
+/// same definition from an earlier start ends strictly later.
+///
+/// Spans from one start never drop each other, so a caller publishing several
+/// spans from one start tests all of them before it calls [`Self::publish`]
+/// for any.
+#[derive(Default)]
+pub(crate) struct EarlierStarts {
+    longest_end: usize,
+}
+
+impl EarlierStarts {
+    /// Whether a span from an earlier start ends strictly after `end`.
+    #[inline]
+    pub(crate) const fn extends_past(&self, end: usize) -> bool {
+        end < self.longest_end
+    }
+
+    #[inline]
+    pub(crate) fn publish(&mut self, end: usize) {
+        self.longest_end = self.longest_end.max(end);
+    }
+}
+
+/// For each pattern, discard zero-width matches, keep the longest match from
+/// each start, and apply [`EarlierStarts`]. Overlaps between different
+/// patterns remain independent.
 pub(crate) fn filter_and_collect_matches(
     matches: &[Match],
     output: &OutputBudget,
@@ -119,11 +145,10 @@ pub(crate) fn filter_and_collect_matches(
 
         output.reserve_buffer::<Match>(longest_by_start.len())?;
         let mut filtered_matches = Vec::with_capacity(longest_by_start.len());
-        let mut longest_earlier_end: Option<usize> = None;
+        let mut earlier = EarlierStarts::default();
         for candidate in longest_by_start.into_values() {
-            if longest_earlier_end.is_none_or(|end| end <= candidate.end) {
-                longest_earlier_end =
-                    Some(longest_earlier_end.map_or(candidate.end, |end| end.max(candidate.end)));
+            if !earlier.extends_past(candidate.end) {
+                earlier.publish(candidate.end);
                 output.reserve(match_heap_bytes(candidate))?;
                 filtered_matches.push(candidate.clone());
             }

@@ -44,12 +44,11 @@ pub enum UnsatisfiableKind {
 
 /// Whether every span one definition publishes is also published by another.
 ///
-/// A definition publishes its longest match from each start. A definition the
-/// dense machine recognizes drops, of those, a match that its own match from
-/// an earlier start extends past; a definition the tree evaluator recognizes
-/// drops none. The second definition must therefore match each span the first
-/// publishes, nothing longer from the same start and, when it is one that
-/// drops, nothing from an earlier start that ends later.
+/// A definition publishes its longest match from each start and drops, of
+/// those, a match that its own match from an earlier start extends past. The
+/// second definition must therefore match each span the first publishes,
+/// nothing longer from the same start, and nothing from an earlier start that
+/// ends later.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Containment {
     Contained,
@@ -274,11 +273,7 @@ impl NoMatchExplainer {
         &'p self,
         definition: &'p BoundDefinition,
     ) -> Result<Automaton<'p>, &'static str> {
-        Automaton::of(
-            self.program(),
-            definition,
-            !self.tree_evaluated(&definition.name),
-        )
+        Automaton::of(self.program(), definition)
     }
 }
 
@@ -546,9 +541,6 @@ struct Automaton<'p> {
     steps: Vec<Vec<(Predicate<'p>, usize)>>,
     start: usize,
     accept: usize,
-    /// Whether the definition drops a match that its own match from an
-    /// earlier start extends past.
-    drops_nested: bool,
 }
 
 struct Builder<'p> {
@@ -561,7 +553,6 @@ impl<'p> Automaton<'p> {
     fn of(
         program: &'p BoundProgram,
         definition: &'p BoundDefinition,
-        drops_nested: bool,
     ) -> Result<Self, &'static str> {
         let mut builder = Builder {
             program,
@@ -575,7 +566,6 @@ impl<'p> Automaton<'p> {
             steps: builder.steps,
             start,
             accept,
-            drops_nested,
         })
     }
 
@@ -781,8 +771,8 @@ enum Phase {
     /// The left definition is followed from the first token and can still
     /// match a longer span.
     Reading,
-    /// The left definition is followed from the latest token. One that drops
-    /// nested matches is also followed from every earlier token.
+    /// The left definition is followed from the latest token and from every
+    /// earlier one.
     Prefix,
     /// The left definition is followed as in [`Phase::Prefix`], from no token
     /// after `start`.
@@ -821,12 +811,12 @@ struct Reached {
 /// Neither body reads its left context, so a difference between the matches
 /// from one start is found on a sentence that begins there: `left` matches a
 /// sequence `right` does not match, or both match it and `right` alone matches
-/// a longer one that extends it. The remaining difference needs a `right` that
-/// drops nested matches: `right` matches from the first token past the end of
-/// a span `left` publishes from a later one. A `left` that drops nested
-/// matches publishes that span only when none of its own matches from an
-/// earlier token ends later. Sentences of this kind are searched after the
-/// others are exhausted: most pairs differ from one start.
+/// a longer one that extends it. The remaining difference comes from the
+/// nested-match drop: `right` matches from the first token past the end of a
+/// span `left` publishes from a later one. `left` publishes that span only
+/// when none of its own matches from an earlier token ends later. Sentences of
+/// this kind are searched after the others are exhausted: most pairs differ
+/// from one start.
 fn compare(left: &Automaton<'_>, right: &Automaton<'_>) -> Containment {
     let left_initial = left.closure([left.start]);
     let mut reached = vec![Reached {
@@ -860,8 +850,7 @@ fn compare(left: &Automaton<'_>, right: &Automaton<'_>) -> Containment {
             }
             tokens.reverse();
             // Each followed start whose match ends at `end` is published.
-            let earliest = if left.drops_nested { 0 } else { latest };
-            let start = (earliest..=latest)
+            let start = (0..=latest)
                 .find(|start| left.matches(&tokens[*start..end]))
                 .unwrap_or(latest);
             return Containment::Distinguished {
@@ -941,14 +930,9 @@ fn compare(left: &Automaton<'_>, right: &Automaton<'_>) -> Containment {
                 }
                 _ => {}
             }
-            if right.drops_nested
-                && matches!(phase, Phase::Start | Phase::Prefix)
-                && !next_right.is_empty()
-            {
+            if matches!(phase, Phase::Start | Phase::Prefix) && !next_right.is_empty() {
                 let mut followed = left_initial.clone();
-                if left.drops_nested {
-                    followed.extend(&next_left);
-                }
+                followed.extend(&next_left);
                 successors.push((Phase::Prefix, followed));
                 if phase == Phase::Prefix && !next_left.is_empty() {
                     successors.push((Phase::Held { start: length }, next_left.clone()));

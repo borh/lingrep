@@ -765,6 +765,12 @@ fn crossing_topology_oracle(heads: &[usize]) -> Vec<Match> {
             }
         }
     }
+    let selected = expected.clone();
+    expected.retain(|hit| {
+        !selected.iter().any(|other| {
+            other.pattern == hit.pattern && other.start < hit.start && other.end > hit.end
+        })
+    });
     expected.sort_by(|a, b| (a.start, a.end, &a.pattern).cmp(&(b.start, b.end, &b.pattern)));
     expected
 }
@@ -1284,6 +1290,69 @@ fn readings_with_different_measures_are_separate_matches() {
             )
         ]
     );
+}
+
+#[test]
+fn every_record_of_a_span_nested_in_an_earlier_match_is_dropped() {
+    // Over `n p` the body has two readings with different measures, which are
+    // two records of 1..3. The third alternative matches 0..4 around them.
+    let source = "interpret $a as reading {side: 1}\ninterpret $b as reading {side: 2}\n
+        interpret $c as reading {side: 3}\n
+        p := ((?<a> [upos=NOUN]) [upos=ADP] | [upos=NOUN] (?<b> [upos=ADP])
+              | (?<c> [upos=X]) [upos=NOUN] [upos=ADP] [upos=VERB])
+        measure tree(word).depth($a) as $da, tree(word).depth($b) as $db.";
+    let spans = |sentence: &str| {
+        match_catalog("nested-readings.lx", source, sentence)
+            .iter()
+            .map(|hit| (hit.start, hit.end, format!("{:?}", measured(hit))))
+            .collect::<Vec<_>>()
+    };
+    let inner = "\tn\tn\tNOUN\t_\t_\t3\tobj\t_\t_\n";
+    assert_eq!(
+        spans(&format!(
+            "1{inner}2\tp\tp\tADP\t_\t_\t1\tcase\t_\t_\n3\tv\tv\tVERB\t_\t_\t0\troot\t_\t_\n"
+        )),
+        [
+            (
+                0,
+                2,
+                r#"[("da", Some(1.0), "ok"), ("db", None, "unavailable")]"#.to_owned()
+            ),
+            (
+                0,
+                2,
+                r#"[("da", None, "unavailable"), ("db", Some(2.0), "ok")]"#.to_owned()
+            ),
+        ]
+    );
+    assert_eq!(
+        spans(
+            "1\tx\tx\tX\t_\t_\t4\tdep\t_\t_\n2\tn\tn\tNOUN\t_\t_\t4\tobj\t_\t_\n3\tp\tp\tADP\t_\t_\t2\tcase\t_\t_\n4\tv\tv\tVERB\t_\t_\t0\troot\t_\t_\n"
+        ),
+        [(
+            0,
+            4,
+            r#"[("da", None, "unavailable"), ("db", None, "unavailable")]"#.to_owned()
+        )]
+    );
+}
+
+#[test]
+fn a_relation_instance_inside_a_longer_match_of_its_definition_is_dropped() {
+    let source = "p := (?<h> [upos=VERB]) []* (?<d> [upos=NOUN]) where $h -[obj]-> $d.";
+    let spans = |outer_relation: &str| {
+        let sentence = format!(
+            "1\tv\tv\tVERB\t_\t_\t0\troot\t_\t_\n2\tw\tw\tVERB\t_\t_\t1\txcomp\t_\t_\n3\tn\tn\tNOUN\t_\t_\t2\tobj\t_\t_\n4\tm\tm\tNOUN\t_\t_\t1\t{outer_relation}\t_\t_\n"
+        );
+        match_catalog("nested-relation.lx", source, &sentence)
+            .iter()
+            .map(|hit| (hit.start, hit.end))
+            .collect::<Vec<_>>()
+    };
+    // `w -[obj]-> n` holds over 1..3 in both sentences. It is published only
+    // when the outer verb has no object after it.
+    assert_eq!(spans("obj"), [(0, 4)]);
+    assert_eq!(spans("obl"), [(1, 3)]);
 }
 
 #[test]

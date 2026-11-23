@@ -2,6 +2,7 @@ mod interpret;
 mod measure;
 
 use super::assertion::AssertionSession;
+use super::emit::EarlierStarts;
 use super::predicate::{
     CompiledPositionAssertion, Members, PREDICATE_SITE_CAPTURE_PREVIOUS_TOKEN,
     PREDICATE_SITE_CAPTURE_TOKEN, PREDICATE_SITE_EVALUATED_PREVIOUS_TOKEN,
@@ -565,6 +566,7 @@ impl Program {
         let mut matches = Vec::new();
         let mut observations = measure::Observations::default();
         let mut basic_observation_usable = None;
+        let mut earlier = EarlierStarts::default();
         for start in 0..tokens.len() {
             let mut accepted = Vec::new();
             let candidates = self.candidates::<
@@ -572,7 +574,10 @@ impl Program {
                 PREDICATE_SITE_EVALUATED_PREVIOUS_TOKEN, _, _
             >(predicates, tokens, start, assertions);
             for candidate in candidates {
-                if candidate.position <= start {
+                // A candidate that a span published from an earlier start
+                // extends past is dropped whichever branch selection it
+                // belongs to, so it is skipped before its constraints run.
+                if candidate.position <= start || earlier.extends_past(candidate.position) {
                     continue;
                 }
                 let mut counts = Vec::new();
@@ -611,6 +616,9 @@ impl Program {
                 }
             }
             accepted.sort_by_key(|hit| std::cmp::Reverse(hit.candidate.position));
+            if let Some(longest) = accepted.first() {
+                earlier.publish(longest.candidate.position);
+            }
             // The longest candidate of each branch selection is published. In
             // an interpreted pattern its other readings of that span join it
             // when they have the same measures, and are separate records of
