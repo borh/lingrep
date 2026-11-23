@@ -56,8 +56,57 @@ pub enum MetadataValue {
 pub type Metadata = Box<[(String, MetadataValue)]>;
 
 #[derive(Clone, Debug)]
+enum OwnerSelection {
+    /// No fields selected for this owner; the owner key is omitted from output.
+    Omitted,
+    /// Sorted, unique field names selected for this owner; the owner key is
+    /// always emitted (possibly as an empty object when fields are absent).
+    Selected(Box<[String]>),
+}
+
+impl OwnerSelection {
+    fn from_sorted(keys: Vec<String>) -> Self {
+        if keys.is_empty() {
+            Self::Omitted
+        } else {
+            Self::Selected(keys.into_boxed_slice())
+        }
+    }
+
+    fn is_selected(&self) -> bool {
+        matches!(self, Self::Selected(_))
+    }
+}
+
+#[derive(Clone, Debug)]
+enum DivisionSelection {
+    /// No division selectors requested; `"divisions"` is omitted from output.
+    Omitted,
+    /// Non-empty map from division kind to sorted, unique field names.
+    Selected(BTreeMap<String, Box<[String]>>),
+}
+
+impl DivisionSelection {
+    fn from_map(kinds: BTreeMap<String, Vec<String>>) -> Self {
+        if kinds.is_empty() {
+            Self::Omitted
+        } else {
+            Self::Selected(
+                kinds
+                    .into_iter()
+                    .map(|(kind, keys)| (kind, keys.into_boxed_slice()))
+                    .collect(),
+            )
+        }
+    }
+}
+
+#[derive(Clone, Debug)]
 pub struct SourceMetadataProjection {
     keys: Box<[String]>,
+    document: OwnerSelection,
+    sentence: OwnerSelection,
+    divisions: DivisionSelection,
 }
 
 enum MetadataOwner<'a> {
@@ -126,18 +175,33 @@ impl SourceMetadataProjection {
                 "requires at most 256 unique bounded selectors",
             ));
         }
+        let mut document_keys = Vec::new();
+        let mut sentence_keys = Vec::new();
+        let mut division_keys: BTreeMap<String, Vec<String>> = BTreeMap::new();
         for key in &keys {
-            metadata_owner(key)?;
+            match metadata_owner(key)? {
+                MetadataOwner::Document(name) => document_keys.push(name.to_owned()),
+                MetadataOwner::Sentence(name) => sentence_keys.push(name.to_owned()),
+                MetadataOwner::Division(kind, name) => {
+                    division_keys
+                        .entry(kind.to_owned())
+                        .or_default()
+                        .push(name.to_owned());
+                }
+            }
         }
         Ok(Self {
             keys: keys.into_boxed_slice(),
+            document: OwnerSelection::from_sorted(document_keys),
+            sentence: OwnerSelection::from_sorted(sentence_keys),
+            divisions: DivisionSelection::from_map(division_keys),
         })
     }
     pub fn keys(&self) -> &[String] {
         &self.keys
     }
     pub fn needs_divisions(&self) -> bool {
-        self.keys.iter().any(|key| key.starts_with("@division("))
+        matches!(self.divisions, DivisionSelection::Selected(_))
     }
 
     /// Projects selected values under their actual owners, preserving division identities.
@@ -147,38 +211,26 @@ impl SourceMetadataProjection {
         sentence: &Metadata,
         structure: &StructuralContext,
     ) -> io::Result<serde_json::Map<String, serde_json::Value>> {
-        let mut document_fields = serde_json::Map::new();
-        let mut sentence_fields = serde_json::Map::new();
-        let mut document_selected = false;
-        let mut sentence_selected = false;
-        let mut kinds: std::collections::BTreeMap<&str, Vec<&str>> = Default::default();
-        for key in &self.keys {
-            match metadata_owner(key)? {
-                MetadataOwner::Document(key) => {
-                    document_selected = true;
-                    if let Some((_, value)) = document.iter().find(|(name, _)| name == key) {
-                        document_fields.insert(key.into(), value.to_json());
-                    }
-                }
-                MetadataOwner::Sentence(key) => {
-                    sentence_selected = true;
-                    if let Some((_, value)) = sentence.iter().find(|(name, _)| name == key) {
-                        sentence_fields.insert(key.into(), value.to_json());
-                    }
-                }
-                MetadataOwner::Division(kind, key) => {
-                    kinds.entry(kind).or_default().push(key);
+        let mut object = serde_json::Map::new();
+        if let OwnerSelection::Selected(keys) = &self.document {
+            let mut document_fields = serde_json::Map::new();
+            for key in keys {
+                if let Some((_, value)) = document.iter().find(|(name, _)| name == key) {
+                    document_fields.insert(key.clone(), value.to_json());
                 }
             }
-        }
-        let mut object = serde_json::Map::new();
-        if document_selected {
             object.insert("document".into(), document_fields.into());
         }
-        if sentence_selected {
+        if let OwnerSelection::Selected(keys) = &self.sentence {
+            let mut sentence_fields = serde_json::Map::new();
+            for key in keys {
+                if let Some((_, value)) = sentence.iter().find(|(name, _)| name == key) {
+                    sentence_fields.insert(key.clone(), value.to_json());
+                }
+            }
             object.insert("sentence".into(), sentence_fields.into());
         }
-        if !kinds.is_empty() {
+        if let DivisionSelection::Selected(kinds) = &self.divisions {
             for kind in kinds.keys() {
                 if !structure.observes(kind) {
                     return Err(invalid_metadata(
@@ -195,7 +247,7 @@ impl SourceMetadataProjection {
                 let metadata = division
                     .metadata
                     .iter()
-                    .filter(|(key, _)| keys.contains(&key.as_str()))
+                    .filter(|(key, _)| keys.binary_search(key).is_ok())
                     .map(|(key, value)| (key.clone(), value.to_json()))
                     .collect::<serde_json::Map<_, _>>();
                 divisions.push(serde_json::json!({"id":division.id.0,"kind":division.kind,"parent_id":division.parent_id.map(|id|id.0),"source_id":division.source_id,"metadata":metadata}));
@@ -210,44 +262,33 @@ impl SourceMetadataProjection {
         &self,
         object: &serde_json::Map<String, serde_json::Value>,
     ) -> io::Result<()> {
-        let mut allowed: std::collections::BTreeMap<&str, std::collections::BTreeSet<&str>> =
-            Default::default();
-        let mut kinds: std::collections::BTreeMap<&str, std::collections::BTreeSet<&str>> =
-            Default::default();
-        for key in &self.keys {
-            match metadata_owner(key)? {
-                MetadataOwner::Document(key) => {
-                    allowed.entry("document").or_default().insert(key);
-                }
-                MetadataOwner::Sentence(key) => {
-                    allowed.entry("sentence").or_default().insert(key);
-                }
-                MetadataOwner::Division(kind, key) => {
-                    kinds.entry(kind).or_default().insert(key);
-                }
-            }
-        }
-        if object.len() != allowed.len() + usize::from(!kinds.is_empty()) {
+        let expected_owners = usize::from(self.document.is_selected())
+            + usize::from(self.sentence.is_selected())
+            + usize::from(self.needs_divisions());
+        if object.len() != expected_owners {
             return Err(invalid_metadata(
                 "source metadata projection",
                 "owner selection differs from the run",
             ));
         }
-        for (owner, keys) in allowed {
+        for (owner, selection) in [("document", &self.document), ("sentence", &self.sentence)] {
+            let OwnerSelection::Selected(keys) = selection else {
+                continue;
+            };
             let Some(fields) = object.get(owner).and_then(serde_json::Value::as_object) else {
                 return Err(invalid_metadata(
                     "source metadata projection",
                     "selected owner must be an object",
                 ));
             };
-            if fields.keys().any(|key| !keys.contains(key.as_str())) {
+            if fields.keys().any(|key| keys.binary_search(key).is_err()) {
                 return Err(invalid_metadata(
                     "source metadata projection",
                     "unselected metadata field",
                 ));
             }
         }
-        if !kinds.is_empty() {
+        if let DivisionSelection::Selected(kinds) = &self.divisions {
             let Some(divisions) = object
                 .get("divisions")
                 .and_then(serde_json::Value::as_array)
@@ -301,7 +342,7 @@ impl SourceMetadataProjection {
                 if division.len() != 5
                     || !division.contains_key("parent_id")
                     || previous.is_some_and(|previous| previous >= id)
-                    || metadata.keys().any(|key| !keys.contains(key.as_str()))
+                    || metadata.keys().any(|key| keys.binary_search(key).is_err())
                 {
                     return Err(invalid_metadata(
                         "source metadata projection",
