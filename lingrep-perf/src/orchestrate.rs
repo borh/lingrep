@@ -757,7 +757,7 @@ pub fn declare(declaration: Declaration) -> Result<Campaign, OrchestrateError> {
 /// must also appear among the authenticated prepared-artifact workloads.
 pub fn declare_with_catalog_corpora(
     declaration: Declaration,
-    catalog_corpora: BTreeMap<String, String>,
+    mut catalog_corpora: BTreeMap<String, String>,
 ) -> Result<Campaign, OrchestrateError> {
     // Required here rather than tolerated, so the only campaigns without a
     // sealed command are the ones that already exist on disk.
@@ -767,6 +767,9 @@ pub fn declare_with_catalog_corpora(
     let mut catalogs = campaign_catalogs();
     if declaration.calibration_wall_tolerance_pct.is_some() {
         catalogs.retain(|catalog| catalog.path == declaration.primary_catalog);
+        // A default corpus maps every tracked catalog; a calibration measures
+        // only the primary, so the other entries have no run to resolve.
+        catalog_corpora.retain(|catalog, _| *catalog == declaration.primary_catalog);
     }
     if !catalogs
         .iter()

@@ -198,6 +198,34 @@ fn machine() -> Machine {
     }
 }
 
+/// `--default-corpus` maps every tracked catalog, but a calibration measures
+/// only the primary; the mapping for the rest must not refuse the declaration.
+#[test]
+fn a_calibration_over_a_prepared_corpus_seals_only_the_primary_mapping() {
+    let dir = scratch("calibration-prepared-corpus");
+    let binary = dir.join("arm");
+    write(&binary, "binary");
+    let mut plan = declaration(vec![TemplateArg::Catalog, TemplateArg::Corpus], &binary);
+    plan.calibration_wall_tolerance_pct = Some(2.0);
+    plan.escalation_ladder = vec![6];
+    plan.workload = vec![prepared_workload("corpus.lingcorpus")];
+    let campaign = declare_with_catalog_corpora(plan, corpus_mapping("corpus.lingcorpus"))
+        .expect("the primary catalog's mapping is sealed");
+    assert_eq!(campaign.manifest.catalogs.len(), 1);
+    let primary = campaign.manifest.primary_catalog.clone();
+    assert_eq!(
+        campaign
+            .manifest
+            .expected_argv(&primary)
+            .expect("the mapping resolves")
+            .expect("the command is sealed")
+            .last()
+            .map(String::as_str),
+        Some("corpus.lingcorpus")
+    );
+    std::fs::remove_dir_all(dir).unwrap();
+}
+
 /// A manifest that is valid enough to carry a workload. Only the workload is
 /// read by the functions under test here.
 fn manifest_with(workload: Vec<crate::campaign::WorkloadInput>) -> Manifest {
