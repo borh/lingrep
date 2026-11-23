@@ -87,61 +87,17 @@ impl PreparedBuildEvents {
         ),
         DiscoveryError,
     > {
-        if validated.is_directory()
-            && matches!(
-                config,
-                CorpusReadConfig::Soranoha | CorpusReadConfig::SoranohaTei
-            )
-        {
-            return Err(DiscoveryError::IoAt {
-                logical_path: ".".into(),
-                source: io::Error::new(
-                    io::ErrorKind::InvalidInput,
-                    "soranoha input must be a bulk archive file (the .zip downloaded from soranoha.org)",
-                ),
-            });
-        }
-        if validated.is_directory()
-            && !matches!(
-                config,
-                CorpusReadConfig::Markdown(_)
-                    | CorpusReadConfig::Plain
-                    | CorpusReadConfig::Conllu
-                    | CorpusReadConfig::Bccwj
-                    | CorpusReadConfig::Tei
-            )
-        {
-            return Err(DiscoveryError::IoAt {
-                logical_path: ".".into(),
-                source: io::Error::new(
-                    io::ErrorKind::InvalidInput,
-                    "a directory corpus requires the Markdown, plain-text, CoNLL-U, TEI, or BCCWJ reader",
-                ),
-            });
-        }
+        crate::direct_source::validate_root_reader_compatibility(&validated, &config)?;
         let discovery = if matches!(config, CorpusReadConfig::Bccwj) {
-            let root = validated.root().to_path_buf();
-            let inventory = lingrep_core::corpus::bccwj::BccwjInventory::discover(&root, limits)
-                .map_err(|source| DiscoveryError::IoAt {
-                    logical_path: root.clone(),
-                    source,
-                })?;
-            // The context tables are part of the source identity: observed
-            // before the first zip's begin_source, in the same order the
-            // naming pass and direct execution use.
-            crate::bccwj_seam::observe_bccwj_context_files(&inventory, &root, &observation)
-                .map_err(|source| DiscoveryError::IoAt {
-                    logical_path: root.clone(),
-                    source,
-                })?;
-            PreparedDiscovery::Bccwj {
-                cursor: crate::bccwj_seam::BccwjCursor::new(inventory.zips),
-                stream: crate::bccwj_seam::BccwjStream::new(root, record_limit),
-            }
+            let (cursor, stream) = crate::direct_source::open_bccwj_discovery(
+                validated.root(),
+                limits,
+                &observation,
+                record_limit,
+            )?;
+            PreparedDiscovery::Bccwj { cursor, stream }
         } else {
-            let file_kind = config
-                .directory_file_kind()
-                .unwrap_or(lingrep_core::corpus::CorpusFileKind::Markdown);
+            let file_kind = crate::direct_source::directory_file_kind(&config);
             PreparedDiscovery::Generic(Box::new(CorpusDiscovery::from_validated_root_for_kind(
                 validated, file_kind,
             )?))
