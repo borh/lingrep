@@ -2825,31 +2825,55 @@ mod tests {
         (bound, input)
     }
 
+    const GRAPH_BATCH_SENTENCES: usize = 8;
+
     #[test]
-    fn matching_batch_rejects_aggregate_output_from_individually_admitted_sentences() {
-        let mut clauses = (0..7)
-            .map(|index| format!("$v -[obj]-> (?<b{index}> [])"))
-            .collect::<Vec<_>>();
-        clauses.push(
-            (0..7)
-                .map(|index| format!("$b{index}"))
-                .collect::<Vec<_>>()
-                .join(" < "),
+    fn output_limited_graph_batches_are_rejected_and_retried() {
+        let module = module_path!().split_once("::").unwrap().1;
+        let worker = format!("{module}::exercise_graph_batch_output_budget");
+        let output = std::process::Command::new(std::env::current_exe().unwrap())
+            .env(
+                crate::test_scale::ScaleKnob::MatchOutputBytes.variable(),
+                (64 * 1024).to_string(),
+            )
+            .args(["--ignored", "--exact", &worker])
+            .output()
+            .unwrap();
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        assert!(
+            output.status.success() && stdout.contains("1 passed"),
+            "{stdout}\n{}",
+            String::from_utf8_lossy(&output.stderr)
         );
-        let (bound, input) = graph_fixture_with_clauses(13, &clauses.join(", "));
+    }
+
+    #[test]
+    #[ignore = "subprocess with an isolated match-output budget"]
+    fn exercise_graph_batch_output_budget() {
+        let (bound, input) =
+            graph_fixture_with_clauses(5, "$v -[obj]-> (?<a> []), $v -[obj]-> (?<b> []), $a < $b");
         let expected = bound.find_matches_input(&input).unwrap();
-        assert_eq!(expected.len(), 792);
+        assert_eq!(expected.len(), 6);
+        assert_graph_batch_rejects_output(&bound, &input, &expected);
+        assert_executor_retries_graph_batch(&bound, &input, &expected);
+    }
+
+    fn assert_graph_batch_rejects_output(
+        bound: &crate::fsm::BoundCatalog,
+        input: &BoundSentenceInput,
+        expected: &[crate::fsm::Match],
+    ) {
         for threads in [1, 4] {
             let pool = rayon::ThreadPoolBuilder::new()
                 .num_threads(threads)
                 .build()
                 .unwrap();
-            let small = crate::fsm::BoundSentenceMatcher::new(&bound)
+            let small = crate::fsm::BoundSentenceMatcher::new(bound)
                 .match_all(&pool, &[input.clone(), input.clone()])
                 .unwrap();
-            assert_eq!(small, vec![expected.clone(), expected.clone()]);
-            let large = crate::fsm::BoundSentenceMatcher::new(&bound)
-                .match_all(&pool, &vec![input.clone(); 32]);
+            assert_eq!(small, vec![expected.to_vec(), expected.to_vec()]);
+            let large = crate::fsm::BoundSentenceMatcher::new(bound)
+                .match_all(&pool, &vec![input.clone(); GRAPH_BATCH_SENTENCES]);
             assert!(
                 matches!(
                     large,
@@ -2859,15 +2883,18 @@ mod tests {
                 ),
                 "aggregate output must exceed the matching batch budget"
             );
-            let fresh = crate::fsm::BoundSentenceMatcher::new(&bound)
-                .match_all(&pool, std::slice::from_ref(&input))
+            let fresh = crate::fsm::BoundSentenceMatcher::new(bound)
+                .match_all(&pool, std::slice::from_ref(input))
                 .unwrap();
-            assert_eq!(fresh, vec![expected.clone()]);
+            assert_eq!(fresh, vec![expected.to_vec()]);
         }
     }
 
-    #[test]
-    fn execution_splits_output_limited_batches_and_preserves_complete_graph_matches() {
+    fn assert_executor_retries_graph_batch(
+        bound: &crate::fsm::BoundCatalog,
+        input: &BoundSentenceInput,
+        expected: &[crate::fsm::Match],
+    ) {
         use crate::execution::{
             AnalysisBinding, CancellationFlag, ExecutionBatch, ExecutionError, ExecutionLimits,
             ExecutionSentence, MatchSink, PolicySelection, SentenceAdmission, SentenceBatchSource,
@@ -2908,31 +2935,19 @@ mod tests {
                 })
             }
         }
-        let mut clauses = (0..7)
-            .map(|index| format!("$v -[obj]-> (?<b{index}> [])"))
-            .collect::<Vec<_>>();
-        clauses.push(
-            (0..7)
-                .map(|index| format!("$b{index}"))
-                .collect::<Vec<_>>()
-                .join(" < "),
-        );
-        let (bound, input) = graph_fixture_with_clauses(13, &clauses.join(", "));
-        let expected = bound.find_matches_input(&input).unwrap();
-        assert_eq!(expected.len(), 792);
         let charge = input.resident_bytes().unwrap();
         for threads in [1, 4] {
             let source = Source(Some(ExecutionBatch::bound_tokenized_with_charges(
-                (0..32)
+                (0..GRAPH_BATCH_SENTENCES as u64)
                     .map(|ordinal| ExecutionSentence {
                         location: SentenceLocation::run_local(ordinal),
                         value: input.clone(),
                     })
                     .collect(),
-                vec![charge; 32],
+                vec![charge; GRAPH_BATCH_SENTENCES],
             )));
             let mut sink = Sink {
-                expected: expected.clone(),
+                expected: expected.to_vec(),
                 ordinal: 0,
             };
             type NoAnalyzer = crate::testing::execution::FixtureSession<
@@ -2941,13 +2956,13 @@ mod tests {
             let outcome = execute_analyzed::<_, NoAnalyzer, _, _, _>(
                 source,
                 AnalysisBinding::Prepared(crate::corpus::conllu::token_schema()),
-                &bound,
+                bound,
                 &rayon::ThreadPoolBuilder::new()
                     .num_threads(threads)
                     .build()
                     .unwrap(),
                 &ExecutionLimits::default(),
-                32,
+                GRAPH_BATCH_SENTENCES,
                 &CancellationFlag::new(),
                 &mut sink,
                 &mut |_, _: &Sink| {},
@@ -2956,13 +2971,19 @@ mod tests {
                 &SentenceAdmission::All,
             )
             .unwrap();
-            assert_eq!(sink.ordinal, 32);
+            assert_eq!(sink.ordinal, GRAPH_BATCH_SENTENCES as u64);
             let crate::execution::RunOutcome::Completed(report) = outcome else {
                 panic!("unexpected cancellation")
             };
-            assert_eq!(report.sentences_admitted, 32);
-            assert_eq!(report.matches_found, 32 * 792);
-            assert_eq!(report.records_emitted, 32 * 792);
+            assert_eq!(report.sentences_admitted, GRAPH_BATCH_SENTENCES as u64);
+            assert_eq!(
+                report.matches_found,
+                GRAPH_BATCH_SENTENCES as u64 * expected.len() as u64
+            );
+            assert_eq!(
+                report.records_emitted,
+                GRAPH_BATCH_SENTENCES as u64 * expected.len() as u64
+            );
         }
     }
 
