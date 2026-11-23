@@ -190,30 +190,15 @@ run_full_tests_and_extras() {
     scripts/check-live-launchers.py
 }
 
-# Both lanes, because a public item's doc linking a private one fails `cargo
-# doc` while passing `cargo test` and `cargo clippy` — so without this the
-# error reaches a contributor only when someone runs the full lane, or never.
-#
-# The second invocation is not redundant. `cargo doc --no-deps` selects
-# targets, not features, so every `#[cfg(feature = "screen")]` module is
-# invisible to it, including `lingrep_perf::orchestrate`.
-# Both lanes, because the counted-work pin is what a matcher change moves and a
-# matcher change is exactly what gets pushed after `--fast`.
 run_screen_lane() {
     echo "Running lingrep-perf with the counted-work screen enabled"
     cargo test -p lingrep-perf --features screen --quiet 2>&1 | tee "${TMPDIR:-/tmp}/cargo-test-lingrep-perf.log"
 
-    # `lingrep-core`'s own instrumentation tests, which nothing else runs. The line
-    # above tests `lingrep-perf`'s targets; it builds `lingrep-core` as a library, so
-    # every `#[cfg(feature = "bench-instrumentation")]` test module inside
-    # `lingrep-core` is neither compiled nor run — the same target-versus-feature
-    # gap as the doc lane below, one level further in.
-    #
-    # Without this lane, a change that moves a matcher pin under these features
-    # passes every other lane. The feature set matches the line above,
-    # so this reuses that build rather than compiling `lingrep-core` twice.
-    cargo test -p lingrep-core --features testing,bench-instrumentation --lib --quiet 2>&1 |
+    local core_tests=(scripts/cargo-test-selected.py -p lingrep-core --features testing,bench-instrumentation --lib)
+    "${core_tests[@]}" -- ::instrumentation_ --quiet 2>&1 |
         tee "${TMPDIR:-/tmp}/cargo-test-lingrep-core-instrumentation.log"
+    "${core_tests[@]}" -- fsm::compiler::published_baseline::repository_catalog_published_records --exact --quiet 2>&1 |
+        tee -a "${TMPDIR:-/tmp}/cargo-test-lingrep-core-instrumentation.log"
 }
 
 run_doc_lane() {

@@ -1483,7 +1483,7 @@ mod tests {
 
     #[cfg(feature = "bench-instrumentation")]
     #[test]
-    fn finite_positive_classifier_is_exhaustive_and_canonical() {
+    fn instrumentation_finite_positive_classifier_is_exhaustive_and_canonical() {
         let cases = vec![
             (
                 AttrValueType::Single("b".into()),
@@ -1585,7 +1585,7 @@ mod tests {
 
     #[cfg(feature = "bench-instrumentation")]
     #[test]
-    fn scheme_a_selection_ignores_attribute_and_operand_source_order() {
+    fn instrumentation_scheme_a_selection_ignores_attribute_and_operand_source_order() {
         let first = [
             attr(TokenAttributeIndex::Orth, AttrValueType::Single("z".into())),
             attr(
@@ -1912,7 +1912,7 @@ mod tests {
 
     #[cfg(feature = "bench-instrumentation")]
     #[test]
-    fn predicate_metrics_distinguish_hits_recomputations_and_other_calls() {
+    fn instrumentation_predicate_metrics_distinguish_hits_recomputations_and_other_calls() {
         let expected = [attr(
             TokenAttributeIndex::Orth,
             AttrValueType::Single("match".into()),
@@ -1944,7 +1944,7 @@ mod tests {
 
     #[cfg(feature = "bench-instrumentation")]
     #[test]
-    fn predicate_metrics_attribute_every_call_site() {
+    fn instrumentation_predicate_metrics_attribute_every_call_site() {
         let expected = [attr(
             TokenAttributeIndex::Orth,
             AttrValueType::Single("match".into()),
@@ -2023,7 +2023,7 @@ mod tests {
 
     #[cfg(feature = "bench-instrumentation")]
     #[test]
-    fn unmemoized_predicate_metrics_keep_distinct_pair_invariant() {
+    fn instrumentation_unmemoized_predicate_metrics_keep_distinct_pair_invariant() {
         let expected = [attr(
             TokenAttributeIndex::Orth,
             AttrValueType::Single("match".into()),

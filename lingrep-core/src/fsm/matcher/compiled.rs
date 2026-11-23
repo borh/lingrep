@@ -2043,7 +2043,7 @@ mod tests {
 
     #[cfg(feature = "bench-instrumentation")]
     #[test]
-    fn spawn_candidate_metrics_pin_discrimination_widths_and_shapes() {
+    fn instrumentation_spawn_candidate_metrics_pin_discrimination_widths_and_shapes() {
         let matcher = compile_for_test(
             "spawn-candidates.lx",
             concat!(
@@ -2135,7 +2135,7 @@ mod tests {
 
     #[cfg(feature = "bench-instrumentation")]
     #[test]
-    fn spawn_candidate_metrics_exclude_condition_rejected_groups() {
+    fn instrumentation_spawn_candidate_metrics_exclude_condition_rejected_groups() {
         let matcher = compile_for_test(
             "spawn-readiness.lx",
             concat!(
@@ -2307,7 +2307,7 @@ mod tests {
 
     #[cfg(feature = "bench-instrumentation")]
     #[test]
-    fn benchmark_entry_preserves_matches_and_reports_assertion_work() {
+    fn instrumentation_benchmark_entry_preserves_matches_and_reports_assertion_work() {
         let matcher = compile_catalog(
             PatternSource::named(
                 "assertion-metrics.lx",
@@ -2332,7 +2332,7 @@ mod tests {
 
     #[cfg(feature = "bench-instrumentation")]
     #[test]
-    fn execution_metrics_preserve_matches_and_count_capture_work() {
+    fn instrumentation_execution_metrics_preserve_matches_and_count_capture_work() {
         let matcher = compile_catalog(
             PatternSource::named(
                 "execution-metrics.lx",
@@ -2375,7 +2375,7 @@ mod tests {
 
     #[cfg(feature = "bench-instrumentation")]
     #[test]
-    fn execution_metrics_isolate_capture_and_evaluated_sites() {
+    fn instrumentation_execution_metrics_isolate_capture_and_evaluated_sites() {
         let capture = metrics_for(
             "pattern captured := (?<x> [text=a]).",
             vec![token("a", "X")],
@@ -2400,7 +2400,7 @@ mod tests {
     /// them. These two do see it.
     #[cfg(feature = "bench-instrumentation")]
     #[test]
-    fn execution_metrics_count_tree_evaluator_candidate_volume() {
+    fn instrumentation_execution_metrics_count_tree_evaluator_candidate_volume() {
         // The dense machine carries no candidates, so a catalog it executes
         // whole leaves the pair at zero rather than reporting matcher work as
         // candidate work.
@@ -2433,7 +2433,7 @@ mod tests {
 
     #[cfg(feature = "bench-instrumentation")]
     #[test]
-    fn execution_metrics_zero_absent_sites() {
+    fn instrumentation_execution_metrics_zero_absent_sites() {
         let metrics = metrics_for("pattern plain := [text=a].", vec![token("a", "X")]);
 
         assert_eq!(metrics.nfa_previous_token_predicate_calls, 0);
@@ -2446,7 +2446,7 @@ mod tests {
 
     #[cfg(feature = "bench-instrumentation")]
     #[test]
-    fn execution_metrics_dense_single_token_signature() {
+    fn instrumentation_execution_metrics_dense_single_token_signature() {
         let metrics = metrics_for("pattern plain := [text=a].", vec![token("a", "X")]);
 
         assert_eq!(metrics.dense_main_transition_predicate_calls, 1);

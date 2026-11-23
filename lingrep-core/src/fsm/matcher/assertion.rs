@@ -1451,7 +1451,7 @@ mod tests {
     /// regression would show here as a ratio near 16 rather than 4.
     #[cfg(feature = "bench-instrumentation")]
     #[test]
-    fn anchor_frontier_work_is_linear_in_sentence_length() {
+    fn instrumentation_anchor_frontier_work_is_linear_in_sentence_length() {
         /// The compiled `[upos=PUNCT]+` closure has two seed-boundary edges and
         /// three reachable closure edges per consumed token. Asserted rather
         /// than merely divided out: the ratio below is blind to a constant
@@ -1573,7 +1573,7 @@ mod tests {
 
     #[cfg(feature = "bench-instrumentation")]
     #[test]
-    fn benchmark_metrics_count_queries_and_materialize_each_row_once() {
+    fn instrumentation_benchmark_metrics_count_queries_and_materialize_each_row_once() {
         let tokens = [token("a"), token("b")];
         let mut predicates = PredicateCatalog::default();
         let catalog = ab_star(LookDirection::PrecededBy).compile(&mut predicates);
@@ -1598,7 +1598,7 @@ mod tests {
     /// convergence performs 24 inspections on the same row.
     #[cfg(feature = "bench-instrumentation")]
     #[test]
-    fn closure_inspects_only_edges_reachable_from_new_frontier_states() {
+    fn instrumentation_closure_inspects_only_edges_reachable_from_new_frontier_states() {
         let tokens = [token("a"), token("b")];
         let mut predicates = PredicateCatalog::default();
         let catalog = ab_star(LookDirection::PrecededBy).compile(&mut predicates);
@@ -1613,7 +1613,7 @@ mod tests {
     /// revisiting the convergent edge at every boundary.
     #[cfg(feature = "bench-instrumentation")]
     #[test]
-    fn epsilon_only_closure_activates_each_reachable_state_once() {
+    fn instrumentation_epsilon_only_closure_activates_each_reachable_state_once() {
         let automaton = AssertionAutomaton {
             states: 4,
             start: 0,
@@ -1758,7 +1758,7 @@ mod tests {
     /// edges. `ab_star` has two consume edges and consumes two input tokens.
     #[cfg(feature = "bench-instrumentation")]
     #[test]
-    fn consume_inspects_only_consume_edges() {
+    fn instrumentation_consume_inspects_only_consume_edges() {
         let tokens = [token("a"), token("b")];
         let mut predicates = PredicateCatalog::default();
         let catalog = ab_star(LookDirection::PrecededBy).compile(&mut predicates);
@@ -1773,7 +1773,7 @@ mod tests {
     /// boundary/fact work and from the frontier scan that seeds each closure.
     #[cfg(feature = "bench-instrumentation")]
     #[test]
-    fn closure_metrics_attribute_edge_kinds_and_frontier_seed_scans() {
+    fn instrumentation_closure_metrics_attribute_edge_kinds_and_frontier_seed_scans() {
         let automaton = AssertionAutomaton {
             states: 3,
             start: 0,

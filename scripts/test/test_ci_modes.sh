@@ -120,7 +120,15 @@ assert_lacks_prefix() {
     fi
 }
 
+assert_instrumentation_contract() {
+    local selection='script-args:cargo-test-selected.py -p lingrep-core --features testing,bench-instrumentation --lib --'
+    assert_has "$selection ::instrumentation_ --quiet"
+    assert_has "$selection fsm::compiler::published_baseline::repository_catalog_published_records --exact --quiet"
+    assert_lacks_prefix "cargo:test -p lingrep-core --features testing,bench-instrumentation --lib --quiet"
+}
+
 assert_full_contract() {
+    assert_instrumentation_contract
     assert_has "python:scripts/check-adapter-wheels.py"
     assert_has "cargo:build -p lingrep-perf --bin lingrep-perf --quiet"
     assert_has "warmup-estimator:$temporary/target/debug/lingrep-perf"
@@ -164,6 +172,7 @@ fi
 grep -F "usage:" "$temporary/stderr.log" >/dev/null
 
 run_mode --fast
+assert_instrumentation_contract
 assert_has "python:scripts/check-adapter-wheels.py"
 assert_has "script:check-build-env.sh"
 assert_has "script:test_ci_modes.sh"
