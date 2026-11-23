@@ -556,13 +556,14 @@ impl FrequencyViews {
                 Arc::clone(&documents.provenance),
             )
             .map_err(|message| format!("catalog {catalog}: {message}"))?;
+            let mut sources = definition_sources(source);
             let patterns = table
                 .pattern_names()
                 .enumerate()
                 .map(|(pattern, name)| {
                     Ok(PatternSource {
                         name: name.to_owned(),
-                        source: definition_source(source, name),
+                        source: sources.remove(name),
                         key_fields: table.pattern_key_fields(pattern)?,
                     })
                 })
@@ -959,14 +960,19 @@ fn group_text(group: &Group<'_>) -> String {
     }
 }
 
-fn definition_source(source: &str, name: &str) -> Option<String> {
+fn definition_sources(source: &str) -> HashMap<String, String> {
     let mut parser = tree_sitter::Parser::new();
-    parser
+    if parser
         .set_language(&tree_sitter_lingrep::LANGUAGE.into())
-        .ok()?;
+        .is_err()
+    {
+        return HashMap::new();
+    }
     let text = source.replace('\r', "\n");
-    let tree = parser.parse(&text, None)?;
-    let mut found = Vec::new();
+    let Some(tree) = parser.parse(&text, None) else {
+        return HashMap::new();
+    };
+    let mut found: HashMap<String, Vec<&str>> = HashMap::new();
     let mut run_start = None;
     let root = tree.root_node();
     let mut cursor = root.walk();
@@ -979,19 +985,29 @@ fn definition_source(source: &str, name: &str) -> Option<String> {
             }
             "pattern_definition" => {
                 let start = run_start.take().unwrap_or(node.start_byte());
-                if node
+                if let Some(name) = node
                     .child_by_field_name("name")
                     .and_then(|named| text.get(named.byte_range()))
-                    == Some(name)
                     && let Some(definition) = text.get(start..node.end_byte())
                 {
-                    found.push(definition.trim_end().to_owned());
+                    found
+                        .entry(name.to_owned())
+                        .or_default()
+                        .push(definition.trim_end());
                 }
             }
             _ => run_start = None,
         }
     }
-    (!found.is_empty()).then(|| found.join("\n\n"))
+    found
+        .into_iter()
+        .map(|(name, definitions)| (name, definitions.join("\n\n")))
+        .collect()
+}
+
+#[cfg(test)]
+fn definition_source(source: &str, name: &str) -> Option<String> {
+    definition_sources(source).remove(name)
 }
 
 fn check_cancellation(cancellation: &CancellationFlag) -> Result<(), QueryError> {
@@ -2389,5 +2405,22 @@ pub(crate) mod tests {
             shell_word("@document.a = \"it's\""),
             "'@document.a = \"it'\\''s\"'"
         );
+    }
+
+    #[test]
+    fn definition_sources_extracts_every_pattern_in_one_parse() {
+        let source = "bundle grp\n  category: \"main\"\nend\n\nuse @grp\nkey: [lemma]\npattern a := [upos=NOUN].\n# separator\npattern b := [upos=VERB].\noverride category: \"alt\"\npattern a := [upos=ADJ].\n";
+        let sources = definition_sources(source);
+        assert_eq!(
+            sources.get("a").map(String::as_str),
+            Some(
+                "use @grp\nkey: [lemma]\npattern a := [upos=NOUN].\n\noverride category: \"alt\"\npattern a := [upos=ADJ]."
+            )
+        );
+        assert_eq!(
+            sources.get("b").map(String::as_str),
+            Some("pattern b := [upos=VERB].")
+        );
+        assert!(!sources.contains_key("missing"));
     }
 }
