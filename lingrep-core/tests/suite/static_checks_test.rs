@@ -5,6 +5,8 @@ use lingrep_core::fsm::{
     WitnessValue, compile_catalog,
 };
 use lingrep_core::token_match::{TokenAttributeIndex, TokenInfo};
+use std::collections::BTreeSet;
+use std::ops::Range;
 
 fn compile(source: &str) -> CompileOutput {
     compile_catalog(
@@ -143,15 +145,27 @@ fn witness_tokens(witness: &[WitnessToken]) -> Vec<TokenInfo> {
         .collect()
 }
 
-/// The definitions that publish the leading `span` tokens of `tokens`.
-fn publishing(output: &CompileOutput, tokens: &[TokenInfo], span: usize) -> Vec<String> {
+/// The definitions that publish the tokens `span` of `tokens`.
+fn publishing(output: &CompileOutput, tokens: &[TokenInfo], span: &Range<usize>) -> Vec<String> {
     output
         .matcher
         .find_matches(tokens)
         .into_iter()
-        .filter(|found| found.start == 0 && found.end == span)
+        .filter(|found| (found.start..found.end) == *span)
         .map(|found| found.pattern.to_string())
         .collect()
+}
+
+/// The spans each of `left` and `right` publishes on `tokens`.
+fn published_spans(output: &CompileOutput, tokens: &[TokenInfo]) -> [BTreeSet<(usize, usize)>; 2] {
+    let found = output.matcher.find_matches(tokens);
+    ["left", "right"].map(|name| {
+        found
+            .iter()
+            .filter(|found| found.pattern == name)
+            .map(|found| (found.start, found.end))
+            .collect()
+    })
 }
 
 #[test]
@@ -194,7 +208,7 @@ fn containment_by_form() {
         let Containment::Distinguished { tokens, span } = verdict else {
             panic!("{contained} in {containing}: {verdict:?}");
         };
-        let publishing = publishing(&compile(SOURCE), &witness_tokens(&tokens), span);
+        let publishing = publishing(&compile(SOURCE), &witness_tokens(&tokens), &span);
         assert!(
             publishing.iter().any(|name| name == contained)
                 && !publishing.iter().any(|name| name == containing),
@@ -223,7 +237,7 @@ fn a_distinguishing_sequence_is_a_shortest_one() {
     let Containment::Distinguished { tokens, span } = verdict else {
         panic!("{verdict:?}");
     };
-    assert_eq!((tokens.len(), span), (2, 2), "{tokens:?}");
+    assert_eq!((tokens.len(), span), (2, 0..2), "{tokens:?}");
 }
 
 #[test]
@@ -233,17 +247,66 @@ fn a_longer_match_from_the_same_start_is_a_difference() {
     const SOURCE: &str = "short := [text=a].\nlong := [text=a] [text=b]?.";
     assert!(matches!(
         containment(SOURCE, "long", "short"),
-        Containment::Distinguished { span: 2, .. }
+        Containment::Distinguished {
+            span: Range { start: 0, end: 2 },
+            ..
+        }
     ));
     let verdict = containment(SOURCE, "short", "long");
     let Containment::Distinguished { tokens, span } = verdict else {
         panic!("{verdict:?}");
     };
-    assert_eq!((tokens.len(), span), (2, 1), "{tokens:?}");
+    assert_eq!((tokens.len(), span.clone()), (2, 0..1), "{tokens:?}");
     assert_eq!(
-        publishing(&compile(SOURCE), &witness_tokens(&tokens), span),
+        publishing(&compile(SOURCE), &witness_tokens(&tokens), &span),
         vec!["short"]
     );
+}
+
+#[test]
+fn a_longer_match_from_an_earlier_start_is_a_difference() {
+    // On `猫 の 手` `outer` publishes all three tokens and drops its own match
+    // of `の` nested inside them.
+    const SOURCE: &str = "inner := [text=の].\nouter := [text=の] | [text=猫] [text=の] [text=手].";
+    let verdict = containment(SOURCE, "inner", "outer");
+    let Containment::Distinguished { tokens, span } = verdict else {
+        panic!("{verdict:?}");
+    };
+    assert_eq!((tokens.len(), span.clone()), (3, 1..2), "{tokens:?}");
+    assert_eq!(
+        publishing(&compile(SOURCE), &witness_tokens(&tokens), &span),
+        vec!["inner"]
+    );
+    assert_eq!(compile(SOURCE).no_match.containments().pairs, vec![]);
+}
+
+#[test]
+fn a_nested_match_is_compared_under_each_definition_s_own_rule() {
+    // `&` moves a definition to the evaluator that publishes the longest match
+    // from every start, nested or not.
+    const NESTING: &str = "[text=の] | [text=猫] [text=の] [text=手]";
+    for (left, right, expected) in [
+        (NESTING.to_owned(), NESTING.to_owned(), true),
+        (format!("({NESTING}) & []+"), NESTING.to_owned(), false),
+        (NESTING.to_owned(), format!("({NESTING}) & []+"), true),
+        ("[text=の]".to_owned(), format!("({NESTING}) & []+"), true),
+    ] {
+        let source = format!("left := {left}.\nright := {right}.");
+        let output = compile(&source);
+        let verdict = output.no_match.containment("left", "right");
+        if expected {
+            assert_eq!(verdict, Containment::Contained, "{source}");
+            continue;
+        }
+        let Containment::Distinguished { tokens, span } = verdict else {
+            panic!("{source}\n{verdict:?}");
+        };
+        assert_eq!(
+            publishing(&output, &witness_tokens(&tokens), &span),
+            vec!["left"],
+            "{source}\n{tokens:?}"
+        );
+    }
 }
 
 #[test]
@@ -294,15 +357,61 @@ fn body(bytes: &mut impl Iterator<Item = u8>, depth: usize) -> String {
     }
 }
 
+/// The tokens the generated bodies can tell apart.
+fn alphabet() -> Vec<TokenInfo> {
+    let mut alphabet = Vec::new();
+    for text in [Some("a"), Some("b"), Some("c"), None] {
+        for lemma in [Some("x"), None] {
+            let mut token = TokenInfo::default();
+            if let Some(text) = text {
+                token.set(TokenAttributeIndex::Orth, text.into());
+            }
+            if let Some(lemma) = lemma {
+                token.set(TokenAttributeIndex::Lemma, lemma.into());
+            }
+            alphabet.push(token);
+        }
+    }
+    alphabet
+}
+
+/// Every sentence over `alphabet` of at most `length` tokens.
+fn sentences(alphabet: &[TokenInfo], length: usize) -> Vec<Vec<TokenInfo>> {
+    let mut all = vec![Vec::new()];
+    let mut longest = all.clone();
+    for _ in 0..length {
+        longest = longest
+            .iter()
+            .flat_map(|sentence| {
+                alphabet.iter().map(move |token| {
+                    let mut longer = sentence.clone();
+                    longer.push(token.clone());
+                    longer
+                })
+            })
+            .collect();
+        all.extend(longest.iter().cloned());
+    }
+    all
+}
+
 #[hegel::test(test_cases = 300)]
 fn the_verdict_agrees_with_the_matcher(tc: hegel::TestCase) {
     let bytes = tc.draw(hegel::generators::binary().max_size(96));
     let mut bytes = bytes.into_iter();
-    let source = format!(
-        "left := {}.\nright := {}.",
-        body(&mut bytes, 2),
+    let left = body(&mut bytes, 2);
+    // Independent bodies seldom differ only by a match from an earlier start,
+    // so a third of the cases give `right` one that surrounds `left`.
+    let right = if bytes.next().unwrap_or(0).is_multiple_of(3) {
+        format!(
+            "({left}) | {} ({left}) {}",
+            body(&mut bytes, 0),
+            body(&mut bytes, 0)
+        )
+    } else {
         body(&mut bytes, 2)
-    );
+    };
+    let source = format!("left := {left}.\nright := {right}.");
     let Ok(output) = compile_catalog(
         PatternSource::named("generated.lx", &source),
         CompileLimits::default(),
@@ -311,36 +420,23 @@ fn the_verdict_agrees_with_the_matcher(tc: hegel::TestCase) {
     };
     match output.no_match.containment("left", "right") {
         Containment::Distinguished { tokens, span } => {
-            let publishing = publishing(&output, &witness_tokens(&tokens), span);
-            assert_eq!(publishing, vec!["left"], "{source}\n{tokens:?} {span}");
+            let publishing = publishing(&output, &witness_tokens(&tokens), &span);
+            assert_eq!(publishing, vec!["left"], "{source}\n{tokens:?} {span:?}");
         }
         Containment::Contained => {
-            let tokens = bytes
-                .map(|byte| {
-                    let mut token = TokenInfo::default();
-                    match byte % 4 {
-                        0 => token.set(TokenAttributeIndex::Orth, "a".into()),
-                        1 => token.set(TokenAttributeIndex::Orth, "b".into()),
-                        2 => token.set(TokenAttributeIndex::Orth, "c".into()),
-                        _ => {}
-                    }
-                    if byte & 4 != 0 {
-                        token.set(TokenAttributeIndex::Lemma, "x".into());
-                    }
-                    token
-                })
+            // A match nested in a longer one from an earlier start needs three
+            // tokens; the drawn sentence is longer and not exhaustive.
+            let alphabet = alphabet();
+            let drawn = bytes
+                .map(|byte| alphabet[usize::from(byte) % alphabet.len()].clone())
                 .collect::<Vec<_>>();
-            let spans = |name: &str| {
-                output
-                    .matcher
-                    .find_matches(&tokens)
-                    .into_iter()
-                    .filter(|found| found.pattern == name)
-                    .map(|found| (found.start, found.end))
-                    .collect::<std::collections::BTreeSet<_>>()
-            };
-            let (left, right) = (spans("left"), spans("right"));
-            assert!(left.is_subset(&right), "{source}\n{left:?}\n{right:?}");
+            for tokens in sentences(&alphabet, 3).into_iter().chain([drawn]) {
+                let [left, right] = published_spans(&output, &tokens);
+                assert!(
+                    left.is_subset(&right),
+                    "{source}\n{tokens:?}\n{left:?}\n{right:?}"
+                );
+            }
         }
         verdict => panic!("{source}\n{verdict:?}"),
     }

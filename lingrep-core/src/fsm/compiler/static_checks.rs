@@ -3,6 +3,7 @@
 //! definition publishes only spans another also publishes.
 
 use std::collections::{BTreeMap, BTreeSet, HashMap, VecDeque};
+use std::ops::Range;
 
 use compact_str::CompactString;
 
@@ -43,19 +44,24 @@ pub enum UnsatisfiableKind {
 
 /// Whether every span one definition publishes is also published by another.
 ///
-/// A definition publishes its longest match from each start, so the second
-/// definition must match each such span and nothing longer from the same
-/// start.
+/// A definition publishes its longest match from each start. A definition the
+/// dense machine recognizes drops, of those, a match that its own match from
+/// an earlier start extends past; a definition the tree evaluator recognizes
+/// drops none. The second definition must therefore match each span the first
+/// publishes, nothing longer from the same start and, when it is one that
+/// drops, nothing from an earlier start that ends later.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Containment {
     Contained,
-    /// A sentence on which the first definition publishes the leading `span`
-    /// tokens and the second does not: it matches no such span, or a longer
-    /// one. The sentence is a shortest one unless a test of either definition
-    /// uses a regex or more operands than are enumerated.
+    /// A sentence on which the first definition publishes the tokens `span`
+    /// and the second does not: it matches no such span, a longer one from the
+    /// same start, or one from the first token that ends later. A sentence of
+    /// the last kind is reported only when there is none of the others. The
+    /// sentence is a shortest one of its kind unless a test of either
+    /// definition uses a regex or more operands than are enumerated.
     Distinguished {
         tokens: Vec<WitnessToken>,
-        span: usize,
+        span: Range<usize>,
     },
     /// The bodies use a form the check does not model.
     NotDecided {
@@ -69,6 +75,27 @@ pub enum Containment {
 #[derive(Clone, Debug, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub struct WitnessToken {
     pub attributes: Vec<WitnessAttribute>,
+}
+
+impl WitnessToken {
+    fn satisfies(&self, predicate: &[&SymbolicAttrValue]) -> bool {
+        predicate.iter().all(|atom| {
+            let actual = self
+                .attributes
+                .iter()
+                .find(|attribute| attribute.key == atom.attr)
+                .map(|attribute| match &attribute.value {
+                    WitnessValue::Named(value) | WitnessValue::Unnamed(value) => {
+                        AttributeValueRef::Scalar(value)
+                    }
+                    WitnessValue::Set(values) => AttributeValueRef::StringSet(values),
+                });
+            match actual {
+                None => atom.complement,
+                Some(actual) => value_test(&atom.value, actual) != atom.complement,
+            }
+        })
+    }
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Hash, PartialOrd, Ord)]
@@ -182,7 +209,7 @@ impl NoMatchExplainer {
         let (Some(left), Some(right)) = (find(contained), find(containing)) else {
             return Containment::UnknownDefinition;
         };
-        match (Automaton::of(program, left), Automaton::of(program, right)) {
+        match (self.automaton(left), self.automaton(right)) {
             (Ok(left), Ok(right)) => compare(&left, &right),
             (Err(construct), _) | (_, Err(construct)) => Containment::NotDecided { construct },
         }
@@ -202,7 +229,7 @@ impl NoMatchExplainer {
             {
                 continue;
             }
-            match Automaton::of(program, definition) {
+            match self.automaton(definition) {
                 Ok(automaton) => automata.push((definition.name.as_str(), automaton)),
                 Err(construct) => report
                     .not_decided
@@ -241,6 +268,17 @@ impl NoMatchExplainer {
             .sort_by(|a, b| (&a.contained, &a.containing).cmp(&(&b.contained, &b.containing)));
         report.not_decided.sort();
         report
+    }
+
+    fn automaton<'p>(
+        &'p self,
+        definition: &'p BoundDefinition,
+    ) -> Result<Automaton<'p>, &'static str> {
+        Automaton::of(
+            self.program(),
+            definition,
+            !self.tree_evaluated(&definition.name),
+        )
     }
 }
 
@@ -508,6 +546,9 @@ struct Automaton<'p> {
     steps: Vec<Vec<(Predicate<'p>, usize)>>,
     start: usize,
     accept: usize,
+    /// Whether the definition drops a match that its own match from an
+    /// earlier start extends past.
+    drops_nested: bool,
 }
 
 struct Builder<'p> {
@@ -520,6 +561,7 @@ impl<'p> Automaton<'p> {
     fn of(
         program: &'p BoundProgram,
         definition: &'p BoundDefinition,
+        drops_nested: bool,
     ) -> Result<Self, &'static str> {
         let mut builder = Builder {
             program,
@@ -533,7 +575,22 @@ impl<'p> Automaton<'p> {
             steps: builder.steps,
             start,
             accept,
+            drops_nested,
         })
+    }
+
+    fn matches(&self, tokens: &[WitnessToken]) -> bool {
+        let mut states = self.closure([self.start]);
+        for token in tokens {
+            let targets = states
+                .iter()
+                .flat_map(|state| &self.steps[*state])
+                .filter(|(predicate, _)| token.satisfies(predicate))
+                .map(|(_, target)| *target)
+                .collect::<Vec<_>>();
+            states = self.closure(targets);
+        }
+        states.contains(&self.accept)
     }
 
     fn closure(&self, states: impl IntoIterator<Item = usize>) -> BTreeSet<usize> {
@@ -715,20 +772,39 @@ impl<'p> Builder<'p> {
 }
 
 /// Where a product state stands relative to the span the left definition
-/// publishes from the first token.
+/// publishes. The right definition is followed from the first token.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 enum Phase {
     /// No token read. A body that accepts here matches a zero-width span,
     /// which is not published.
     Start,
-    /// The left definition can still match a longer span.
+    /// The left definition is followed from the first token and can still
+    /// match a longer span.
     Reading,
-    /// The left definition matched the first `span` tokens and has matched no
-    /// longer prefix since.
-    Past { span: usize },
+    /// The left definition is followed from the latest token. One that drops
+    /// nested matches is also followed from every earlier token.
+    Prefix,
+    /// The left definition is followed as in [`Phase::Prefix`], from no token
+    /// after `start`.
+    Held { start: usize },
+    /// A followed left match ended at `end`, and none has ended since.
+    Past { start: usize, end: usize },
 }
 
-type ProductState = (BTreeSet<usize>, BTreeSet<usize>, bool);
+impl Phase {
+    /// States that differ only in the positions a witness reports are
+    /// searched once.
+    const fn kind(self) -> u8 {
+        match self {
+            Self::Start | Self::Reading => 0,
+            Self::Prefix => 1,
+            Self::Held { .. } => 2,
+            Self::Past { .. } => 3,
+        }
+    }
+}
+
+type ProductState = (BTreeSet<usize>, BTreeSet<usize>, u8);
 
 struct Reached {
     left: BTreeSet<usize>,
@@ -739,16 +815,22 @@ struct Reached {
 }
 
 /// Searches breadth-first for a sentence on which `left` publishes a span
-/// from the first token that `right` does not, determinizing both on the
-/// tokens their next steps can tell apart.
+/// that `right` does not, determinizing both on the tokens their next steps
+/// can tell apart.
 ///
-/// A definition publishes its longest match from each start. `left` therefore
-/// publishes a span `right` does not in two cases: `left` matches a sequence
-/// `right` does not match, or both match it and `right` alone matches a longer
-/// one that extends it.
+/// Neither body reads its left context, so a difference between the matches
+/// from one start is found on a sentence that begins there: `left` matches a
+/// sequence `right` does not match, or both match it and `right` alone matches
+/// a longer one that extends it. The remaining difference needs a `right` that
+/// drops nested matches: `right` matches from the first token past the end of
+/// a span `left` publishes from a later one. A `left` that drops nested
+/// matches publishes that span only when none of its own matches from an
+/// earlier token ends later. Sentences of this kind are searched after the
+/// others are exhausted: most pairs differ from one start.
 fn compare(left: &Automaton<'_>, right: &Automaton<'_>) -> Containment {
+    let left_initial = left.closure([left.start]);
     let mut reached = vec![Reached {
-        left: left.closure([left.start]),
+        left: left_initial.clone(),
         right: right.closure([right.start]),
         phase: Phase::Start,
         length: 0,
@@ -756,19 +838,20 @@ fn compare(left: &Automaton<'_>, right: &Automaton<'_>) -> Containment {
     }];
     let mut index_of: HashMap<ProductState, usize> = HashMap::new();
     let mut pending = VecDeque::from([0_usize]);
+    let mut prefixed = VecDeque::new();
     let mut exact = true;
-    while let Some(index) = pending.pop_front() {
+    while let Some(index) = pending.pop_front().or_else(|| prefixed.pop_front()) {
         let node = &reached[index];
         let (left_states, right_states) = (node.left.clone(), node.right.clone());
         let (phase, length) = (node.phase, node.length);
         let left_accepts = left_states.contains(&left.accept);
         let right_accepts = right_states.contains(&right.accept);
         let found = match phase {
-            Phase::Start => None,
-            Phase::Reading => (left_accepts && !right_accepts).then_some(length),
-            Phase::Past { span } => right_accepts.then_some(span),
+            Phase::Start | Phase::Prefix | Phase::Held { .. } => None,
+            Phase::Reading => (left_accepts && !right_accepts).then_some((0, length)),
+            Phase::Past { start, end } => right_accepts.then_some((start, end)),
         };
-        if let Some(span) = found {
+        if let Some((latest, end)) = found {
             let mut tokens = Vec::new();
             let mut at = index;
             while let Some((parent, token)) = &reached[at].via {
@@ -776,7 +859,15 @@ fn compare(left: &Automaton<'_>, right: &Automaton<'_>) -> Containment {
                 at = *parent;
             }
             tokens.reverse();
-            return Containment::Distinguished { tokens, span };
+            // Each followed start whose match ends at `end` is published.
+            let earliest = if left.drops_nested { 0 } else { latest };
+            let start = (earliest..=latest)
+                .find(|start| left.matches(&tokens[*start..end]))
+                .unwrap_or(latest);
+            return Containment::Distinguished {
+                tokens,
+                span: start..end,
+            };
         }
         let left_steps = left_states
             .iter()
@@ -786,10 +877,14 @@ fn compare(left: &Automaton<'_>, right: &Automaton<'_>) -> Containment {
             .iter()
             .flat_map(|state| &right.steps[*state])
             .collect::<Vec<_>>();
-        let past = matches!(phase, Phase::Past { .. });
-        // Once `left` has matched a span, `right` alone can extend it.
-        let extendable = (past || left_accepts) && !right_steps.is_empty();
-        if !extendable && (past || left_steps.is_empty()) {
+        let productive = match phase {
+            // Once `left` has matched a span, `right` alone can extend it.
+            Phase::Start | Phase::Reading => {
+                !left_steps.is_empty() || (left_accepts && !right_steps.is_empty())
+            }
+            Phase::Prefix | Phase::Held { .. } | Phase::Past { .. } => !right_steps.is_empty(),
+        };
+        if !productive {
             continue;
         }
         let mut by_attribute: BTreeMap<&AttributeKey, Vec<&SymbolicAttrValue>> = BTreeMap::new();
@@ -837,28 +932,44 @@ fn compare(left: &Automaton<'_>, right: &Automaton<'_>) -> Containment {
             let next_left = left.closure(targets(&left_steps));
             let next_right = right.closure(targets(&right_steps));
             let mut successors = Vec::new();
-            if !past && !next_left.is_empty() {
-                successors.push(Phase::Reading);
+            match phase {
+                Phase::Start | Phase::Reading if !next_left.is_empty() => {
+                    successors.push((Phase::Reading, next_left.clone()));
+                }
+                Phase::Held { .. } if !next_left.is_empty() && !next_right.is_empty() => {
+                    successors.push((phase, next_left.clone()));
+                }
+                _ => {}
+            }
+            if right.drops_nested
+                && matches!(phase, Phase::Start | Phase::Prefix)
+                && !next_right.is_empty()
+            {
+                let mut followed = left_initial.clone();
+                if left.drops_nested {
+                    followed.extend(&next_left);
+                }
+                successors.push((Phase::Prefix, followed));
+                if phase == Phase::Prefix && !next_left.is_empty() {
+                    successors.push((Phase::Held { start: length }, next_left.clone()));
+                }
             }
             // Past a span `left` matched, only sentences on which `left`
             // matches nothing longer and `right` may still match are followed.
-            let span = match phase {
-                Phase::Past { span } => Some(span),
-                Phase::Reading if left_accepts => Some(length),
-                Phase::Start | Phase::Reading => None,
+            let ended = match phase {
+                Phase::Past { start, end } => Some((start, end)),
+                Phase::Reading if left_accepts => Some((0, length)),
+                Phase::Held { start } if left_accepts => Some((start, length)),
+                Phase::Start | Phase::Reading | Phase::Prefix | Phase::Held { .. } => None,
             };
-            if let Some(span) = span
+            if let Some((start, end)) = ended
                 && !next_left.contains(&left.accept)
                 && !next_right.is_empty()
             {
-                successors.push(Phase::Past { span });
+                successors.push((Phase::Past { start, end }, next_left.clone()));
             }
-            for next_phase in successors {
-                let key = (
-                    next_left.clone(),
-                    next_right.clone(),
-                    matches!(next_phase, Phase::Past { .. }),
-                );
+            for (next_phase, next_left) in successors {
+                let key = (next_left, next_right.clone(), next_phase.kind());
                 if index_of.contains_key(&key) {
                     continue;
                 }
@@ -884,15 +995,19 @@ fn compare(left: &Automaton<'_>, right: &Automaton<'_>) -> Containment {
                         })
                         .collect(),
                 };
-                index_of.insert(key, reached.len());
-                pending.push_back(reached.len());
                 reached.push(Reached {
-                    left: next_left.clone(),
-                    right: next_right.clone(),
+                    left: key.0.clone(),
+                    right: key.1.clone(),
                     phase: next_phase,
                     length: length + 1,
                     via: Some((index, witness)),
                 });
+                index_of.insert(key, reached.len() - 1);
+                if phase == Phase::Start && next_phase == Phase::Prefix {
+                    prefixed.push_back(reached.len() - 1);
+                } else {
+                    pending.push_back(reached.len() - 1);
+                }
             }
             // Advance to the next combination of candidate values.
             let mut position = 0;
