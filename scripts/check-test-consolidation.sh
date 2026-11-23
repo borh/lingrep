@@ -78,6 +78,27 @@ for dir in "${SUITES[@]}"; do
     done
 done
 
+# --- unselected instrumentation tests -----------------------------------------
+#
+# ci.sh runs the lingrep-core tests gated on `bench-instrumentation` by the
+# name filter `::instrumentation_`, so a gated test without that prefix is
+# compiled by clippy and run by no lane.
+unselected="$(find lingrep-core/src -name '*.rs' -print0 | xargs -0 awk '
+    FNR == 1 { gated = 0; test = 0 }
+    /#\[cfg\(feature = "bench-instrumentation"\)\]/ { gated = FNR }
+    /#\[test\]/ { test = (gated && FNR - gated <= 2) }
+    /^[[:space:]]*(pub )?fn / {
+        if (test && $0 !~ /fn instrumentation_/) print FILENAME ":" FNR ": " $0
+        gated = 0; test = 0
+    }
+')"
+if [ -n "$unselected" ]; then
+    status=1
+    echo "error: tests gated on bench-instrumentation must be named instrumentation_*," >&2
+    echo "       or the screen lane in ci.sh does not run them:" >&2
+    printf '%s\n' "$unselected" >&2
+fi
+
 # --- consolidation reversal --------------------------------------------------
 #
 # The check above catches a file that stops running. This one catches the

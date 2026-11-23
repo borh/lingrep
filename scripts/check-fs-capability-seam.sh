@@ -31,7 +31,7 @@ OPERATIONS = {
     "hard_link": re.compile(r"\bhard_link\b|\b(?:libc|fs)::link(?:at)?\b"),
     "persist": re.compile(r"(?:\.|\bNamedTempFile\s*::\s*)persist(?:_noclobber)?\s*\("),
     "sqlite_wal": re.compile(
-        r"\bjournal_mode[\s=(,'\"\\]*(?:WAL|DELETE)\b|SqliteJournalMode::(?:Wal|Delete)\b"
+        r"(?<![A-Za-z0-9])journal_mode[\s=(,'\"\\]*(?:WAL|DELETE)\b|SqliteJournalMode::(?:Wal|Delete)\b"
         r"|\bPRAGMA\s+(?:\w+\s*\.\s*)?wal_checkpoint\b|[\"']wal_checkpoint[\"']"
         r"|locking_mode",
         re.IGNORECASE,

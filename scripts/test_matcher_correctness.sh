@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 # The matcher correctness gate: the dict-free lingrep-core tests that pin observable
 # CompiledCatalog behavior against the independent oracle and the lingrep patterns contracts.
-# Single source of truth — ci.sh and the docs point here. Do NOT add
+# docs/testing-guide.md points here; ci.sh runs the same tests in the workspace
+# inventory, not through this script. Do NOT add
 # dictionary-dependent targets (cli_validation_tests, sf_experimental_lx_test).
 set -euo pipefail
 
