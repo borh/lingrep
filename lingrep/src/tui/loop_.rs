@@ -24,11 +24,11 @@ pub fn run(
     model: Model,
     execution: Arc<crate::interactive_execution::InteractiveExecution>,
     process_cancellation: &CancellationFlag,
+    handles: &mut TaskHandles,
 ) -> Result<super::ExplorerOutcome, std::io::Error> {
     let (tx, rx): (Sender<ExplorerMessage>, Receiver<ExplorerMessage>) =
         crossbeam_channel::bounded(64);
 
-    let mut handles = TaskHandles::default();
     let tick_rate = Duration::from_millis(50);
     let mut last_tick = Instant::now();
 
@@ -43,12 +43,12 @@ pub fn run(
     // `Model` directly in the runtime loop.
     let (mut model, initial_cmd) = update(ExplorerMessage::Ui(UiMsg::SubmitPattern), model);
     if let Some(cmd) = initial_cmd {
-        run_command(cmd, &tx, &mut handles, &execution);
+        run_command(cmd, &tx, handles, &execution);
     }
 
     loop {
         if process_cancellation.is_cancelled() {
-            cancel_all(&mut handles);
+            handles.cancel_all();
             return Ok(super::ExplorerOutcome::Cancelled);
         }
         while let Ok(msg) = rx.try_recv() {
@@ -56,11 +56,11 @@ pub fn run(
             model = new_model;
 
             if let Some(c) = cmd {
-                run_command(c, &tx, &mut handles, &execution);
+                run_command(c, &tx, handles, &execution);
             }
 
             if matches!(model.mode, AppMode::Exiting) {
-                cancel_all(&mut handles);
+                handles.cancel_all();
                 return Ok(super::ExplorerOutcome::Completed);
             }
         }
@@ -72,12 +72,12 @@ pub fn run(
                 model = new_model;
 
                 if matches!(model.mode, AppMode::Exiting) {
-                    cancel_all(&mut handles);
+                    handles.cancel_all();
                     return Ok(super::ExplorerOutcome::Completed);
                 }
 
                 if let Some(c) = cmd {
-                    run_command(c, &tx, &mut handles, &execution);
+                    run_command(c, &tx, handles, &execution);
                 }
             }
         }
@@ -86,7 +86,7 @@ pub fn run(
             let (new_model, cmd) = update(ExplorerMessage::Tick, model);
             model = new_model;
             if let Some(c) = cmd {
-                run_command(c, &tx, &mut handles, &execution);
+                run_command(c, &tx, handles, &execution);
             }
             last_tick = Instant::now();
         }
@@ -209,16 +209,7 @@ fn run_command(
             request_id,
             pattern_text,
         } => {
-            for handle in [
-                handles.pattern.take(),
-                handles.surface.take(),
-                handles.kwic.take(),
-            ]
-            .into_iter()
-            .flatten()
-            {
-                handle.cancel.cancel();
-            }
+            handles.cancel_all();
 
             let handle = crate::tui::workers::PatternWorker::spawn(
                 request_id,
@@ -237,10 +228,8 @@ fn run_command(
                 TaskKind::Kwic => &mut handles.kwic,
             };
 
-            if let Some(h) = handle.take()
-                && h.request_id == request_id
-            {
-                h.cancel.cancel();
+            if let Some(h) = handle.take_if(|h| h.request_id == request_id) {
+                handles.cancel(h);
             }
         }
 
@@ -251,7 +240,7 @@ fn run_command(
             pattern_text,
         } => {
             if let Some(h) = handles.surface.take() {
-                h.cancel.cancel();
+                handles.cancel(h);
             }
 
             let handle = crate::tui::workers::SurfaceWorker::spawn(
@@ -273,7 +262,7 @@ fn run_command(
             pattern_text,
         } => {
             if let Some(h) = handles.kwic.take() {
-                h.cancel.cancel();
+                handles.cancel(h);
             }
 
             let handle = crate::tui::workers::KwicWorker::spawn(
@@ -377,18 +366,6 @@ fn execute_playground(
             pattern_name: Some(matched.pattern.to_string()),
         })
         .collect())
-}
-
-fn cancel_all(handles: &mut TaskHandles) {
-    if let Some(h) = handles.pattern.take() {
-        h.cancel.cancel();
-    }
-    if let Some(h) = handles.surface.take() {
-        h.cancel.cancel();
-    }
-    if let Some(h) = handles.kwic.take() {
-        h.cancel.cancel();
-    }
 }
 
 fn compile_pattern(pattern_text: &str) -> Result<CompiledCatalog, String> {

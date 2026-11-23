@@ -301,6 +301,99 @@ fn definitions_are_compared_under_their_published_names() {
 }
 
 #[test]
+fn a_run_made_with_evidence_and_one_made_without_publish_equal_records() {
+    let directory = tempfile::tempdir().unwrap();
+    let run = |name: &str, extra: &[&str]| {
+        let output = lingrep_without_dictionary()
+            .args(["--json", "matches", "--input-format", "conllu"])
+            .args(extra)
+            .arg("--patterns")
+            .arg(concat!(
+                env!("CARGO_MANIFEST_DIR"),
+                "/../patterns/psycholinguistics.lx"
+            ))
+            .arg(fixture("psycholinguistics.conllu"))
+            .output()
+            .unwrap();
+        assert_success(&output);
+        let path = directory.path().join(name);
+        std::fs::write(&path, &output.stdout).unwrap();
+        path
+    };
+    let evidence = run("evidence.jsonl", &["--evidence"]);
+    let plain = run("plain.jsonl", &[]);
+    // The catalog publishes graph node bindings, whose attributes are read
+    // from tokens that carry more attributes under --evidence.
+    let node_bindings = parse_jsonl(&std::fs::read(&plain).unwrap())
+        .iter()
+        .filter(|event| event["type"] == "match")
+        .filter_map(|event| event["data"]["graph_bindings"].as_array().cloned())
+        .flatten()
+        .filter(|binding| binding["binding_kind"] == "node")
+        .count();
+    assert_ne!(node_bindings, 0);
+
+    let events = diff(&evidence, &plain, &["--level", "record"]);
+    let complete = of(&events, "complete")[0];
+    assert_ne!(complete["shared"], 0);
+    assert_eq!(complete["differences_found"], false, "{complete}");
+}
+
+#[test]
+fn one_sided_occurrences_of_a_sentence_are_listed_in_token_order() {
+    let directory = tempfile::tempdir().unwrap();
+    let corpus = directory.path().join("long.conllu");
+    let mut sentence = String::from("# text = long\n");
+    for id in 1..=12 {
+        let upos = match id {
+            3 => "NOUN",
+            11 => "VERB",
+            12 => "AUX",
+            _ => "ADP",
+        };
+        sentence.push_str(&format!(
+            "{id}\tw{id}\tw{id}\t{upos}\t_\t_\t0\troot\t_\t_\n"
+        ));
+    }
+    sentence.push('\n');
+    std::fs::write(&corpus, sentence).unwrap();
+    let run = |name: &str, pattern: &str| {
+        let output = lingrep_without_dictionary()
+            .args(["--json", "matches", "--input-format", "conllu"])
+            .args(["--pattern", pattern])
+            .arg(&corpus)
+            .output()
+            .unwrap();
+        assert_success(&output);
+        let path = directory.path().join(name);
+        std::fs::write(&path, &output.stdout).unwrap();
+        path
+    };
+    let a = run("a.jsonl", "p := [upos=NOUN] | [upos=VERB] [upos=AUX].");
+    let b = run("b.jsonl", "p := [upos=PUNCT].");
+
+    for level in ["span", "record"] {
+        let spans = |examples: &str| {
+            let events = diff(&a, &b, &["--level", level, "--examples", examples]);
+            assert_eq!(of(&events, "definition")[0]["a_only"], 2, "{level}");
+            of(&events, "occurrence")
+                .iter()
+                .map(|occurrence| occurrence["span"].clone())
+                .collect::<Vec<_>>()
+        };
+        assert_eq!(
+            spans("3"),
+            [
+                json!({"start": 2, "end": 3}),
+                json!({"start": 10, "end": 12})
+            ],
+            "{level}"
+        );
+        assert_eq!(spans("1"), [json!({"start": 2, "end": 3})], "{level}");
+    }
+}
+
+#[test]
 fn human_output_shows_terminal_controls_in_stream_text_as_visible_text() {
     let directory = tempfile::tempdir().unwrap();
     let a = matches(directory.path(), "a.jsonl", BASE, &[]);

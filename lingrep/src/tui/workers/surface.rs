@@ -76,7 +76,10 @@ impl SurfaceWorker {
                 .execute(&matcher, &self.cancel, &mut sink, &mut |_progress, _| {});
         match result {
             Ok(RunOutcome::Completed(_)) => {
-                match sink.finish(budget).and_then(PagedResult::load_initial) {
+                match sink
+                    .finish(budget, &self.cancel)
+                    .and_then(PagedResult::load_initial)
+                {
                     Ok(result) => {
                         let _ = tx.send(ExplorerMessage::SurfaceFinished {
                             request_id: self.request_id,
@@ -84,16 +87,14 @@ impl SurfaceWorker {
                             result,
                         });
                     }
+                    Err(_) if self.cancel.is_cancelled() => {
+                        send_cancelled(&tx, self.request_id, self.pattern_id);
+                    }
                     Err(error) => send_failure(&tx, self.request_id, self.pattern_id, error),
                 }
             }
             Ok(RunOutcome::Cancelled(_)) => {
-                let _ = tx.send(ExplorerMessage::SurfaceFailed {
-                    request_id: self.request_id,
-                    pattern_id: self.pattern_id,
-                    code: Some(ErrorCode::Cancelled),
-                    error: "Processing cancelled".into(),
-                });
+                send_cancelled(&tx, self.request_id, self.pattern_id);
             }
             Err(error) => {
                 if let Some(error) = sink.failure.take() {
@@ -136,10 +137,20 @@ impl SurfaceSink {
         })
     }
 
+    /// Orders the tallied forms into a paged store, failing once `cancel`
+    /// is set.
     fn finish(
         self,
         budget: Arc<lingrep_core::spill::TempBudget>,
+        cancel: &CancellationFlag,
     ) -> io::Result<Arc<PagedStore<SurfaceEntry>>> {
+        let uncancelled = || {
+            if cancel.is_cancelled() {
+                Err(io::Error::other("processing cancelled"))
+            } else {
+                Ok(())
+            }
+        };
         let Self {
             mut counts,
             failure,
@@ -157,6 +168,7 @@ impl SurfaceSink {
             budget.clone(),
         )?;
         counts.visit_sorted(|form, count| {
+            uncancelled()?;
             ordered.add(
                 SurfaceOrder {
                     count,
@@ -169,6 +181,7 @@ impl SurfaceSink {
 
         let mut writer = PagedStoreWriter::new(budget)?;
         ordered.visit_sorted(|entry, _| {
+            uncancelled()?;
             writer.push(&SurfaceEntry {
                 form: entry.form.clone(),
                 count: u64::try_from(entry.count)
@@ -199,6 +212,15 @@ impl Ord for SurfaceOrder {
             .cmp(&self.count)
             .then_with(|| self.form.as_bytes().cmp(other.form.as_bytes()))
     }
+}
+
+fn send_cancelled(tx: &Sender<ExplorerMessage>, request_id: RequestId, pattern_id: PatternId) {
+    let _ = tx.send(ExplorerMessage::SurfaceFailed {
+        request_id,
+        pattern_id,
+        code: Some(ErrorCode::Cancelled),
+        error: "Processing cancelled".into(),
+    });
 }
 
 fn send_failure(
@@ -256,7 +278,7 @@ mod tests {
         sink.counts.add("low".into(), 2).unwrap();
         sink.counts.add("high".into(), 7).unwrap();
         sink.counts.add("middle".into(), 5).unwrap();
-        let store = sink.finish(budget).unwrap();
+        let store = sink.finish(budget, &CancellationFlag::new()).unwrap();
         assert_eq!(
             store.read_page(0).unwrap(),
             [
@@ -286,7 +308,9 @@ mod tests {
                 .add(format!("surface-{index:05}"), index % 7 + 1)
                 .unwrap();
         }
-        let store = sink.finish(budget.clone()).unwrap();
+        let store = sink
+            .finish(budget.clone(), &CancellationFlag::new())
+            .unwrap();
         assert_eq!(store.len(), unique as u64);
         let mut all = Vec::with_capacity(unique);
         for page in 0..unique.div_ceil(crate::tui::paged_store::DEFAULT_PAGE_ROWS) {
@@ -303,6 +327,19 @@ mod tests {
             "external aggregation phases and final paged data must share one high-water mark"
         );
         drop(store);
+        assert_eq!(budget.used_bytes(), 0);
+    }
+
+    #[test]
+    fn ordering_a_cancelled_scan_stops_and_releases_its_temporary_storage() {
+        let budget = Arc::new(lingrep_core::spill::TempBudget::new(u64::MAX));
+        let mut sink = SurfaceSink::new("p".into(), budget.clone()).unwrap();
+        for index in 0..5_000 {
+            sink.counts.add(format!("surface-{index:05}"), 1).unwrap();
+        }
+        let cancel = CancellationFlag::new();
+        cancel.cancel();
+        assert!(sink.finish(budget.clone(), &cancel).is_err());
         assert_eq!(budget.used_bytes(), 0);
     }
 

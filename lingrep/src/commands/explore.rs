@@ -2,6 +2,7 @@
 
 use std::io::{self, IsTerminal, Write};
 use std::sync::Arc;
+use std::time::Duration;
 
 use crossterm::event::{DisableMouseCapture, EnableMouseCapture};
 use crossterm::execute;
@@ -18,6 +19,10 @@ use crate::error::{CliError, FailureCode};
 use crate::interactive_execution::InteractiveExecution;
 use crate::terminal::TerminalArbiter;
 use crate::tui::{self, ExplorerOutcome};
+
+/// How long quitting waits for cancelled scans to remove their temporary
+/// files before the process exits without them.
+const WORKER_SHUTDOWN_WAIT: Duration = Duration::from_secs(2);
 
 pub fn run(
     args: &ExploreArgs,
@@ -45,6 +50,7 @@ pub fn run(
     let mut stderr = io::stderr();
     let terminal_ops = CrosstermTerminalOps;
     let mut session = TerminalSession::enter(&mut stderr, &terminal_ops).map_err(CliError::Io)?;
+    let mut workers = tui::TaskHandles::default();
     let result = (|| {
         let backend = CrosstermBackend::new(io::stderr());
         let mut terminal = Terminal::new(backend)?;
@@ -57,9 +63,12 @@ pub fn run(
             model,
             execution,
             terminal_state.cancellation(),
+            &mut workers,
         )
     })();
-    session.restore().map_err(CliError::Io)?;
+    let restored = session.restore();
+    workers.shutdown(WORKER_SHUTDOWN_WAIT);
+    restored.map_err(CliError::Io)?;
 
     match result.map_err(CliError::Io)? {
         ExplorerOutcome::Cancelled => Ok(CommandOutcome::Cancelled),

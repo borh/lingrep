@@ -33,6 +33,7 @@ pub(crate) fn compile_catalog_source(
 pub(crate) use loop_::run;
 pub use model::Model;
 pub use types::RequestId;
+pub(crate) use workers::TaskHandles;
 
 pub(crate) enum ExplorerOutcome {
     Completed,
