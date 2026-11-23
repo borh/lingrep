@@ -27,7 +27,20 @@ pub(crate) fn prepared(source: PreparedSentenceSource) -> (BoxSentenceSource, Qu
         Box::new(source.with_tokenized_admission(TokenizedAdmission::Omit(Arc::clone(&omissions)))),
         QueryInputStats::Prepared {
             documents,
-            omissions,
+            omissions: Some(omissions),
+        },
+    )
+}
+
+pub(crate) fn prepared_strict(
+    source: PreparedSentenceSource,
+) -> (BoxSentenceSource, QueryInputStats) {
+    let documents = source.document_stats();
+    (
+        Box::new(source),
+        QueryInputStats::Prepared {
+            documents,
+            omissions: None,
         },
     )
 }
@@ -36,7 +49,7 @@ pub(crate) enum QueryInputStats {
     Direct(DirectSourceStats),
     Prepared {
         documents: PreparedDocumentStats,
-        omissions: Arc<Mutex<OversizedSentenceOmissions>>,
+        omissions: Option<Arc<Mutex<OversizedSentenceOmissions>>>,
     },
 }
 
@@ -69,7 +82,10 @@ impl QueryInputStats {
     ) -> Result<Option<OversizedSentenceOmissionSummary>, ExecutionError> {
         match self {
             Self::Direct(stats) => stats.oversized_sentence_omissions(),
-            Self::Prepared { omissions, .. } => {
+            Self::Prepared {
+                omissions: Some(omissions),
+                ..
+            } => {
                 let omissions = omissions
                     .lock()
                     .map_err(|_| ExecutionError::ResourceAccounting)?;
@@ -86,6 +102,9 @@ impl QueryInputStats {
                         limit: summary.limit,
                     }))
             }
+            Self::Prepared {
+                omissions: None, ..
+            } => Ok(None),
         }
     }
 }
@@ -99,7 +118,7 @@ mod tests {
         let omissions = Arc::new(Mutex::new(OversizedSentenceOmissions::default()));
         let stats = QueryInputStats::Prepared {
             documents: PreparedDocumentStats::default(),
-            omissions: Arc::clone(&omissions),
+            omissions: Some(Arc::clone(&omissions)),
         };
         assert_eq!(
             stats.oversized_sentence_omissions().expect("handle reads"),

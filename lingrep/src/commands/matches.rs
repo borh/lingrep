@@ -1,30 +1,29 @@
 //! Direct bounded `matches` orchestration and publication.
 
 use std::io::{self, IsTerminal, Write};
-use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use lingrep_core::execution::{
-    ExecutionError, MatchSink, PolicySelection, Publication, RunOutcome, SentenceAdmission,
-    SinkControl, cached_run_attributes, execute_analyzed,
+    ExecutionError, MatchSink, PolicySelection, Publication, SinkControl, cached_run_attributes,
 };
 use lingrep_core::fsm::{Match, PublishedRecord, RecordView};
-use rayon::ThreadPoolBuilder;
 
 use super::CommandOutcome;
 use super::query_completion::FilesystemCompletion;
-use super::query_projection::token_evidence;
-use super::query_resolution::{QueryProjection, ResolvedMatchingQuery, resolve_matching_query};
+use super::query_resolution::{
+    MatchingQuerySession, MatchingQuerySpec, MatchingRunOutcome, QueryProjection,
+};
 use super::query_scope::parse_scope;
 use super::query_support::{
-    execution_output_error, execution_output_io, protocol_execution_limits, publish_query_jsonl,
-    random_id, write_vectors_notice,
+    execution_output_error, execution_output_io, oversized_omissions_error,
+    protocol_execution_limits, publish_query_jsonl, publish_run_and_definitions, token_evidence,
+    write_vectors_notice,
 };
 use crate::catalog_input::load_and_compile_with_vectors;
 use crate::cli::{ExecutionCliConfig, MatchesArgs, ProgressMode};
 use crate::direct_source::OversizedSentenceOmissionSummary;
 use crate::direct_source::{matched_orth_tokens, matched_surface};
-use crate::error::{CliError, FailureCode};
+use crate::error::CliError;
 use crate::output::{
     ColorPolicy, ContextColorPalette, EvidenceTsvRow, HumanKwicRow, HumanMatchLayout,
     HumanRenderer, MIN_HUMAN_MATCH_WIDTH, MatchTsvRow, TerminalColorCapability, write_evidence_tsv,
@@ -34,11 +33,10 @@ use crate::presentation::{
     ColorMode, OutputMode, ResultDelivery, resolve_match_context, resolve_match_limit,
 };
 use crate::protocol::query::{
-    Capture, CharSpan as ProtocolCharSpan, CommittedPrefix, Coverage, DefinitionBody,
-    DefinitionData, EvidenceWord, GraphBinding as ProtocolGraphBinding,
-    GraphNodeAttribute as ProtocolGraphNodeAttribute, GraphNodeId as ProtocolGraphNodeId,
-    MatchData, MatchEvidence, MatchOrder, ProtocolKeyField, PublishedProjection, QueryComplete,
-    QueryEnvelope, QueryEvent, QueryMode, QueryRun, ResourceHighWater, RunCounters, SourceSpan,
+    Capture, CharSpan as ProtocolCharSpan, CommittedPrefix, Coverage, EvidenceWord,
+    GraphBinding as ProtocolGraphBinding, GraphNodeAttribute as ProtocolGraphNodeAttribute,
+    GraphNodeId as ProtocolGraphNodeId, MatchData, MatchEvidence, MatchOrder, ProtocolKeyField,
+    PublishedProjection, QueryComplete, QueryEnvelope, QueryEvent, QueryMode, QueryRun, SourceSpan,
     SpanConvention, TagField, TemporaryStorageLimits, Termination,
 };
 use crate::terminal::{PresentationProgress, TerminalArbiter};
@@ -129,13 +127,7 @@ fn resolve_matches_completion<T>(
         return Ok(ValidatedCompletion::Cancelled);
     }
     if let Some(summary) = observe_omissions()? {
-        return Err(CliError::OversizedSentencesSkipped {
-            count: summary.count,
-            first_source_name: summary.first_source_name,
-            first_ordinal: summary.first_ordinal,
-            first_actual: summary.first_actual,
-            limit: summary.limit,
-        });
+        return Err(oversized_omissions_error(summary));
     }
     Ok(ValidatedCompletion::Publish(validated))
 }
@@ -258,17 +250,6 @@ pub fn run(
     )?;
     let selected_corpus = resolved_corpus.corpus.as_deref();
     let char_offsets_available = output != OutputMode::Tsv;
-    // Built here rather than at its use site so a prepared source shares the
-    // caller-owned pool for multi-block decode instead of spawning its own.
-    let pool = Arc::new(
-        ThreadPoolBuilder::new()
-            .num_threads(config.workers)
-            .build()
-            .map_err(|error| CliError::CommandFailure {
-                code: FailureCode::Io,
-                message: format!("failed to create worker pool: {error}"),
-            })?,
-    );
     let mut projected_attributes = cached_run_attributes(&compiled.matcher);
     if output == OutputMode::Human {
         projected_attributes.push(
@@ -299,45 +280,37 @@ pub fn run(
         projected_attributes.sort_unstable();
         projected_attributes.dedup();
     }
-    let ResolvedMatchingQuery {
-        source,
-        source_stats,
-        lifecycle,
-        analysis,
-        bound,
-        run: run_facts,
-        scope,
-        ..
-    } = resolve_matching_query(
-        &args.input,
-        selected_corpus,
-        &compiled,
-        QueryProjection {
-            selected: &projected_attributes,
-            additional: &args.publish_attribute,
-            all: args.publish_all_attributes,
+    let session = MatchingQuerySession::open(
+        MatchingQuerySpec {
+            input: &args.input,
+            selected_corpus,
+            compiled: &compiled,
+            projection: QueryProjection {
+                selected: &projected_attributes,
+                additional: &args.publish_attribute,
+                all: args.publish_all_attributes,
+            },
+            scope_clause: scope_clause.as_ref(),
+            mode: QueryMode::Matches,
+            char_offsets: true,
+            metadata_projection: metadata_projection.clone(),
+            block_sample: sample.filter(|_| args.sample.blocks),
+            allow_selective: args.ending_report.is_none()
+                && limit.is_none()
+                && sample.is_none()
+                && scope_clause.is_none(),
+            needs_provenance: false,
         },
-        scope_clause.as_ref(),
         config,
         terminal,
-        QueryMode::Matches,
-        true,
-        metadata_projection.clone(),
-        sample.filter(|_| args.sample.blocks),
-        args.ending_report.is_none()
-            && limit.is_none()
-            && sample.is_none()
-            && scope_clause.is_none(),
-        false,
-        Arc::clone(&pool),
     )?;
     if args.publish_all_attributes {
-        published_attributes.extend_from_slice(bound.projection().keys());
+        published_attributes.extend_from_slice(session.bound.projection().keys());
     } else {
         published_attributes.extend(
             args.publish_attribute
                 .iter()
-                .filter(|key| bound.projection().keys().contains(key))
+                .filter(|key| session.bound.projection().keys().contains(key))
                 .cloned(),
         );
     }
@@ -345,10 +318,15 @@ pub fn run(
     let graph_scalars = args
         .evidence
         .then(|| published_projection.attributes().to_vec());
-    let run_corpus = lifecycle.run_corpus();
-    let run_inventory = lifecycle.run_inventory();
-    let run_id = random_id();
-    scope.warn_before_run(
+    let run_corpus = session.lifecycle.run_corpus();
+    let run_inventory = session.lifecycle.run_inventory();
+    let run_id = session.run_id.clone();
+    let conllu_spacing = session
+        .bound
+        .projection()
+        .ordinal_key("conllu.misc")
+        .is_some();
+    session.scope.warn_before_run(
         scope_clause.as_ref(),
         &args.input.markdown.self_label_no_ops(),
         config,
@@ -361,17 +339,19 @@ pub fn run(
         mode: QueryMode::Matches,
         catalog_fingerprint,
         definition_count: descriptors.len() as u64,
-        analyzer: run_facts.analyzer,
+        analyzer: session.run.analyzer.clone(),
         corpus: run_corpus,
-        dictionary_identity: run_facts.dictionary_identity,
-        reader_identity: run_facts.reader_identity,
-        token_schema_identity: run_facts.token_schema_identity,
+        dictionary_identity: session.run.dictionary_identity.clone(),
+        reader_identity: session.run.reader_identity.clone(),
+        token_schema_identity: session.run.token_schema_identity.clone(),
         published_attributes: published_projection.names().to_vec(),
         published_source_metadata: metadata_projection
             .as_ref()
             .map_or_else(Vec::new, |projection| projection.keys().to_vec()),
-        sample: run_facts
+        sample: session
+            .run
             .block_sample_report
+            .clone()
             .or_else(|| sample.map(crate::protocol::query::SampleReport::of)),
         overlaps: crate::protocol::query::OverlapsReport::of(args.overlaps),
         word_vectors,
@@ -386,7 +366,7 @@ pub fn run(
         temporary_storage_limits: TemporaryStorageLimits {
             max_temp_bytes: config.max_temp_bytes,
         },
-        traversal_limits: run_facts.traversal_limits,
+        traversal_limits: session.run.traversal_limits.clone(),
         inventory: run_inventory,
         worker_count: config.workers as u64,
     })));
@@ -395,40 +375,10 @@ pub fn run(
         let stdout = io::stdout();
         let mut writer = io::BufWriter::with_capacity(256 * 1024, stdout.lock());
         if output == OutputMode::Jsonl {
-            publish_query_jsonl(&mut writer, &run)?;
-            for descriptor in &descriptors {
-                publish_query_jsonl(
-                    &mut writer,
-                    &QueryEnvelope::new(QueryEvent::Definition(DefinitionData {
-                        name: descriptor.name.clone(),
-                        catalog_ordinal: descriptor.catalog_ordinal,
-                        body: match &descriptor.body {
-                            crate::catalog_input::AuthoredDefinitionBody::Pattern {
-                                expression,
-                            } => DefinitionBody::Pattern {
-                                expression: expression.clone(),
-                            },
-                            crate::catalog_input::AuthoredDefinitionBody::Lexicon {
-                                by,
-                                member_count,
-                            } => DefinitionBody::Lexicon {
-                                by: by.clone(),
-                                member_count: *member_count,
-                            },
-                        },
-                        metadata: descriptor.metadata.clone(),
-                        source_file: descriptor.source_file.clone(),
-                        source_span: SourceSpan {
-                            start: descriptor.source_span.start,
-                            end: descriptor.source_span.end,
-                        },
-                    })),
-                )?;
-            }
+            publish_run_and_definitions(&mut writer, &run, &descriptors)?;
         }
 
-        let limits = config.limits;
-        let direct = DirectMatchSink {
+        let mut sink = DirectMatchSink {
             last_human_flush: None,
             writer: &mut writer,
             output: sink_output,
@@ -436,7 +386,7 @@ pub fn run(
             limit,
             projection: published_projection.clone(),
             char_offsets: char_offsets_available,
-            conllu_spacing: bound.projection().ordinal_key("conllu.misc").is_some(),
+            conllu_spacing,
             offsets_omitted: 0,
             sequence: 0,
             emitted: 0,
@@ -462,7 +412,6 @@ pub fn run(
             Some(capacity) if capacity > 0 => Publication::from(selection).with_trace(capacity),
             _ => Publication::from(selection),
         };
-        let mut sink = direct;
         let progress_mode = config.progress;
         let presentation_progress = PresentationProgress::stderr(
             &config.stderr,
@@ -485,76 +434,32 @@ pub fn run(
                     format!("matched {sentences} sentences, found {matches} matches")
                 });
             };
-        let mut max_tokenized_bytes = 0usize;
-        let mut observer = |observation: lingrep_core::execution::TokenizedBatchObservation| {
-            max_tokenized_bytes = max_tokenized_bytes.max(observation.charged_bytes);
-            Ok(())
-        };
-        // Analysis lanes, not one session: tokenization is the single-threaded
-        // stage an uncached run is paced by, and the pool matching already
-        // uses is idle while it runs. A prepared source analyzes nothing and
-        // builds none of this.
-        let binding = analysis.binding(config.workers, &pool);
-        let outcome = execute_analyzed(
-            lingrep_core::execution::SampledSentences::new(
-                source,
-                sample.filter(|_| !args.sample.blocks),
-            ),
-            binding,
-            &bound,
-            &pool,
-            &limits,
-            config.limits.max_stage_sentences,
-            terminal.cancellation(),
+        let completed = match session.execute(
+            sample.filter(|_| !args.sample.blocks),
+            publication,
+            config,
+            terminal,
             &mut sink,
             &mut progress,
-            &mut observer,
-            publication,
-            scope
-                .prepared_scope
-                .as_ref()
-                .map_or(&SentenceAdmission::All, |resolved| &resolved.admission),
-        )?;
-        let report = match outcome {
-            RunOutcome::Completed(report) => report,
-            RunOutcome::Cancelled(_) => return Ok(CommandOutcome::Cancelled),
+        )? {
+            MatchingRunOutcome::Completed(completed) => *completed,
+            MatchingRunOutcome::Cancelled => return Ok(CommandOutcome::Cancelled),
         };
         presentation_progress.finish();
-        crate::attribute_binding::write_out_of_set_label_notices(
-            compiled.matcher.label_declarations(),
-            &report.out_of_set_labels,
+        let limited = limit.is_some_and(|limit| sink.emitted == limit);
+        completed.metrics.write_post_run_notices(
+            &compiled,
+            config,
+            limited,
+            None,
+            args.trace_policy.is_some(),
+        )?;
+        let scope_report = completed.metrics.scope.report_after_run(
+            scope_clause.as_ref(),
+            limited,
             config,
             &run_id,
         )?;
-        if args.trace_policy.is_some() {
-            crate::policy_report::write_requested(
-                &config.stderr,
-                compiled.matcher.catalog_policy(),
-                report.policy_stats.captures_dropped,
-                report.program_stats.per_operation(),
-                report.trace.as_ref(),
-            )?;
-        }
-        let limited = limit.is_some_and(|limit| sink.emitted == limit);
-        if !limited {
-            crate::attribute_binding::write_unobserved_span_kind_notices(
-                &compiled.matcher,
-                &report,
-                None,
-                config,
-                &run_id,
-            )?;
-        }
-        if !limited && let Some(observed) = source_stats.observed_division_kinds() {
-            crate::attribute_binding::write_unobserved_division_notices(
-                &compiled.matcher.lookaround_division_kinds(),
-                |kind| observed.contains(kind),
-                config,
-                Some(&run_id),
-            )?;
-        }
-        let scope_report =
-            scope.report_after_run(scope_clause.as_ref(), limited, config, &run_id)?;
         let coverage = if limited {
             Coverage::Prefix
         } else {
@@ -568,13 +473,18 @@ pub fn run(
         let completion = resolve_matches_completion(
             terminal,
             || {
-                lifecycle.complete(if limited {
+                completed.lifecycle.complete(if limited {
                     FilesystemCompletion::PrefixUnavailable
                 } else {
                     FilesystemCompletion::Full
                 })
             },
-            || source_stats.oversized_sentence_omissions(),
+            || {
+                completed
+                    .metrics
+                    .source_stats
+                    .oversized_sentence_omissions()
+            },
         )?;
         let (complete_corpus, inventory) = match completion {
             ValidatedCompletion::Cancelled => return Ok(CommandOutcome::Cancelled),
@@ -582,11 +492,22 @@ pub fn run(
         };
         let ending_corpus = complete_corpus.clone();
         if output == OutputMode::Jsonl {
-            let sentences_proven_absent = run_facts.filter_stats.as_ref().map_or(
-                0,
-                lingrep_corpus::PreparedFilterStats::sentences_proven_absent,
-            );
             let retained_matches = sink.publish_retained()?;
+            // `matches` drops nothing, but it does publish the `key` field, so a
+            // record whose declared key could not be projected is published without
+            // one. That is the same unkeyable-record disposition `summarize` counts,
+            // and reporting a hardcoded zero here would have made the absent field
+            // look like "no key was declared".
+            // `offsets_omitted` is only meaningful on a run that declares offsets:
+            // the sink leaves it zero otherwise.
+            // Computed after `publish_retained`, which updates `sink.emitted`
+            // to the retained match count when `--retain` is active.
+            let counters = completed.metrics.run_counters(
+                sink.emitted,
+                completed.metrics.report.policy_stats.records_unkeyed,
+                sink.offsets_omitted,
+            )?;
+            let resources = completed.metrics.resource_high_water(0, config);
             publish_query_jsonl(
                 sink.writer,
                 &QueryEnvelope::new(QueryEvent::Complete(QueryComplete {
@@ -594,45 +515,9 @@ pub fn run(
                     retained_matches,
                     coverage,
                     corpus: complete_corpus,
-                    counters: RunCounters {
-                        documents_admitted: source_stats.documents_admitted(),
-                        sentences_admitted: report
-                            .sentences_admitted
-                            .checked_add(sentences_proven_absent)
-                            .ok_or_else(|| {
-                                CliError::Corpus("sentence admission counter overflow".into())
-                            })?,
-                        sentences_proven_absent,
-                        sentences_matched: report.sentences_matched,
-                        tokens_scanned: report.tokens_scanned,
-                        matches_found: report.matches_found,
-                        records_emitted: sink.emitted,
-                        // `matches` drops nothing, but it does publish the
-                        // `key` field, so a record whose declared key could not
-                        // be projected is published without one. That is the
-                        // same unkeyable-record disposition `summarize` counts, and
-                        // reporting a hardcoded zero here would have made the
-                        // absent field look like "no key was declared".
-                        records_unkeyed: report.policy_stats.records_unkeyed,
-                        captures_dropped: report.policy_stats.captures_dropped,
-                        // Only meaningful on a run that declares offsets: the
-                        // sink leaves it zero otherwise, so an absent field
-                        // never has to be read as "every record lost them".
-                        offsets_omitted: sink.offsets_omitted,
-                    },
+                    counters,
                     elapsed_millis: started.elapsed().as_millis().try_into().unwrap_or(u64::MAX),
-                    resources: ResourceHighWater {
-                        staged_raw_bytes: source_stats
-                            .max_staged_raw_bytes()
-                            .try_into()
-                            .unwrap_or(u64::MAX),
-                        tokenized_bytes: max_tokenized_bytes.try_into().unwrap_or(u64::MAX),
-                        temporary_storage_bytes: 0,
-                        execution_limits: protocol_execution_limits(config),
-                        temporary_storage_limits: TemporaryStorageLimits {
-                            max_temp_bytes: config.max_temp_bytes,
-                        },
-                    },
+                    resources,
                     committed_prefix: (coverage == Coverage::Prefix)
                         .then(|| sink.last_committed.clone())
                         .flatten(),
@@ -1272,6 +1157,7 @@ mod tests {
     use lingrep_core::corpus::CorpusReadConfig;
     use lingrep_corpus::ReaderIdentity;
     use std::cell::Cell;
+    use std::sync::Arc;
 
     use super::*;
     use lingrep_core::token_match::TokenInfo;

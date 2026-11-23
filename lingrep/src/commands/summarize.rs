@@ -7,11 +7,10 @@ use std::sync::Arc;
 use std::time::Instant;
 
 use lingrep_core::execution::{
-    CancellationFlag, ExecutionError, MatchSink, PolicySelection, Publication, RunOutcome,
-    SentenceAdmission, SinkControl, cached_run_attributes, execute_analyzed, surface_group,
+    CancellationFlag, ExecutionError, MatchSink, PolicySelection, Publication, SinkControl,
+    cached_run_attributes, surface_group,
 };
 use lingrep_core::fsm::{CatalogPolicy, GroupBy, Match, PublishedRecord, RecordView};
-use rayon::ThreadPoolBuilder;
 use rayon::prelude::*;
 use roaring::RoaringTreemap;
 use serde::Serialize;
@@ -19,11 +18,13 @@ use serde::ser::SerializeMap;
 
 use super::CommandOutcome;
 use super::query_completion::FilesystemCompletion;
-use super::query_resolution::{QueryProjection, ResolvedMatchingQuery, resolve_matching_query};
+use super::query_resolution::{
+    MatchingQuerySession, MatchingQuerySpec, MatchingRunOutcome, QueryProjection,
+};
 use super::query_scope::{document_values, parse_scope};
 use super::query_support::{
     execution_output_error, execution_output_io, protocol_execution_limits, publish_query_jsonl,
-    random_id, write_vectors_notice, write_warning,
+    publish_run_and_definitions, write_vectors_notice, write_warning,
 };
 use crate::catalog_input::load_and_compile_with_vectors;
 use crate::cli::{ExecutionCliConfig, SummarizeArgs};
@@ -32,9 +33,8 @@ use crate::output::{SummaryTsvRow, sanitize_terminal, write_summary_tsv};
 use crate::presentation::{OutputMode, ResultDelivery, resolve_summary_top};
 use crate::protocol::diagnostic::DiagnosticStage;
 use crate::protocol::query::{
-    Coverage, DefinitionBody, DefinitionData, DocumentData, InventoryStats, MatchOrder,
-    ProtocolKeyField, QueryComplete, QueryEnvelope, QueryEvent, QueryMode, QueryRun,
-    ResourceHighWater, RunCounters, SourceSpan, SpanConvention, SummaryData, SummaryGroupData,
+    Coverage, DocumentData, InventoryStats, MatchOrder, ProtocolKeyField, QueryComplete,
+    QueryEnvelope, QueryEvent, QueryMode, QueryRun, SpanConvention, SummaryData, SummaryGroupData,
     TemporaryStorageLimits, Termination,
 };
 use crate::protocol::write_jsonl;
@@ -408,53 +408,38 @@ pub fn run(
                     .get(name)
                     .is_none_or(|entry| entry.key.is_empty())
         });
-    let pool = Arc::new(
-        ThreadPoolBuilder::new()
-            .num_threads(config.workers)
-            .build()
-            .map_err(|error| CliError::CommandFailure {
-                code: FailureCode::Io,
-                message: format!("failed to create worker pool: {error}"),
-            })?,
-    );
-    let ResolvedMatchingQuery {
-        source,
-        source_stats,
-        lifecycle,
-        analysis,
-        bound,
-        run: run_facts,
-        scope,
-        provenance,
-    } = resolve_matching_query(
-        &args.input,
-        selected_corpus,
-        &compiled,
-        QueryProjection {
-            selected: &projected_attributes,
-            additional: &[],
-            all: false,
+    let session = MatchingQuerySession::open(
+        MatchingQuerySpec {
+            input: &args.input,
+            selected_corpus,
+            compiled: &compiled,
+            projection: QueryProjection {
+                selected: &projected_attributes,
+                additional: &[],
+                all: false,
+            },
+            scope_clause: scope_clause.as_ref(),
+            mode: QueryMode::Summarize,
+            char_offsets: needs_surface_offsets,
+            metadata_projection: metadata_projection.clone(),
+            block_sample: sample.filter(|_| args.sample.blocks),
+            // A sentence the posting index skips still counts toward its
+            // document's admitted tokens.
+            allow_selective: sample.is_none()
+                && scope_clause.is_none()
+                && !args.by_document
+                && args.write_table.is_none()
+                && !args.by_section
+                && args.by_metadata.is_none(),
+            needs_provenance: args.by_section || args.by_metadata.is_some(),
         },
-        scope_clause.as_ref(),
         config,
         terminal,
-        QueryMode::Summarize,
-        needs_surface_offsets,
-        metadata_projection.clone(),
-        sample.filter(|_| args.sample.blocks),
-        // A sentence the posting index skips still counts toward its
-        // document's admitted tokens.
-        sample.is_none()
-            && scope_clause.is_none()
-            && !args.by_document
-            && args.write_table.is_none()
-            && !args.by_section
-            && args.by_metadata.is_none(),
-        args.by_section || args.by_metadata.is_some(),
-        Arc::clone(&pool),
     )?;
+    let pool = Arc::clone(&session.pool);
     let provenance = || {
-        provenance
+        session
+            .provenance
             .as_deref()
             .expect("a prepared query opens provenance for --by-section and --by-metadata")
     };
@@ -467,10 +452,10 @@ pub fn run(
         .as_ref()
         .map(|key| Ok::<_, CliError>((key.clone(), document_values(provenance(), key)?)))
         .transpose()?;
-    let run_corpus = lifecycle.run_corpus();
-    let run_inventory = lifecycle.run_inventory();
-    let run_id = random_id();
-    scope.warn_before_run(
+    let run_corpus = session.lifecycle.run_corpus();
+    let run_inventory = session.lifecycle.run_inventory();
+    let run_id = session.run_id.clone();
+    session.scope.warn_before_run(
         scope_clause.as_ref(),
         &args.input.markdown.self_label_no_ops(),
         config,
@@ -491,19 +476,21 @@ pub fn run(
         mode: QueryMode::Summarize,
         catalog_fingerprint,
         definition_count: descriptors.len() as u64,
-        analyzer: run_facts.analyzer,
+        analyzer: session.run.analyzer.clone(),
         corpus: run_corpus,
-        dictionary_identity: run_facts.dictionary_identity,
-        reader_identity: run_facts.reader_identity,
-        token_schema_identity: run_facts.token_schema_identity,
+        dictionary_identity: session.run.dictionary_identity.clone(),
+        reader_identity: session.run.reader_identity.clone(),
+        token_schema_identity: session.run.token_schema_identity.clone(),
         // `summarize` publishes counts, never token evidence, so the honest
         // declaration is that this run publishes no token attributes.
         published_attributes: Vec::new(),
         published_source_metadata: metadata_projection
             .as_ref()
             .map_or_else(Vec::new, |projection| projection.keys().to_vec()),
-        sample: run_facts
+        sample: session
+            .run
             .block_sample_report
+            .clone()
             .or_else(|| sample.map(crate::protocol::query::SampleReport::of)),
         overlaps: crate::protocol::query::OverlapsReport::of(args.overlaps),
         word_vectors,
@@ -520,7 +507,7 @@ pub fn run(
         temporary_storage_limits: TemporaryStorageLimits {
             max_temp_bytes: config.max_temp_bytes,
         },
-        traversal_limits: run_facts.traversal_limits,
+        traversal_limits: session.run.traversal_limits.clone(),
         inventory: run_inventory,
         worker_count: config.workers as u64,
     })));
@@ -529,39 +516,9 @@ pub fn run(
         let stdout = io::stdout();
         let mut writer = stdout.lock();
         if output == OutputMode::Jsonl {
-            publish_query_jsonl(&mut writer, &run)?;
-            for descriptor in &descriptors {
-                publish_query_jsonl(
-                    &mut writer,
-                    &QueryEnvelope::new(QueryEvent::Definition(DefinitionData {
-                        name: descriptor.name.clone(),
-                        catalog_ordinal: descriptor.catalog_ordinal,
-                        body: match &descriptor.body {
-                            crate::catalog_input::AuthoredDefinitionBody::Pattern {
-                                expression,
-                            } => DefinitionBody::Pattern {
-                                expression: expression.clone(),
-                            },
-                            crate::catalog_input::AuthoredDefinitionBody::Lexicon {
-                                by,
-                                member_count,
-                            } => DefinitionBody::Lexicon {
-                                by: by.clone(),
-                                member_count: *member_count,
-                            },
-                        },
-                        metadata: descriptor.metadata.clone(),
-                        source_file: descriptor.source_file.clone(),
-                        source_span: SourceSpan {
-                            start: descriptor.source_span.start,
-                            end: descriptor.source_span.end,
-                        },
-                    })),
-                )?;
-            }
+            publish_run_and_definitions(&mut writer, &run, &descriptors)?;
         }
 
-        let limits = config.limits;
         let tallies = usize::from(sections.is_some())
             + usize::from(metadata_values.is_some())
             + usize::from(args.grouping_coverage);
@@ -651,42 +608,21 @@ pub fn run(
                 format!("matched {sentences} sentences, found {matches} matches")
             });
         };
-        let mut max_tokenized_bytes = 0usize;
-        let mut observer = |observation: lingrep_core::execution::TokenizedBatchObservation| {
-            max_tokenized_bytes = max_tokenized_bytes.max(observation.charged_bytes);
-            Ok(())
+        // `summarize` has no `--raw-matches`: a summary of the raw stream
+        // would count records the catalog does not publish.
+        let publication = match args.trace_policy {
+            Some(capacity) if capacity > 0 => {
+                Publication::from(PolicySelection::Apply).with_trace(capacity)
+            }
+            _ => Publication::from(PolicySelection::Apply),
         };
-        // Analysis lanes, not one session: tokenization is the single-threaded
-        // stage an uncached run is paced by, and the pool matching already
-        // uses is idle while it runs. A prepared source analyzes nothing and
-        // builds none of this.
-        let binding = analysis.binding(config.workers, &pool);
-        let outcome = execute_analyzed(
-            lingrep_core::execution::SampledSentences::new(
-                source,
-                sample.filter(|_| !args.sample.blocks),
-            ),
-            binding,
-            &bound,
-            &pool,
-            &limits,
-            config.limits.max_stage_sentences,
-            terminal.cancellation(),
+        let outcome = session.execute(
+            sample.filter(|_| !args.sample.blocks),
+            publication,
+            config,
+            terminal,
             &mut sink,
             &mut progress,
-            &mut observer,
-            // `summarize` has no `--raw-matches`: a summary of the raw stream
-            // would count records the catalog does not publish.
-            match args.trace_policy {
-                Some(capacity) if capacity > 0 => {
-                    Publication::from(PolicySelection::Apply).with_trace(capacity)
-                }
-                _ => Publication::from(PolicySelection::Apply),
-            },
-            scope
-                .prepared_scope
-                .as_ref()
-                .map_or(&SentenceAdmission::All, |resolved| &resolved.admission),
         );
         let outcome = match outcome {
             Ok(outcome) => outcome,
@@ -697,41 +633,18 @@ pub fn run(
                 return Err(error.into());
             }
         };
-        let report = match outcome {
-            RunOutcome::Completed(report) => report,
-            RunOutcome::Cancelled(_) => return Ok(CommandOutcome::Cancelled),
+        let completed = match outcome {
+            MatchingRunOutcome::Completed(completed) => *completed,
+            MatchingRunOutcome::Cancelled => return Ok(CommandOutcome::Cancelled),
         };
         presentation_progress.finish();
-        crate::attribute_binding::write_out_of_set_label_notices(
-            compiled.matcher.label_declarations(),
-            &report.out_of_set_labels,
+        completed.metrics.write_post_run_notices(
+            &compiled,
             config,
-            &run_id,
-        )?;
-        crate::attribute_binding::write_unobserved_span_kind_notices(
-            &compiled.matcher,
-            &report,
+            false,
             sink.span_kind.map(|kind| (kind, sink.span_kind_observed)),
-            config,
-            &run_id,
+            args.trace_policy.is_some(),
         )?;
-        if let Some(observed) = source_stats.observed_division_kinds() {
-            crate::attribute_binding::write_unobserved_division_notices(
-                &compiled.matcher.lookaround_division_kinds(),
-                |kind| observed.contains(kind),
-                config,
-                Some(&run_id),
-            )?;
-        }
-        if args.trace_policy.is_some() {
-            crate::policy_report::write_requested(
-                &config.stderr,
-                compiled.matcher.catalog_policy(),
-                report.policy_stats.captures_dropped,
-                report.program_stats.per_operation(),
-                report.trace.as_ref(),
-            )?;
-        }
         let aggregation = sink
             .aggregation
             .take()
@@ -744,7 +657,8 @@ pub fn run(
         let metadata_values = sink.metadata_values.take();
         drop(sink);
 
-        let (complete_corpus, inventory) = lifecycle.complete(FilesystemCompletion::Full)?;
+        let (complete_corpus, inventory) =
+            completed.lifecycle.complete(FilesystemCompletion::Full)?;
         let pattern_names = descriptors
             .iter()
             .map(|descriptor| catalog_policy.published_name(descriptor.name.as_str()))
@@ -834,15 +748,7 @@ pub fn run(
         // Before publication, as in `matches`: a degraded run does not publish
         // a successful completion. A summary is a total, and a total missing a
         // sentence nobody was told about is worse than no total.
-        if let Some(summary) = source_stats.oversized_sentence_omissions()? {
-            return Err(CliError::OversizedSentencesSkipped {
-                count: summary.count,
-                first_source_name: summary.first_source_name,
-                first_ordinal: summary.first_ordinal,
-                first_actual: summary.first_actual,
-                limit: summary.limit,
-            });
-        }
+        completed.metrics.check_oversized_omissions()?;
         if let Some(inventory) = inventory
             .as_ref()
             .filter(|stats| stats.alias_documents != 0)
@@ -862,46 +768,22 @@ pub fn run(
 
         // `summarize` publishes no per-match prefix, so it always runs to
         // completion: its basis is the corpus on both paths.
-        let scope_report = scope.report_after_run(scope_clause.as_ref(), false, config, &run_id)?;
-        let sentences_proven_absent = run_facts.filter_stats.as_ref().map_or(
-            0,
-            lingrep_corpus::PreparedFilterStats::sentences_proven_absent,
-        );
+        let scope_report = completed.metrics.scope.report_after_run(
+            scope_clause.as_ref(),
+            false,
+            config,
+            &run_id,
+        )?;
         let complete = QueryComplete {
             grouping_coverage: complete_grouping_coverage,
             retained_matches: None,
             coverage: Coverage::Full,
             corpus: complete_corpus,
-            counters: RunCounters {
-                documents_admitted: source_stats.documents_admitted(),
-                sentences_admitted: report
-                    .sentences_admitted
-                    .checked_add(sentences_proven_absent)
-                    .ok_or_else(|| {
-                        CliError::Corpus("sentence admission counter overflow".into())
-                    })?,
-                sentences_proven_absent,
-                sentences_matched: report.sentences_matched,
-                tokens_scanned: report.tokens_scanned,
-                matches_found: report.matches_found,
-                records_emitted: 0,
-                records_unkeyed,
-                captures_dropped: report.policy_stats.captures_dropped,
-                offsets_omitted: 0,
-            },
+            counters: completed.metrics.run_counters(0, records_unkeyed, 0)?,
             elapsed_millis: started.elapsed().as_millis().try_into().unwrap_or(u64::MAX),
-            resources: ResourceHighWater {
-                staged_raw_bytes: source_stats
-                    .max_staged_raw_bytes()
-                    .try_into()
-                    .unwrap_or(u64::MAX),
-                tokenized_bytes: max_tokenized_bytes.try_into().unwrap_or(u64::MAX),
-                temporary_storage_bytes: temp_high_water,
-                execution_limits: protocol_execution_limits(config),
-                temporary_storage_limits: TemporaryStorageLimits {
-                    max_temp_bytes: config.max_temp_bytes,
-                },
-            },
+            resources: completed
+                .metrics
+                .resource_high_water(temp_high_water, config),
             committed_prefix: None,
             inventory,
             termination: Termination::Eof,
@@ -1835,6 +1717,7 @@ mod tests {
     use super::*;
     use crate::error::{Termination as ProcessTermination, exit_code};
     use crate::protocol::query::CompleteCorpus;
+    use crate::protocol::query::{ResourceHighWater, RunCounters};
 
     #[derive(Clone, Debug, PartialEq, Eq)]
     enum Attempt {

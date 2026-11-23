@@ -9,37 +9,26 @@
 pub(crate) mod report;
 
 use std::io::{self, Write};
-use std::path::Path;
-use std::sync::Arc;
 
-use lingrep_core::corpus::{AdmittedCorpus, CorpusReadConfig, resolve_input_format};
-use lingrep_core::execution::{
-    ExecutionBatch, ExecutionError, SentenceAdmission, SentenceBatchSource,
-};
-use lingrep_corpus::CorpusArtifact;
+use lingrep_core::execution::{ExecutionBatch, ExecutionError};
 
 use self::report::{AttributeCoverage, exclusion_record};
 use super::CommandOutcome;
-use super::query_resolution::QueryScope;
-use super::query_scope::{parse_scope, resolve_prepared_scope};
+use super::query_resolution::{CorpusSourceSpec, OpenedCorpus};
+use super::query_scope::parse_scope;
 use super::query_support::{
-    execution_output_error, execution_output_io, random_id, write_token_schema_notice,
+    build_worker_pool, execution_output_error, execution_output_io, random_id,
 };
-use crate::analyzer_selection::resolve_input;
 use crate::catalog_input::load_and_compile;
-use crate::cli::{AnalyzerCliConfig, AttributesArgs, ExecutionCliConfig};
-use crate::direct_source::{
-    BoxSentenceSource, FilesystemCorpusEvents, admitted_filesystem_events, boxed_direct_source,
-    encode_digest, scoped, source_from_events,
-};
-use crate::error::{CliError, FailureCode};
+use crate::cli::{AttributesArgs, ExecutionCliConfig};
+use crate::direct_source::encode_digest;
+use crate::error::CliError;
 use crate::output::{AttributesTsvRow, write_attributes_tsv};
 use crate::presentation::{OutputMode, ResultDelivery};
 use crate::protocol::attributes::{
     AttributesEnvelope, AttributesEvent, CoverageData, ExclusionData, ProjectionData, ScopeData,
 };
 use crate::protocol::write_jsonl;
-use crate::section_diagnostics::refuse_unanswerable;
 use crate::terminal::{PresentationProgress, TerminalArbiter};
 
 pub fn run(
@@ -70,9 +59,6 @@ pub fn run(
     let catalog_fingerprint = catalog.as_ref().map(|catalog| catalog.fingerprint.clone());
 
     let scope_clause = parse_scope(args.selection.clause.as_deref())?;
-    let mut scope = QueryScope::default();
-
-    let root = args.input.root.as_deref();
     let resolved_corpus = crate::corpus_mode::resolve(
         &args.input,
         &args.cache,
@@ -81,180 +67,34 @@ pub fn run(
         terminal,
         output,
     )?;
-    let selected_corpus = resolved_corpus.corpus.as_deref();
-    let stdin = selected_corpus.is_none() && root.is_none_or(|path| path == Path::new("-"));
-    let ((source, source_documents), analyzer_plan, analyzer_run, schema, dictionary_identity) =
-        if let Some(path) = selected_corpus {
-            let artifact = CorpusArtifact::open(path)?;
-            let schema = artifact.token_schema()?;
-            let projection = schema
-                .bind_projection(schema.keys().iter().cloned())
-                .map_err(|error| CliError::Parse(error.to_string()))?;
-            let resolved = scope_clause
-                .as_ref()
-                .map(|clause| {
-                    let reader = artifact.provenance_reader()?;
-                    resolve_prepared_scope(&reader, clause)
-                })
-                .transpose()?;
-            scope.prepared_scope = resolved.map(|(resolution, labels)| {
-                scope.section_labels = labels;
-                resolution
-            });
-            let inputs = artifact.analysis_inputs()?;
-            write_token_schema_notice(artifact.analyzer(), &inputs, config)?;
-            let admission = scope
-                .prepared_scope
-                .as_ref()
-                .map_or(SentenceAdmission::All, |resolved| {
-                    resolved.admission.clone()
-                });
-            let source = artifact
-                .bound_sentence_source(&projection)?
-                .with_admission(admission)
-                .with_cancellation(terminal.cancellation().clone());
-            let source = if config.workers > 1 {
-                let pool = Arc::new(
-                    rayon::ThreadPoolBuilder::new()
-                        .num_threads(config.workers)
-                        .build()
-                        .map_err(|error| CliError::CommandFailure {
-                            code: FailureCode::Io,
-                            message: format!("failed to create worker pool: {error}"),
-                        })?,
-                );
-                source.with_decode_pool(pool)
-            } else {
-                source
-            };
-            let documents = source.document_stats();
-            (
-                (
-                    Box::new(source) as BoxSentenceSource,
-                    Box::new(move || documents.admitted_documents()) as Box<dyn Fn() -> u64>,
-                ),
-                None,
-                crate::protocol::query::AnalyzerRun::new(
-                    artifact.analyzer(),
-                    artifact.trust_class().address_component(),
-                    &schema,
-                ),
-                schema,
-                encode_digest(artifact.dictionary_fingerprint()?.as_bytes()),
-            )
-        } else {
-            let format =
-                resolve_input_format(if stdin { None } else { root }, args.input.input_format);
-            let dict_path = (format != lingrep_core::corpus::CorpusFormat::Conllu
-                && matches!(&config.analyzer, AnalyzerCliConfig::Vibrato))
-            .then(|| args.input.direct_dictionary_path())
-            .transpose()?;
-            let resolved = resolve_input(
-                format,
-                config,
-                dict_path.as_deref(),
-                terminal.cancellation(),
-            )?;
-            let schema = resolved.schema().clone();
-            let descriptor = resolved.descriptor().clone();
-            let dictionary_digest = resolved.resource_identity();
-            let analyzer_plan = resolved.into_native_plan();
-            let projection = schema
-                .bind_projection(schema.keys().iter().cloned())
-                .map_err(|error| CliError::Parse(error.to_string()))?;
-            let analyzer_record = lingrep_corpus::AnalyzerRecord::from_descriptor(&descriptor);
-            let analyzer_run = crate::protocol::query::AnalyzerRun::new(
-                &analyzer_record,
-                "locally-executed",
-                &schema,
-            );
-            crate::cli::validate_format_root(format, root, stdin).map_err(CliError::InvalidArgs)?;
-            // Markdown and BCCWJ record section labels (BCCWJ's paragraph
-            // tags ride `active_labels`, spec D2); the other direct formats
-            // record none.
-            if let Some(clause) = scope_clause.as_ref() {
-                refuse_unanswerable(
-                    clause,
-                    format.supports_section_labels(),
-                    &format!("{format:?} input").to_lowercase(),
-                )?;
-            }
-            let markdown_config = args
-                .input
-                .markdown
-                .resolve()
-                .map_err(CliError::InvalidArgs)?
-                .with_max_frontmatter_bytes(config.limits.max_stage_input_bytes);
-            scope.read_time_policy = Some(markdown_config.policy.clone());
-            let reader_config = CorpusReadConfig::new(format, markdown_config);
-            let (source, stats) = if stdin {
-                // No completion observation: a stream digest is not a corpus
-                // identity, and `attributes` reports none.
-                let (_, events) = crate::direct_source::stdin_events(
-                    &reader_config,
-                    config.limits.max_input_record_bytes,
-                );
-                boxed_direct_source(Box::new(
-                    source_from_events(scoped(
-                        AdmittedCorpus::new(events),
-                        scope_clause.as_ref(),
-                        &scope.scope_observation,
-                    ))
-                    .with_normalization(config.normalization)
-                    .with_segmentation(config.segmentation)
-                    .with_projection(projection.clone()),
-                ))
-            } else {
-                let root = root.expect("filesystem root");
-                let (events, _observation, diagnostics) = FilesystemCorpusEvents::new(
-                    root,
-                    reader_config,
-                    config.traversal.clone(),
-                    config.limits.max_input_record_bytes,
-                )?;
-                scope.markdown_diagnostics = Some(diagnostics);
-                boxed_direct_source(Box::new(
-                    source_from_events(scoped(
-                        admitted_filesystem_events(events),
-                        scope_clause.as_ref(),
-                        &scope.scope_observation,
-                    ))
-                    .with_normalization(config.normalization)
-                    .with_segmentation(config.segmentation)
-                    .with_projection(projection.clone()),
-                ))
-            };
-            (
-                (
-                    source,
-                    Box::new(move || stats.documents_admitted()) as Box<dyn Fn() -> u64>,
-                ),
-                analyzer_plan,
-                analyzer_run,
-                schema,
-                encode_digest(dictionary_digest),
-            )
-        };
-
-    let mut source: Box<dyn SentenceBatchSource> = source;
-    if let Some(plan) = analyzer_plan {
-        let projection = schema
-            .bind_projection(schema.keys().iter().cloned())
-            .map_err(|error| CliError::Parse(error.to_string()))?;
-        let segmentation = plan.descriptor().segmentation();
-        source = Box::new(lingrep_core::execution::NativeAnalysisSource::new(
-            source,
-            plan.create_session(),
-            projection,
-            segmentation,
-        ));
-    }
+    let opened = OpenedCorpus::open(
+        &args.input,
+        resolved_corpus.corpus.as_deref(),
+        config,
+        terminal,
+    )?;
+    let projection = opened.full_projection()?;
+    let decode_pool = (opened.is_prepared() && config.workers > 1)
+        .then(|| build_worker_pool(config.workers))
+        .transpose()?;
+    let mut stream = opened
+        .into_source(
+            CorpusSourceSpec {
+                scope_clause: scope_clause.as_ref(),
+                decode_pool,
+                attach_cancellation: true,
+                ..CorpusSourceSpec::token_stream(projection.clone())
+            },
+            config,
+            terminal,
+        )?
+        .into_bound_stream(projection);
 
     let limits = config.limits;
     limits.validate()?;
 
     let run_id = random_id();
-    scope.warn_before_run(
+    stream.scope.warn_before_run(
         scope_clause.as_ref(),
         &args.input.markdown.self_label_no_ops(),
         config,
@@ -267,13 +107,13 @@ pub fn run(
         ResultDelivery::Deferred,
     );
     let post_run = (|| -> Result<CommandOutcome, CliError> {
-        let mut coverage = AttributeCoverage::new(&schema);
+        let mut coverage = AttributeCoverage::new(&stream.schema);
         let mut admitted_sentences = 0_u64;
         loop {
             if terminal.cancellation().is_cancelled() {
                 return Ok(CommandOutcome::Cancelled);
             }
-            let Some(batch) = source.next_batch(&limits)? else {
+            let Some(batch) = stream.source.next_batch(&limits)? else {
                 break;
             };
             if terminal.cancellation().is_cancelled() {
@@ -301,7 +141,10 @@ pub fn run(
         // Every count is final before the first record is written: this is an
         // aggregate, and a partially-observed corpus cannot answer "is this
         // attribute absent anywhere?".
-        let scope_report = scope.report_after_run(scope_clause.as_ref(), false, config, &run_id)?;
+        let scope_report =
+            stream
+                .scope
+                .report_after_run(scope_clause.as_ref(), false, config, &run_id)?;
         if !terminal.try_claim_completion() {
             return Ok(CommandOutcome::Cancelled);
         }
@@ -312,17 +155,17 @@ pub fn run(
             &mut writer,
             output,
             &ScopeData {
-                analyzer: analyzer_run,
-                token_schema_identity: encode_digest(schema.digest().as_bytes()),
+                analyzer: stream.run.analyzer,
+                token_schema_identity: encode_digest(stream.schema.digest().as_bytes()),
                 admitted_tokens: coverage.admitted_tokens(),
                 admitted_sentences,
-                admitted_documents: source_documents(),
+                admitted_documents: stream.source_stats.documents_admitted(),
                 scope: scope_report
                     .as_ref()
                     .map(serde_json::to_value)
                     .transpose()
                     .map_err(|error| CliError::Parse(error.to_string()))?,
-                dictionary_identity,
+                dictionary_identity: stream.run.dictionary_identity,
                 catalog_fingerprint,
             },
             &coverage,

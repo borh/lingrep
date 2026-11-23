@@ -24,7 +24,6 @@ pub mod matches;
 pub mod neighbors;
 pub mod prune;
 pub(crate) mod query_completion;
-pub(crate) mod query_projection;
 pub(crate) mod query_resolution;
 pub(crate) mod query_scope;
 pub(crate) mod query_source;

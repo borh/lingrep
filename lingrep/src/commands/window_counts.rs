@@ -2,17 +2,19 @@ use std::io::{self, BufWriter, Write};
 use std::num::NonZeroU64;
 
 use lingrep_core::execution::{
-    ExecutionError, ExecutionProgress, MatchSink, PolicySelection, Publication, RunOutcome,
-    SentenceAdmission, SentenceLocation, SinkControl, execute_analyzed,
+    ExecutionError, ExecutionProgress, MatchSink, PolicySelection, Publication, SentenceLocation,
+    SinkControl,
 };
 use lingrep_core::fsm::{CompileOutput, Match, PublishedRecord};
 use lingrep_core::token_match::TokenSequence;
 
 use super::CommandOutcome;
-use super::query_resolution::{QueryProjection, ResolvedMatchingQuery, resolve_matching_query};
-use super::query_support::{execution_output_error, execution_output_io, random_id};
+use super::query_resolution::{
+    MatchingQuerySession, MatchingQuerySpec, MatchingRunOutcome, QueryProjection,
+};
+use super::query_support::{execution_output_error, execution_output_io};
 use crate::cli::{ExecutionCliConfig, SummarizeArgs};
-use crate::error::{CliError, FailureCode};
+use crate::error::CliError;
 use crate::presentation::{OutputMode, ResultDelivery};
 use crate::protocol::query::{QueryMode, RunCorpus};
 use crate::protocol::window_counts::{
@@ -49,52 +51,37 @@ pub(super) fn run(
             "--by-window requires a prepared corpus".into(),
         ));
     };
-    let pool = std::sync::Arc::new(
-        rayon::ThreadPoolBuilder::new()
-            .num_threads(config.workers)
-            .build()
-            .map_err(|error| CliError::CommandFailure {
-                code: FailureCode::Io,
-                message: format!("failed to create worker pool: {error}"),
-            })?,
-    );
-    let ResolvedMatchingQuery {
-        source,
-        source_stats,
-        lifecycle,
-        analysis,
-        bound,
-        ..
-    } = resolve_matching_query(
-        &args.input,
-        Some(path),
-        compiled,
-        QueryProjection {
-            selected: &[],
-            additional: &[],
-            all: false,
+    let session = MatchingQuerySession::open(
+        MatchingQuerySpec {
+            input: &args.input,
+            selected_corpus: Some(path),
+            compiled,
+            projection: QueryProjection {
+                selected: &[],
+                additional: &[],
+                all: false,
+            },
+            scope_clause: None,
+            mode: QueryMode::Summarize,
+            char_offsets: false,
+            metadata_projection: None,
+            block_sample: None,
+            allow_selective: false,
+            needs_provenance: false,
         },
-        None,
         config,
         terminal,
-        QueryMode::Summarize,
-        false,
-        None,
-        None,
-        false,
-        false,
-        std::sync::Arc::clone(&pool),
     )?;
     let RunCorpus::Prepared {
         source_identity,
         analysis_identity,
-    } = lifecycle.run_corpus()
+    } = session.lifecycle.run_corpus()
     else {
         return Err(CliError::InvalidArgs(
             "--by-window requires a prepared corpus".into(),
         ));
     };
-    let run_id = random_id();
+    let run_id = session.run_id.clone();
     let mut sink = WindowSink {
         writer: BufWriter::new(io::stdout().lock()),
         size,
@@ -103,7 +90,7 @@ pub(super) fn run(
         windows_emitted: 0,
     };
     sink.write(WindowCountsEvent::Run(WindowCountsRun {
-        run_id: run_id.clone(),
+        run_id,
         source_identity,
         analysis_identity,
         catalog_fingerprint,
@@ -120,43 +107,32 @@ pub(super) fn run(
         let sentences = progress.sentences_matched;
         presentation.snapshot(move || format!("matched {sentences} sentences"));
     };
-    let outcome = execute_analyzed(
-        source,
-        analysis.binding(config.workers, &pool),
-        &bound,
-        &pool,
-        &config.limits,
-        config.limits.max_stage_sentences,
-        terminal.cancellation(),
+    let outcome = session.execute(
+        None,
+        Publication::from(PolicySelection::Apply),
+        config,
+        terminal,
         &mut sink,
         &mut progress,
-        &mut |_| Ok(()),
-        Publication::from(PolicySelection::Apply),
-        &SentenceAdmission::All,
     )?;
     presentation.finish();
-    let RunOutcome::Completed(report) = outcome else {
+    let MatchingRunOutcome::Completed(completed) = outcome else {
         return Ok(CommandOutcome::Cancelled);
     };
-    if source_stats.oversized_sentence_omissions()?.is_some() {
+    if completed
+        .metrics
+        .source_stats
+        .oversized_sentence_omissions()?
+        .is_some()
+    {
         return Err(ExecutionError::Sink(
             "window counts require every prepared sentence to fit the execution limits".into(),
         )
         .into());
     }
-    crate::attribute_binding::write_out_of_set_label_notices(
-        compiled.matcher.label_declarations(),
-        &report.out_of_set_labels,
-        config,
-        &run_id,
-    )?;
-    crate::attribute_binding::write_unobserved_span_kind_notices(
-        &compiled.matcher,
-        &report,
-        None,
-        config,
-        &run_id,
-    )?;
+    completed
+        .metrics
+        .write_post_run_notices(compiled, config, false, None, false)?;
     if !terminal.try_claim_completion() {
         return Ok(CommandOutcome::Cancelled);
     }

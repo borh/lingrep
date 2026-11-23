@@ -1,19 +1,24 @@
 //! Shared protocol and diagnostic mechanics for query-like commands.
 
 use std::io::{self, Write};
+use std::sync::Arc;
 
 use lingrep_core::execution::ExecutionError;
 use rand::random;
 
+use crate::catalog_input::{AuthoredDefinition, AuthoredDefinitionBody};
 use crate::cli::{DiagnosticFormat, ExecutionCliConfig};
-use crate::direct_source::encode_digest;
-use crate::error::CliError;
+use crate::direct_source::{OversizedSentenceOmissionSummary, encode_digest};
+use crate::error::{CliError, FailureCode};
 use crate::output::sanitize_terminal;
 use crate::protocol::OutputError;
 use crate::protocol::diagnostic::{
     DiagnosticData, DiagnosticEnvelope, DiagnosticEvent, DiagnosticSeverity, DiagnosticStage,
 };
-use crate::protocol::query::{ExecutionLimits, InventoryStats, QueryEnvelope, TraversalLimits};
+use crate::protocol::query::{
+    DefinitionBody, DefinitionData, ExecutionLimits, InventoryStats, PublishedProjection,
+    QueryEnvelope, QueryEvent, SourceSpan, TokenAttributes, TokenEvidence, TraversalLimits,
+};
 use crate::protocol::write_jsonl;
 use crate::terminal::RunStderr;
 
@@ -80,6 +85,75 @@ pub(crate) fn publish_query_jsonl<W: Write>(
     write_jsonl(writer, event)
         .map_err(execution_output_error)
         .map_err(CliError::from)
+}
+
+pub(crate) fn publish_run_and_definitions<W: Write>(
+    writer: &mut W,
+    run: &QueryEnvelope,
+    descriptors: &[AuthoredDefinition],
+) -> Result<(), CliError> {
+    publish_query_jsonl(writer, run)?;
+    for descriptor in descriptors {
+        publish_query_jsonl(
+            writer,
+            &QueryEnvelope::new(QueryEvent::Definition(DefinitionData {
+                name: descriptor.name.clone(),
+                catalog_ordinal: descriptor.catalog_ordinal,
+                body: match &descriptor.body {
+                    AuthoredDefinitionBody::Pattern { expression } => DefinitionBody::Pattern {
+                        expression: expression.clone(),
+                    },
+                    AuthoredDefinitionBody::Lexicon { by, member_count } => {
+                        DefinitionBody::Lexicon {
+                            by: by.clone(),
+                            member_count: *member_count,
+                        }
+                    }
+                },
+                metadata: descriptor.metadata.clone(),
+                source_file: descriptor.source_file.clone(),
+                source_span: SourceSpan {
+                    start: descriptor.source_span.start,
+                    end: descriptor.source_span.end,
+                },
+            })),
+        )?;
+    }
+    Ok(())
+}
+
+pub(crate) fn build_worker_pool(workers: usize) -> Result<Arc<rayon::ThreadPool>, CliError> {
+    rayon::ThreadPoolBuilder::new()
+        .num_threads(workers)
+        .build()
+        .map(Arc::new)
+        .map_err(|error| CliError::CommandFailure {
+            code: FailureCode::Io,
+            message: format!("failed to create worker pool: {error}"),
+        })
+}
+
+pub(crate) fn oversized_omissions_error(summary: OversizedSentenceOmissionSummary) -> CliError {
+    CliError::OversizedSentencesSkipped {
+        count: summary.count,
+        first_source_name: summary.first_source_name,
+        first_ordinal: summary.first_ordinal,
+        first_actual: summary.first_actual,
+        limit: summary.limit,
+    }
+}
+
+pub(crate) fn token_evidence(
+    tokens: &(impl lingrep_core::token_match::TokenSequence + ?Sized),
+    range: std::ops::Range<usize>,
+    projection: &PublishedProjection,
+) -> Vec<TokenEvidence> {
+    range
+        .map(|index| TokenEvidence {
+            index: index as u64,
+            attributes: TokenAttributes::from_sequence_projected(tokens, index, projection),
+        })
+        .collect()
 }
 
 pub(crate) fn protocol_inventory(

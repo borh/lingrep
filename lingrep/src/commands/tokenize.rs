@@ -1,37 +1,25 @@
 //! Bounded tokenization and `lingrep.tokenize/v1` publication.
 
 use std::io::{self, Write};
-use std::path::Path;
-use std::sync::Arc;
 use std::time::Instant;
 
-use lingrep_core::corpus::{AdmittedCorpus, CorpusFormat, CorpusReadConfig, resolve_input_format};
 use lingrep_core::execution::{
-    ExecutionBatch, ExecutionError, ExecutionLimits as MatcherLimits, NativeAnalysisSource,
-    SentenceBatchSource,
+    ExecutionBatch, ExecutionError, ExecutionLimits as MatcherLimits, SentenceBatchSource,
 };
-use lingrep_corpus::{AnalysisInputs, CorpusArtifact, ReaderIdentity, TokenSchemaIdentity};
 
+use super::CommandOutcome;
 use super::conllu_export::{self, ConlluExport};
-use super::query_completion::{CompletionObservation, FilesystemCompletion};
-use super::query_projection::token_evidence;
+use super::query_completion::FilesystemCompletion;
+use super::query_resolution::{CorpusSourceSpec, OpenedCorpus};
 use super::query_support::{
-    execution_output_error, execution_output_io, protocol_execution_limits, protocol_inventory,
-    protocol_traversal_limits, protocol_traversal_limits_from_report, random_id,
-    write_token_schema_notice,
+    execution_output_error, execution_output_io, random_id, token_evidence,
 };
-use super::{CommandOutcome, admission_identity};
-use crate::analyzer_selection::resolve_input;
 use crate::cli::{ExecutionCliConfig, TokenizeArgs};
-use crate::direct_source::{
-    FilesystemCorpusEvents, admitted_filesystem_events, boxed_direct_source, encode_digest,
-    source_from_events,
-};
 use crate::error::CliError;
 use crate::output::{TokenizeTsvRow, write_tokenize_tsv};
 use crate::presentation::{OutputMode, ResultDelivery, resolve_match_limit};
 use crate::protocol::query::{
-    AnalyzerRun, CompleteCorpus, Coverage, PublishedProjection, ResourceHighWater, RunCorpus,
+    Coverage, ExecutionLimits, PublishedProjection, ResourceHighWater, RunCorpus,
     TemporaryStorageLimits, Termination,
 };
 use crate::protocol::tokenize::{
@@ -162,114 +150,54 @@ pub fn run(
         terminal,
         output,
     )?;
-    if let Some(artifact) = resolved_corpus.corpus.as_deref() {
-        return run_prepared(artifact, config, terminal, output, limit, conllu);
-    }
 
     let started = Instant::now();
+    let opened = OpenedCorpus::open(
+        &args.input,
+        resolved_corpus.corpus.as_deref(),
+        config,
+        terminal,
+    )?;
+    let bound_projection = opened.full_projection()?;
+    // `tokenize` publishes the tokenizer's own output, so every attribute is
+    // in scope by definition. Built once for the selected schema.
+    let full_projection = PublishedProjection::new(opened.schema().keys());
+    let metadata = conllu.then(conllu_export::metadata).transpose()?;
+    let mut stream = opened
+        .into_source(
+            CorpusSourceSpec {
+                metadata_projection: metadata,
+                ..CorpusSourceSpec::token_stream(bound_projection.clone())
+            },
+            config,
+            terminal,
+        )?
+        .into_bound_stream(bound_projection);
+
     let presentation_progress = PresentationProgress::stderr(
         &config.stderr,
         config.progress,
         output,
         ResultDelivery::Streaming,
     );
-    let root = args.input.root.as_deref();
-    let stdin = root.is_none_or(|path| path == Path::new("-"));
-    let format = resolve_input_format(if stdin { None } else { root }, args.input.input_format);
-    let dict_path = (format != CorpusFormat::Conllu
-        && matches!(&config.analyzer, crate::cli::AnalyzerCliConfig::Vibrato))
-    .then(|| args.input.direct_dictionary_path())
-    .transpose()?;
-    let resolved = resolve_input(
-        format,
-        config,
-        dict_path.as_deref(),
-        terminal.cancellation(),
-    )?;
-    let dictionary_digest = resolved.resource_identity();
-    let descriptor = resolved.descriptor().clone();
-    let analyzer_record = lingrep_corpus::AnalyzerRecord::from_descriptor(&descriptor);
-    let analyzer_schema = resolved.schema();
-    let bound_projection = analyzer_schema
-        .bind_projection(analyzer_schema.keys().iter().cloned())
-        .map_err(|error| CliError::Parse(error.to_string()))?;
-    let analyzer_run = AnalyzerRun::new(&analyzer_record, "locally-executed", analyzer_schema);
-    let full_projection = PublishedProjection::new(analyzer_schema.keys());
-    let metadata = conllu.then(conllu_export::metadata).transpose()?;
-
-    crate::cli::validate_format_root(format, root, stdin).map_err(CliError::InvalidArgs)?;
-    let markdown_config = args
-        .input
-        .markdown
-        .resolve()
-        .map_err(CliError::InvalidArgs)?
-        .with_max_frontmatter_bytes(config.limits.max_stage_input_bytes);
-    let reader_config = CorpusReadConfig::new(format, markdown_config);
-    let reader_identity =
-        ReaderIdentity::derive(&reader_config, config.reader_normalization(format));
-    let analysis_inputs = AnalysisInputs::with_token_schema(
-        reader_identity,
-        admission_identity(),
-        &descriptor,
-        TokenSchemaIdentity::from_bytes(*analyzer_schema.digest().as_bytes()),
-    )
-    .map_err(CliError::corpus)?;
-    let dictionary_identity = encode_digest(dictionary_digest);
-    let reader_identity_text = encode_digest(reader_identity.as_bytes());
-    let token_schema_identity = Arc::new(encode_digest(analysis_inputs.token_schema().as_bytes()));
-    let ((source, source_stats), completion_observation) = if stdin {
-        let (observation, events) = crate::direct_source::stdin_events(
-            &reader_config,
-            config.limits.max_input_record_bytes,
-        );
-        let stream_id = random_id();
-        (
-            boxed_direct_source(Box::new(
-                source_from_events(AdmittedCorpus::new(events))
-                    .with_normalization(config.normalization)
-                    .with_segmentation(config.segmentation)
-                    .with_projection(bound_projection.clone())
-                    .with_source_metadata(metadata.clone()),
-            )),
-            CompletionObservation::Stdin {
-                stream_id,
-                observation,
-            },
-        )
+    let limits = if stream.is_prepared {
+        MatcherLimits {
+            // Prepared tokenization publishes one sentence at a time, matching
+            // the direct path's exact resident-token boundary.
+            max_stage_sentences: 1,
+            ..config.limits
+        }
     } else {
-        let root = root.expect("filesystem root");
-        let (events, observation, _diagnostics) = FilesystemCorpusEvents::new(
-            root,
-            reader_config,
-            config.traversal.clone(),
-            config.limits.max_input_record_bytes,
-        )?;
-        (
-            boxed_direct_source(Box::new(
-                source_from_events(admitted_filesystem_events(events))
-                    .with_normalization(config.normalization)
-                    .with_segmentation(config.segmentation)
-                    .with_projection(bound_projection.clone())
-                    .with_source_metadata(metadata.clone()),
-            )),
-            CompletionObservation::Filesystem {
-                observation,
-                analysis: analysis_inputs.clone(),
-            },
-        )
+        config.limits
     };
-    let run_corpus = completion_observation.run_corpus();
-    let mut source: Box<dyn SentenceBatchSource> = match resolved.into_native_plan() {
-        Some(plan) => Box::new(NativeAnalysisSource::new(
-            source,
-            plan.create_session(),
-            bound_projection,
-            descriptor.segmentation(),
-        )),
-        None => source,
-    };
-    let limits = config.limits;
     limits.validate()?;
+    let execution_limits = ExecutionLimits {
+        max_sentence_bytes: limits.max_sentence_bytes as u64,
+        max_stage_sentences: limits.max_stage_sentences as u64,
+        max_stage_input_bytes: limits.max_stage_input_bytes as u64,
+        max_tokenized_bytes: limits.max_tokenized_bytes as u64,
+    };
+    let run_corpus = stream.lifecycle.run_corpus();
     let sentence_stream_id = match &run_corpus {
         RunCorpus::Stdin { stream_id } => Some(stream_id.clone()),
         RunCorpus::Prepared { .. } | RunCorpus::Direct { .. } => None,
@@ -278,23 +206,29 @@ pub fn run(
     let run_id = random_id();
     let run = TokenizeEnvelope::new(TokenizeEvent::Run(Box::new(TokenizeRun {
         run_id: run_id.clone(),
-        analyzer: analyzer_run,
+        analyzer: stream.run.analyzer,
         corpus: run_corpus,
-        dictionary_identity,
-        reader_identity: reader_identity_text,
-        token_schema_identity: token_schema_identity.as_ref().clone(),
-        execution_limits: protocol_execution_limits(config),
+        dictionary_identity: stream.run.dictionary_identity,
+        reader_identity: stream.run.reader_identity,
+        token_schema_identity: stream.run.token_schema_identity,
+        execution_limits: execution_limits.clone(),
         temporary_storage_limits: TemporaryStorageLimits {
             max_temp_bytes: config.max_temp_bytes,
         },
-        traversal_limits: protocol_traversal_limits(config),
-        // Direct tokenization is ordered and sentence-at-a-time,
-        // so its resident-token bound is exact. Report that effective
-        // execution width rather than the shared CLI's requested pool size.
+        traversal_limits: stream.run.traversal_limits,
+        // Tokenization is ordered and sentence-at-a-time, so its resident-token
+        // bound is exact. Report that effective execution width rather than the
+        // shared CLI's requested pool size.
         worker_count: 1,
     })));
 
-    let mut export = conllu.then(|| ConlluExport::new(format == CorpusFormat::Conllu));
+    let mut export = conllu.then(|| ConlluExport::new(stream.pretokenized_conllu));
+    let invalid_batch_message = if stream.is_prepared {
+        "prepared tokenization source returned raw text"
+    } else {
+        "native tokenization source returned non-bound data"
+    };
+    let prepared = stream.is_prepared;
     let post_run = (|| -> Result<CommandOutcome, CliError> {
         let stdout = io::stdout();
         let mut writer = stdout.lock();
@@ -317,17 +251,23 @@ pub fn run(
             conllu: export.as_mut(),
         })
         .stream(
-            source.as_mut(),
+            stream.source.as_mut(),
             &limits,
             terminal,
             |sentences_emitted, tokens_emitted| {
                 presentation_progress.snapshot(move || {
-                    format!(
-                        "tokenized {sentences_emitted} sentences, emitted {tokens_emitted} tokens"
-                    )
+                    if prepared {
+                        format!(
+                            "tokenized {sentences_emitted} prepared sentences, emitted {tokens_emitted} tokens"
+                        )
+                    } else {
+                        format!(
+                            "tokenized {sentences_emitted} sentences, emitted {tokens_emitted} tokens"
+                        )
+                    }
                 });
             },
-            "native tokenization source returned non-bound data",
+            invalid_batch_message,
         )?
         else {
             return Ok(CommandOutcome::Cancelled);
@@ -338,8 +278,7 @@ pub fn run(
             Termination::Eof => (Coverage::Full, FilesystemCompletion::Full),
             Termination::ResultLimit => (Coverage::Prefix, FilesystemCompletion::PrefixUnavailable),
         };
-        let (complete_corpus, inventory) =
-            completion_observation.complete(filesystem_completion)?;
+        let (complete_corpus, inventory) = stream.lifecycle.complete(filesystem_completion)?;
 
         if !terminal.try_claim_completion() {
             return Ok(CommandOutcome::Cancelled);
@@ -357,161 +296,19 @@ pub fn run(
                 tokens_emitted,
                 elapsed_millis: started.elapsed().as_millis().try_into().unwrap_or(u64::MAX),
                 resources: ResourceHighWater {
-                    staged_raw_bytes: source_stats
+                    staged_raw_bytes: stream
+                        .source_stats
                         .max_staged_raw_bytes()
                         .try_into()
                         .unwrap_or(u64::MAX),
                     tokenized_bytes: max_tokenized_bytes.try_into().unwrap_or(u64::MAX),
                     temporary_storage_bytes: 0,
-                    execution_limits: protocol_execution_limits(config),
+                    execution_limits,
                     temporary_storage_limits: TemporaryStorageLimits {
                         max_temp_bytes: config.max_temp_bytes,
                     },
                 },
                 inventory,
-                termination,
-            })),
-            output,
-        )?;
-        Ok(CommandOutcome::Success)
-    })();
-    post_run.map_err(|error| error.with_run_id(run_id, None))
-}
-
-fn run_prepared(
-    path: &Path,
-    config: &ExecutionCliConfig,
-    terminal: &TerminalArbiter,
-    output: OutputMode,
-    limit: Option<u64>,
-    conllu: bool,
-) -> Result<CommandOutcome, CliError> {
-    let started = Instant::now();
-    let artifact = CorpusArtifact::open(path)?;
-    let analysis = artifact.analysis_inputs()?;
-    write_token_schema_notice(artifact.analyzer(), &analysis, config)?;
-    let presentation_progress = PresentationProgress::stderr(
-        &config.stderr,
-        config.progress,
-        output,
-        ResultDelivery::Streaming,
-    );
-    let source_identity = encode_digest(artifact.source_identity().as_bytes());
-    let analysis_identity = encode_digest(artifact.analysis_identity().as_bytes());
-    let inventory = protocol_inventory(*artifact.inventory_stats());
-    let schema = artifact.token_schema()?;
-    let projection = schema
-        .bind_projection(schema.keys().iter().cloned())
-        .map_err(|error| CliError::Parse(error.to_string()))?;
-    let mut source = if conllu {
-        artifact.bound_sentence_source_with_metadata(
-            &projection,
-            conllu_export::metadata()?,
-            artifact.provenance_reader()?,
-        )?
-    } else {
-        artifact.bound_sentence_source(&projection)?
-    };
-    let pretokenized = schema == lingrep_core::corpus::conllu::token_schema();
-    let limits = MatcherLimits {
-        // Prepared tokenization publishes one sentence at a time, matching the
-        // direct path's exact resident-token boundary.
-        max_stage_sentences: 1,
-        ..config.limits
-    };
-    limits.validate()?;
-    let token_schema_identity = Arc::new(encode_digest(analysis.token_schema().as_bytes()));
-    // `tokenize` publishes the tokenizer's own output, so every attribute is
-    // in scope by definition. Built once for the selected schema.
-    let full_projection = PublishedProjection::new(schema.keys());
-    let run_id = random_id();
-    let run = TokenizeEnvelope::new(TokenizeEvent::Run(Box::new(TokenizeRun {
-        run_id: run_id.clone(),
-        analyzer: AnalyzerRun::new(
-            artifact.analyzer(),
-            artifact.trust_class().address_component(),
-            &schema,
-        ),
-        corpus: RunCorpus::Prepared {
-            source_identity: source_identity.clone(),
-            analysis_identity: analysis_identity.clone(),
-        },
-        dictionary_identity: encode_digest(artifact.dictionary_fingerprint()?.as_bytes()),
-        reader_identity: encode_digest(analysis.reader().as_bytes()),
-        token_schema_identity: token_schema_identity.as_ref().clone(),
-        execution_limits: crate::protocol::query::ExecutionLimits {
-            max_sentence_bytes: limits.max_sentence_bytes as u64,
-            max_stage_sentences: 1,
-            max_stage_input_bytes: limits.max_stage_input_bytes as u64,
-            max_tokenized_bytes: limits.max_tokenized_bytes as u64,
-        },
-        temporary_storage_limits: TemporaryStorageLimits {
-            max_temp_bytes: config.max_temp_bytes,
-        },
-        traversal_limits: protocol_traversal_limits_from_report(artifact.discovery_report()),
-        worker_count: 1,
-    })));
-
-    let mut export = conllu.then(|| ConlluExport::new(pretokenized));
-    let post_run = (|| -> Result<CommandOutcome, CliError> {
-        let stdout = io::stdout();
-        let mut writer = stdout.lock();
-        if !conllu {
-            publish_projection(&mut writer, &run, output)?;
-            writer.flush().map_err(execution_output_io)?;
-        }
-
-        let Some(TokenizeCounts { sentences_emitted, tokens_emitted, max_tokenized_bytes, termination }) =
-            (SentencePublisher {
-                writer: &mut writer,
-                output,
-                projection: &full_projection,
-                stream_id: None,
-                limit,
-                conllu: export.as_mut(),
-            }).stream(&mut source, &limits, terminal, |sentences_emitted, tokens_emitted| {
-                presentation_progress.snapshot(move || format!(
-                    "tokenized {sentences_emitted} prepared sentences, emitted {tokens_emitted} tokens"
-                ));
-            }, "prepared tokenization source returned raw text")?
-        else { return Ok(CommandOutcome::Cancelled); };
-        presentation_progress.finish();
-        if !terminal.try_claim_completion() {
-            return Ok(CommandOutcome::Cancelled);
-        }
-        if let Some(export) = &export {
-            export.finish(&mut writer, termination)?;
-            return Ok(CommandOutcome::Success);
-        }
-        publish_projection(
-            &mut writer,
-            &TokenizeEnvelope::new(TokenizeEvent::Complete(TokenizeComplete {
-                coverage: match termination {
-                    Termination::Eof => Coverage::Full,
-                    Termination::ResultLimit => Coverage::Prefix,
-                },
-                corpus: CompleteCorpus::Prepared {
-                    source_identity,
-                    analysis_identity,
-                },
-                sentences_emitted,
-                tokens_emitted,
-                elapsed_millis: started.elapsed().as_millis().try_into().unwrap_or(u64::MAX),
-                resources: ResourceHighWater {
-                    staged_raw_bytes: 0,
-                    tokenized_bytes: max_tokenized_bytes.try_into().unwrap_or(u64::MAX),
-                    temporary_storage_bytes: 0,
-                    execution_limits: crate::protocol::query::ExecutionLimits {
-                        max_sentence_bytes: limits.max_sentence_bytes as u64,
-                        max_stage_sentences: 1,
-                        max_stage_input_bytes: limits.max_stage_input_bytes as u64,
-                        max_tokenized_bytes: limits.max_tokenized_bytes as u64,
-                    },
-                    temporary_storage_limits: TemporaryStorageLimits {
-                        max_temp_bytes: config.max_temp_bytes,
-                    },
-                },
-                inventory: Some(inventory),
                 termination,
             })),
             output,

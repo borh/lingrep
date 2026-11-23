@@ -26,14 +26,15 @@ use lingrep_core::fsm::CompiledCatalog;
 use lingrep_core::spill::TempBudget;
 use lingrep_core::token_match::TokenInfo;
 use lingrep_corpus::CorpusArtifact;
-use rayon::ThreadPoolBuilder;
 
 use crate::cli::{ExecutionCliConfig, QueryInputArgs};
+use crate::commands::query_resolution::build_direct_reader_config;
+use crate::commands::query_support::build_worker_pool;
 use crate::direct_source::{
     BoundedRecordReader, BoxSentenceSource, FilesystemCorpusEvents, admitted_filesystem_events,
     source_from_events,
 };
-use crate::error::{CliError, FailureCode};
+use crate::error::CliError;
 
 enum InputSpec {
     Direct {
@@ -97,18 +98,18 @@ impl InteractiveExecution {
             .filter(|path| path.as_path() != Path::new("-"))
             .cloned();
         let format = resolve_input_format(root.as_deref(), args.input_format);
-        crate::cli::validate_format_root(format, root.as_deref(), declared_stdin)
-            .map_err(CliError::InvalidArgs)?;
-        let markdown = args
-            .markdown
-            .resolve()
-            .map_err(CliError::InvalidArgs)?
-            .with_max_frontmatter_bytes(config.limits.max_stage_input_bytes);
+        let (reader_config, _) = build_direct_reader_config(
+            format,
+            root.as_deref(),
+            declared_stdin,
+            &args.markdown,
+            config,
+        )?;
         Ok(Self::from_input(
             InputSpec::Direct {
                 root,
                 plan,
-                reader_config: CorpusReadConfig::new(format, markdown),
+                reader_config,
             },
             config,
         ))
@@ -164,15 +165,7 @@ impl InteractiveExecution {
     where
         S: MatchSink,
     {
-        let pool = Arc::new(
-            ThreadPoolBuilder::new()
-                .num_threads(self.config.workers)
-                .build()
-                .map_err(|error| CliError::CommandFailure {
-                    code: FailureCode::Io,
-                    message: format!("failed to create worker pool: {error}"),
-                })?,
-        );
+        let pool = build_worker_pool(self.config.workers)?;
         let (source, plan, stored_schema) =
             self.open_source(matcher.lookaround_division_kinds(), Some(Arc::clone(&pool)))?;
         let limits = self.config.limits;
