@@ -873,5 +873,6 @@
   "library.filter_catalogs": "カタログを絞り込む",
   "library.filter_catalogs_placeholder": "カタログを絞り込む…",
   "library.filter_catalogs_none": "その文字列を含むカタログ名はありません。",
-  "sample.inputs_title": "パターンとサンプルテキスト"
+  "sample.inputs_title": "パターンとサンプルテキスト",
+  "nav.skip": "本文へ移動"
 }
