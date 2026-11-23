@@ -3,9 +3,8 @@
 {% block title %}<title data-i18n="title.sample">Sample debugger · lingrep</title>{% endblock %}
 {% block head %}{% include "partials/pattern_editor_assets.html" %}{% endblock %}
 {% block content %}
-{% call macros::corpus_line("none (this page reads only the sample text)", "corpus.none", false) %}{% endcall %}
 <h1><span data-i18n="sample.title">Sample debugger</span></h1>
-<p class="muted sample-blurb" data-i18n="sample.blurb">Test a pattern on sentences you paste here. Nothing is read from a corpus and nothing is written.</p>
+<p class="muted sample-blurb" data-i18n="sample.blurb">Test a pattern on sentences you paste. No corpus is read.</p>
 
 {# The pattern box lives INSIDE this form and carries its own draft, keyed by
    its own id: the corpus search's editor is not shared with a sample run. #}
@@ -24,7 +23,7 @@
                     placeholder="pattern verb := [upos=VERB]." required>{{ seed_pattern }}</textarea>
         </div>
         <details class="pattern-diagram" data-pattern-diagram="sample-pattern">
-          <summary><span data-i18n="editor.diagram_title">Recognition diagram of the definition at the cursor</span> <code data-diagram-name></code></summary>
+          <summary><span data-i18n="editor.diagram_title">Diagram</span> <code data-diagram-name></code></summary>
           <label class="pattern-diagram-expand"><input type="checkbox" data-diagram-expand> <span data-i18n="editor.diagram_expand">Expand references</span></label>
           <p class="pattern-diagram-note muted" role="status" data-diagram-note></p>
           <div class="pattern-diagram-body" data-diagram-body></div>

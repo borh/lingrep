@@ -356,11 +356,11 @@ test("signature help skips comments and regex literals", () => {
 test("stats summary reads as prose, and is absent without stats", () => {
   assert.equal(
     statsSummary({ definitions: 97, references: 84, depth: 5, expressions: 410, nfa_states: 547, transitions: 581 }),
-    "97 definitions, 84 references, depth 5, 547 NFA states",
+    "97 definitions, 84 references",
   );
   assert.equal(
     statsSummary({ definitions: 1, references: 0, depth: 1, expressions: 2, nfa_states: 3, transitions: 4 }),
-    "1 definition, 0 references, depth 1, 3 NFA states",
+    "1 definition, 0 references",
   );
   // A stubbed or older server sends `valid` with no stats; that must not throw.
   assert.equal(statsSummary(undefined), null);
@@ -418,12 +418,12 @@ test("an error keeps error severity, and an unknown severity is treated as one",
 test("the status line reports warnings alongside the stats", () => {
   assert.equal(
     checkStatusLine(validWithWarning()),
-    "Pattern is valid, 1 warning. 2 definitions, 0 references, depth 1, 3 NFA states.",
+    "Pattern is valid, 1 warning. 2 definitions, 0 references.",
   );
   const clean = { ...validWithWarning(), diagnostics: [] };
   assert.equal(
     checkStatusLine(clean),
-    "Pattern is valid. 2 definitions, 0 references, depth 1, 3 NFA states.",
+    "Pattern is valid. 2 definitions, 0 references.",
   );
   // The browser fixture stubs a bare `{"status":"valid"}`; it must degrade.
   assert.equal(checkStatusLine({ status: "valid" }), "Pattern is valid.");

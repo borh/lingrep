@@ -551,11 +551,14 @@ async fn every_page_names_its_corpus_in_the_same_words() -> WebDriverResult<()> 
         }
 
         driver.goto(format!("{root}sample")).await?;
-        let sample = wait_for(&driver, CORPUS_LINE, "the sample page's corpus line").await?;
-        assert_eq!(
-            sample,
-            serde_json::json!("Corpus: none (this page reads only the sample text)")
-        );
+        // The sample page reads no corpus, so it names none.
+        wait_for(
+            &driver,
+            "return document.querySelector('[data-sample-workspace]') !== null \
+             && document.querySelector('.corpus-context-name') === null",
+            "the sample page without a corpus line",
+        )
+        .await?;
 
         driver
             .find(By::Css("[data-locale-toggle]"))
@@ -568,11 +571,6 @@ async fn every_page_names_its_corpus_in_the_same_words() -> WebDriverResult<()> 
             "the page to switch to Japanese",
         )
         .await?;
-        let japanese = wait_for(&driver, CORPUS_LINE, "the Japanese corpus line").await?;
-        assert_eq!(
-            japanese,
-            serde_json::json!("コーパス： なし（サンプルテキストのみ）")
-        );
         driver.goto(format!("{root}frequencies")).await?;
         let japanese = wait_for(&driver, CORPUS_LINE, "the Japanese corpus line").await?;
         assert_eq!(

@@ -1,44 +1,45 @@
 <h1><span data-i18n="help.title">Help with analysis and patterns</span></h1>
+<nav class="help-toc" aria-label="Contents" data-i18n-aria-label="help.contents"><ul><li><a href="#help-pages" data-i18n="help.h_pages">Pages</a></li><li><a href="#help-frequencies" data-i18n="help.h_frequencies">Frequencies</a></li><li><a href="#help-compare" data-i18n="help.h_compare">Compare</a></li><li><a href="#help-download" data-i18n="help.h_download">Download results</a></li><li><a href="#help-cli" data-i18n="help.h_cli">CLI commands</a></li><li><a href="#help-predicates" data-i18n="help.h_predicates">Token predicates</a></li><li><a href="#help-composition" data-i18n="help.h_composition">Composition</a></li><li><a href="#help-captures" data-i18n="help.h_captures">Captures and comparison</a></li><li><a href="#help-boundaries" data-i18n="help.h_boundaries">Boundaries and assertions</a></li><li><a href="#help-graph" data-i18n="help.h_graph">Dependency graphs</a></li><li><a href="#help-editor" data-i18n="help.h_editor">Pattern editor</a></li><li><a href="#help-workbench" data-i18n="help.h_workbench">Workbench keys</a></li><li><a href="#help-examples" data-i18n="help.h_examples">Examples</a></li></ul></nav>
 <section class="pattern-help">
-  <h2 data-i18n="help.h_pages">Pages</h2>
+  <h2 id="help-pages" data-i18n="help.h_pages">Pages</h2>
   <p data-i18n="help.p_question">Question searches a corpus for one or more definitions and shows the matches by work or as a concordance.</p>
   <p data-i18n="help.p_tools">Analysis tools runs a whole catalog, counts each pattern and compares sections and documents.</p>
   <p data-i18n="help.p_sample">Sample debugger tests a pattern on sentences you paste and explains why each one did or did not match. It reads no corpus.</p>
 </section>
 <section class="pattern-help" data-analysis-help>
-  <h2 data-i18n="help.h_frequencies">Frequencies</h2>
+  <h2 id="help-frequencies" data-i18n="help.h_frequencies">Frequencies</h2>
   <p data-i18n="help.p_frequencies">When count tables are configured, use Frequencies to count entries under document conditions. Occurrences count matches; documents count the documents containing them. Open an entry to inspect its charts and concordance lines. A document with several metadata values contributes to each corresponding bar.</p>
-  <h2 data-i18n="help.h_compare">Compare</h2>
+  <h2 id="help-compare" data-i18n="help.h_compare">Compare</h2>
   <p data-i18n="help.p_compare">Choose two document selections from the same corpus and catalog. Compare shows counts, rates and log-likelihood scores for their entries. The selections can overlap; the page reports their shared documents and tokens. Check the scope descriptions before interpreting a difference.</p>
-  <h2 data-i18n="help.h_download">Download results</h2>
+  <h2 id="help-download" data-i18n="help.h_download">Download results</h2>
   <p data-i18n="help.p_download">After a corpus search completes, Download results in this search scope writes an Excel workbook for that search scope. Filtering or paging the displayed concordance does not narrow the export. The About sheet records the scope, overlap policy and any omitted rows. If a search fails, the displayed results from the previous completed search remain available for download.</p>
-  <h2 data-i18n="help.h_cli">CLI commands</h2>
+  <h2 id="help-cli" data-i18n="help.h_cli">CLI commands</h2>
   <p data-i18n="help.p_cli">Frequencies and Compare show commands for the same query over your local count table, corpus and catalog. These commands include exact key values but not the page’s sort order or text filter. Run relative paths from their common parent directory; replace TABLE.lingtable, CORPUS.lingcorpus and CATALOG.lx with your local paths when shown. Copy a page link to preserve its browser controls and selections.</p>
 </section>
 
 <section class="pattern-help">
   <p data-i18n="help.p1"><code>pattern</code>, or a definition without a keyword, produces matches. <code>fragment</code> defines a reusable pattern; <code>set</code> defines a set of values. Neither produces matches.</p>
 
-  <h2><span data-i18n="help.h_predicates">Token predicates</span></h2>
+  <h2 id="help-predicates"><span data-i18n="help.h_predicates">Token predicates</span></h2>
   <p data-i18n="help.p2">Use <code>=</code>, <code>!=</code>, <code>in</code>, <code>not in</code>, and <code>/regular expressions/</code>. Combine constraints inside a token with <code>&amp;</code>.</p>
 
   <p data-i18n="help.p_text"><code>text</code> compares the match form (照合形): the surface with variation selectors removed, half-width katakana widened and full-width ASCII characters as ASCII, so <code>[text=ガラス]</code> also finds ｶﾞﾗｽ. <code>surface</code> compares the exact source text (表層形).</p>
 
   <p data-i18n="help.p_near"><code>ATTR near WORD &gt;= 0.6</code> matches tokens whose ATTR value has a cosine similarity to WORD of at least 0.6. <code>not near</code> matches other values. Neither matches tokens without <code>ATTR</code>. A word-vector file is required. Check matching values on the Similar Words page.</p>
 
-  <h2><span data-i18n="help.h_composition">Composition</span></h2>
+  <h2 id="help-composition"><span data-i18n="help.h_composition">Composition</span></h2>
   <p data-i18n="help.p3">Separate expressions with whitespace to match them in sequence. Use <code>|</code> for alternatives, parentheses for grouping, and <code>@NAME</code> to reference a declaration. Quantifiers are <code>?</code>, <code>*</code>, <code>+</code>, and <code>{n,m}</code>.</p>
 
-  <h2><span data-i18n="help.h_captures">Captures and comparison</span></h2>
+  <h2 id="help-captures"><span data-i18n="help.h_captures">Captures and comparison</span></h2>
   <p data-i18n="help.p4"><code>(?&lt;name&gt; ...)</code> captures a token span. <code>same_as($name, by=ATTR)</code> matches the same sequence of attribute values as that capture. <code>ATTR</code> can be any token attribute; the default is <code>text</code>.</p>
 
-  <h2><span data-i18n="help.h_boundaries">Boundaries and assertions</span></h2>
+  <h2 id="help-boundaries"><span data-i18n="help.h_boundaries">Boundaries and assertions</span></h2>
   <p data-i18n="help.p5"><code>^</code> and <code>$</code> mark sentence boundaries. <code>preceded_by(E)</code> tests whether E ends at the current position; <code>followed_by(E)</code> tests whether E starts there. Neither advances the position. <code>not_preceded_by(E)</code> and <code>not_followed_by(E)</code> negate these tests. Bodies may match variable-length or empty spans, but cannot contain captures or <code>same_as</code>.</p>
 
-  <h2><span data-i18n="help.h_graph">Dependency graphs</span></h2>
+  <h2 id="help-graph"><span data-i18n="help.h_graph">Dependency graphs</span></h2>
   <p data-i18n="help.p_graph">A where clause constrains basic dependency edges between captures. Enhanced edges use -[enhanced labels]-&gt;, may introduce a word or decimal empty node with (?&lt;name&gt; [test]), and may name the exact edge with as $edge. Every graph component requires a surface capture anchor; each complete assignment is one match.</p>
 
-  <h2><span data-i18n="help.h_editor">Pattern editor</span></h2>
+  <h2 id="help-editor"><span data-i18n="help.h_editor">Pattern editor</span></h2>
   <p data-i18n="help.p6">The pattern editor highlights lingrep patterns syntax and checks it as you type. Hover any attribute, value, <code>@reference</code>, or <code>$capture</code> for its documentation; typing <code>same_as(</code> shows the call signature inline with the active argument underlined.</p>
   <table class="pattern-editor-keys">
     <thead><tr><th data-i18n="help.col_key">Key</th><th data-i18n="help.col_action">Action</th></tr></thead>
@@ -55,7 +56,7 @@
   </table>
   <p data-i18n="help.p7">On macOS use <kbd>Cmd</kbd> instead of <kbd>Ctrl</kbd>. Moving focus out of the editor formats the pattern and re-checks it against the server.</p>
 
-  <h2><span data-i18n="help.h_workbench">Workbench keys</span></h2>
+  <h2 id="help-workbench"><span data-i18n="help.h_workbench">Workbench keys</span></h2>
   <table class="pattern-editor-keys">
     <thead><tr><th data-i18n="help.col_key">Key</th><th data-i18n="help.col_action">Action</th></tr></thead>
     <tbody>
@@ -69,7 +70,7 @@
     </tbody>
   </table>
 
-  <h2><span data-i18n="help.h_examples">Examples</span></h2>
+  <h2 id="help-examples"><span data-i18n="help.h_examples">Examples</span></h2>
   {% for example in crate::handlers::help::HELP_EXAMPLES %}
   <article>
     <h3>{{ example.title }}</h3>

@@ -702,6 +702,7 @@ function initCatalogTab(root, textarea) {
     // A load must still be visible, matching `restore()`: unfold a folded
     // editor workspace (app.js listens for this) and move focus there.
     document.dispatchEvent(new CustomEvent("lingrep-web:query-restored"));
+    list.closest("[data-query-library]").open = false;
     focusEditor(textarea);
     if (status) status.textContent = "";
   });
@@ -719,6 +720,25 @@ export async function initializeQueryLibrary(root = document) {
     return;
   }
   panel.dataset.queryReady = "true";
+  const closeLibrary = () => {
+    if (!panel.open) return;
+    panel.open = false;
+    panel.querySelector("summary").focus({ preventScroll: true });
+  };
+  panel.addEventListener("toggle", () => {
+    if (panel.open) panel.querySelector(".query-library-body").focus({ preventScroll: true });
+  });
+  // The backdrop is drawn on the panel itself, so a click that lands on the
+  // panel and not inside its dialog is a click on the backdrop.
+  panel.addEventListener("click", (event) => {
+    if (event.target === panel || event.target.closest("[data-query-close]")) closeLibrary();
+  });
+  panel.addEventListener("keydown", (event) => {
+    if (event.key === "Escape" && panel.open) {
+      event.stopPropagation();
+      closeLibrary();
+    }
+  });
 
   const listNode = panel.querySelector("[data-query-list]");
   const catalogListNode = panel.querySelector("[data-catalog-list]");
@@ -890,6 +910,7 @@ export async function initializeQueryLibrary(root = document) {
     // A restore must be visible: if the editor workspace is folded, unfold it
     // (app.js owns folding and listens for this).
     document.dispatchEvent(new CustomEvent("lingrep-web:query-restored"));
+    panel.open = false;
     focusEditor(textarea);
   }
 

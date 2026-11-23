@@ -146,7 +146,6 @@ mod handlers_test {
             r#"name="sample""#,
             r#"<script type="module" src="assets/editor/pattern-editor.js">"#,
             r#"<script type="module" src="assets/query-library.js">"#,
-            r#"<span data-i18n="corpus.none">none (this page reads only the sample text)</span>"#,
         ] {
             assert!(html.contains(hook), "missing sample-page hook: {hook}");
         }

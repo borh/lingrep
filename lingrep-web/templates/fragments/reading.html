@@ -21,7 +21,7 @@
   </nav>
   <div class="doc-reader-text" lang="ja" data-doc-reader data-highlight="{{ rendered.highlight }}">{{ rendered.pages_html()|safe }}</div>
   {% when None %}
-  {% if paragraph_missing %}<p class="alert" data-reading-unavailable data-i18n="reading.no_paragraph">No paragraph information is stored for this hit.</p>{% endif %}
+  {% if paragraph_missing %}<p class="doc-reader-note" data-reading-unavailable data-i18n="reading.no_paragraph">This corpus stores no paragraphs, so only the sentence is shown.</p>{% endif %}
   {% if sentences.is_empty() && !paragraph_missing && paragraph_choices.is_empty() %}<p class="alert" data-i18n="reading.limit">Context exceeds the reading limits.</p>{% endif %}
   {% if !paragraph_choices.is_empty() %}<p data-i18n="reading.choose_paragraph">This hit occurs in several source paragraphs.</p><ul>{% for choice in paragraph_choices %}<li><button type="button" class="chain-link" hx-get="{{ root_url }}/paragraph?paragraph={{ choice.id }}" hx-target="#{{ target_id }}" hx-swap="innerHTML" hx-sync="#{{ target_id }}:replace"><span data-i18n="reading.paragraph_sentences" data-i18n-args='{"first": {{ choice.first }}, "last": {{ choice.last }}}'>Paragraph · sentences {{ choice.first }}–{{ choice.last }}</span></button></li>{% endfor %}</ul>{% endif %}
   {% if !sentences.is_empty() %}

@@ -526,7 +526,7 @@ async fn load_page(
             }
             (None, []) => {
                 page.paragraph_missing = true;
-                return Ok(Some(page));
+                sentence..sentence + 1
             }
             (None, paragraphs) => {
                 page.paragraph_choices = paragraphs

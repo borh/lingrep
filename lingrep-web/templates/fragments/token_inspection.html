@@ -14,7 +14,7 @@
             {% match field.value %}
             {% when Some with (value) %}
             <div class="token-field">
-                <dt data-field-key="{{ field.meta.key }}"><span data-label-en>{{ field.meta.label_en }}</span><span data-label-ja lang="ja">{{ field.meta.label_ja }}</span></dt>
+                <dt data-field-key="{{ field.meta.key }}"><span data-label-en>{{ field.meta.label_en }}</span><span data-label-ja lang="ja">{{ field.meta.label_ja }}</span> <code class="token-field-key">{{ field.pattern_key() }}</code></dt>
                 <dd>{% if value.is_empty() %}<span class="empty-value" data-i18n="token_inspection.empty_value">Empty value</span>{% else %}{{ value }}{% endif %}</dd>
             </div>
             {% when None %}
