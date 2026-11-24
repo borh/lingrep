@@ -4,7 +4,7 @@
 {% block head %}{% include "partials/pattern_editor_assets.html" %}{% endblock %}
 {% block content %}
 <h1><span data-i18n="sample.title">Sample debugger</span></h1>
-<p class="muted sample-blurb" data-i18n="sample.blurb">Test a pattern on sentences you paste. No corpus is read.</p>
+<p class="muted sample-blurb" data-i18n="sample.blurb">Test a pattern on pasted text or on a sentence from a corpus.</p>
 
 {# The pattern box lives INSIDE this form and carries its own draft, keyed by
    its own id: the corpus search's editor is not shared with a sample run. #}
@@ -13,7 +13,7 @@
     <h2 class="visually-hidden" data-i18n="sample.inputs_title">Pattern and sample text</h2>
     <form class="sample-form"
           hx-post="api/sample" hx-target="#sample-results" hx-swap="innerHTML"
-          hx-trigger="load, input changed delay:400ms from:#sample-text, pattern:valid changed from:#sample-pattern, submit"
+          hx-trigger="load, input changed delay:400ms from:#sample-text, pattern:valid changed from:#sample-pattern, change from:#sample-analyzer, submit"
           hx-sync="this:replace">
       <div class="sample-pattern-field">
         <label for="sample-pattern"><span data-i18n="editor.pattern_label">Pattern</span></label>
@@ -31,13 +31,16 @@
       </div>
       <div class="sample-text-field">
         <label for="sample-text"><span data-i18n="sample.label">Sample text</span> <span class="muted"><span data-i18n="sample.hint">(one sentence per line)</span></span></label>
+        {% match corpus %}{% when Some with (key) %}
+        <input type="hidden" name="corpus" value="{{ key }}">
+        {% when None %}{% endmatch %}
         {% match opened %}{% when Some with (sentence) %}
-        <input type="hidden" name="corpus" value="{{ sentence.corpus }}">
         <input type="hidden" name="corpus_sentence" value="{{ sentence.ordinal }}" data-corpus-sentence>
-        <p class="sample-opened muted" data-corpus-sentence-note><span data-i18n="sample.opened_stored" data-i18n-args='{"ordinal": {{ sentence.ordinal }}}'>Corpus sentence {{ sentence.ordinal }}, shown with the analysis stored in the corpus. Editing the text switches to the sample tokenizer.</span> <code>{{ sentence.corpus }}</code></p>
+        <p class="sample-opened muted" data-corpus-sentence-note><span data-i18n="sample.opened_stored" data-i18n-args='{"ordinal": {{ sentence.ordinal }}}'>Corpus sentence {{ sentence.ordinal }}. Automatic uses its stored analysis until you edit the text.</span> <code>{{ sentence.corpus }}</code></p>
         <textarea id="sample-text" class="sample-input" name="sample" rows="5" lang="ja"
                   placeholder="猫が走る。">{{ sentence.text }}</textarea>
         {% when None %}
+        {% if opened_unavailable %}<p class="alert" data-i18n="sample.stored_unavailable">This corpus sentence could not be read. Refresh the page or choose a live analyzer.</p>{% endif %}
         <textarea id="sample-text" class="sample-input" name="sample" rows="5" lang="ja"
                   placeholder="猫が走る。">この結果は重要であると考えられる。
 さらなる検証が必要であると思われる。
@@ -45,6 +48,16 @@
         {% endmatch %}
       </div>
       <div class="sample-actions">
+        {% if analyzer_choice %}
+        <label for="sample-analyzer" class="sample-analyzer-choice">
+          <span data-i18n="sample.analyzer">Analyzer</span>
+          <select id="sample-analyzer" name="analyzer">
+            <option value="auto" data-i18n="sample.analyzer_auto">Automatic</option>
+            {% match configured_analyzer %}{% when Some with (name) %}<option value="configured">{{ name }}</option>{% when None %}{% endmatch %}
+            {% if vibrato_available %}<option value="vibrato">Vibrato</option>{% endif %}
+          </select>
+        </label>
+        {% endif %}
         <button type="submit" class="btn btn-secondary btn-compact"><span data-i18n="sample.run">Run</span></button>
         <span class="sample-run-hint muted"><span data-i18n="sample.run_hint">Runs as you type.</span> <kbd>Ctrl</kbd>+<kbd>Enter</kbd></span>
         <span class="sample-status" role="status" aria-live="polite" data-sample-status></span>
@@ -56,6 +69,7 @@
   <section class="sample-output" aria-labelledby="sample-results-title">
     <h2 id="sample-results-title" class="visually-hidden" data-i18n="sample.results_title">Results</h2>
     <p class="sample-stale" data-sample-stale hidden><span data-i18n="sample.stale">The pattern has an error. These results are from the last pattern that compiled.</span> <button type="button" class="link-button" data-sample-stale-jump><span data-i18n="sample.stale_jump">Go to the error</span></button></p>
+    <p class="sample-previous muted" data-sample-previous hidden data-i18n="sample.previous_results">Results from the previous sample.</p>
     <div id="sample-results"></div>
   </section>
   {% include "partials/sample_detail.html" %}

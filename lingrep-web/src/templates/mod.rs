@@ -69,6 +69,8 @@ impl Default for RunOptions {
 #[derive(Template)]
 #[template(path = "index.html")]
 pub struct IndexPage {
+    pub sample_analyzer_name: Option<String>,
+    pub sample_vibrato_available: bool,
     pub search_scope: Option<crate::search_scope::SearchScope>,
     pub workbench_id: String,
     pub current_page: &'static str,
@@ -667,6 +669,8 @@ mod tests {
     #[test]
     fn test_index_page_renders_full_layout_via_inheritance() {
         let page = IndexPage {
+            sample_analyzer_name: None,
+            sample_vibrato_available: true,
             search_scope: Default::default(),
             corpora: vec![],
             workbench_id: "test-tab".into(),
@@ -705,6 +709,8 @@ mod tests {
     #[test]
     fn the_index_page_puts_the_edit_loop_in_one_band_and_drops_the_repeated_chrome() {
         let page = IndexPage {
+            sample_analyzer_name: None,
+            sample_vibrato_available: true,
             search_scope: Default::default(),
             corpora: vec![],
             workbench_id: "test-tab".into(),
@@ -793,6 +799,8 @@ mod tests {
     #[test]
     fn test_index_page_renders() {
         let page = IndexPage {
+            sample_analyzer_name: None,
+            sample_vibrato_available: true,
             search_scope: Default::default(),
             corpora: vec![],
             workbench_id: "test-tab".into(),

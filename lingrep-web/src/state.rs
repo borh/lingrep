@@ -247,6 +247,7 @@ pub struct RequestStore {
     /// Seed text for the Sample debugger's pattern editor: the `--patterns`
     /// file when the operator named one. `None` opens the starter pattern.
     pub sample_seed: Option<Arc<str>>,
+    pub(crate) sample_analyzer: Option<Arc<crate::sample_analyzer::LiveSampleAnalyzer>>,
     /// Catalogs discovered at startup and offered in the UI's catalog list.
     /// Empty unless set via [`RequestStore::with_catalogs`]; only the index
     /// handler and the catalog routes read it.
@@ -332,6 +333,7 @@ impl RequestStore {
             coordinators,
             default_pattern: Arc::from(""),
             sample_seed: None,
+            sample_analyzer: None,
             catalogs: Arc::new(crate::catalog_index::CatalogIndex::default()),
             frequency: Arc::default(),
             reading_sidecars: Arc::default(),
@@ -349,6 +351,7 @@ impl RequestStore {
             coordinators,
             default_pattern: Arc::from(""),
             sample_seed: None,
+            sample_analyzer: None,
             catalogs: Arc::new(crate::catalog_index::CatalogIndex::default()),
             frequency: Arc::default(),
             reading_sidecars: Arc::default(),
@@ -391,6 +394,7 @@ impl RequestStore {
             coordinators,
             default_pattern: Arc::from(""),
             sample_seed: None,
+            sample_analyzer: None,
             catalogs: Arc::new(crate::catalog_index::CatalogIndex::default()),
             frequency: Arc::default(),
             reading_sidecars: Arc::default(),

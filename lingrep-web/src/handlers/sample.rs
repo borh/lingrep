@@ -1,11 +1,10 @@
-//! The sample-text debugger: the `GET /sample` page and the `POST /api/sample`
-//! endpoint that page (and nothing else) drives.
+//! The standalone Sample debugger and the sample form shared with Workbench.
 //!
 //! The page holds no workbench and does not re-post the corpus search's live
 //! pattern. A hit's debug link names a workbench revision, which the page
-//! reads once for the pattern to open with. It reads a corpus only to load the
-//! stored sentence a `sentence` reference names; without one it renders while
-//! every declared corpus is still building.
+//! reads once to seed the pattern. A sentence reference opens its stored tokens.
+//! For edited or pasted text, Automatic selects the live analyzer by its
+//! recorded semantic identity when the request names a corpus.
 //!
 //! Admission runs in strict order so the cheapest checks reject first: size
 //! caps (413) need no dictionary or worker slot; the semaphore (429) needs no
@@ -15,7 +14,9 @@
 //! synchronous I/O that must not run on the async executor; a load failure
 //! surfaces as 503.
 
+use std::sync::Arc;
 use std::sync::LazyLock;
+use std::time::Duration;
 
 use askama::Template;
 use axum::{
@@ -25,10 +26,10 @@ use axum::{
     response::{Html, IntoResponse, Response},
     routing::{get, post},
 };
-use lingrep_core::analysis::AnalyzerPlan;
 use serde::Deserialize;
 use tokio::sync::Semaphore;
 
+use crate::corpus_runtime::{CacheReadiness, CorpusRuntime, ReadyCorpus};
 use crate::sample::analyze_sample;
 use crate::state::{RequestStore, TokenizerUnavailable};
 use crate::templates::{SampleResults, render_error};
@@ -51,10 +52,21 @@ pub struct SampleForm {
     /// Corpus key for comparing the corpus and sample token schemas.
     #[serde(default)]
     pub corpus: Option<String>,
+    #[serde(default)]
+    analyzer: SampleAnalyzerChoice,
     /// Corpus sentence ordinal whose stored analysis replaces tokenizing
     /// `sample`. The page stops sending it once the text is edited.
     #[serde(default)]
     pub corpus_sentence: Option<u64>,
+}
+
+#[derive(Clone, Copy, Default, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+enum SampleAnalyzerChoice {
+    #[default]
+    Auto,
+    Vibrato,
+    Configured,
 }
 
 /// A corpus sentence's stored tokens, its token schema and its analyzer's name.
@@ -64,6 +76,24 @@ type StoredSentence = (
     String,
 );
 
+async fn ready_corpus(runtime: &CorpusRuntime) -> Option<ReadyCorpus> {
+    runtime.start_or_observe().await;
+    let mut readiness = runtime.readiness();
+    tokio::time::timeout(
+        Duration::from_secs(2),
+        readiness.wait_for(|state| {
+            matches!(
+                state,
+                CacheReadiness::Ready { .. } | CacheReadiness::Failed { .. }
+            )
+        }),
+    )
+    .await
+    .ok()?
+    .ok()?;
+    runtime.ready().await
+}
+
 /// `None` when the corpus is unknown or not ready, or the sentence is absent
 /// or larger than the sample limit.
 async fn stored_sentence(
@@ -72,7 +102,7 @@ async fn stored_sentence(
     sentence: u64,
 ) -> Option<StoredSentence> {
     let slot = store.corpora.resolve(corpus)?;
-    let ready = slot.runtime.ready().await?;
+    let ready = ready_corpus(&slot.runtime).await?;
     // Stored sentences carry the schema's token attributes; the enhanced
     // graph is stored apart from them and is not read here.
     let schema = lingrep_core::token_match::TokenSchema::new(
@@ -99,6 +129,25 @@ async fn stored_sentence(
     .ok()?
     .ok()??;
     Some((words, schema, name))
+}
+
+pub(crate) fn debug_href(
+    corpus: Option<&str>,
+    search: Option<(&str, u64)>,
+    sentence: u64,
+) -> String {
+    let sentence = sentence.to_string();
+    let mut query = vec![("sentence", sentence.as_str())];
+    query.extend(corpus.map(|corpus| ("corpus", corpus)));
+    let revision;
+    if let Some((workbench, id)) = search {
+        revision = id.to_string();
+        query.extend([("workbench", workbench), ("revision", &revision)]);
+    }
+    format!(
+        "sample?{}",
+        serde_urlencoded::to_string(query).unwrap_or_default()
+    )
 }
 
 pub fn routes() -> Router<RequestStore> {
@@ -130,10 +179,15 @@ struct OpenedSentence {
 #[template(path = "sample.html")]
 struct SamplePage {
     opened: Option<OpenedSentence>,
+    opened_unavailable: bool,
     seed_pattern: String,
     current_page: &'static str,
     frequency_view: bool,
     catalog_keys: Vec<String>,
+    corpus: Option<String>,
+    analyzer_choice: bool,
+    configured_analyzer: Option<String>,
+    vibrato_available: bool,
 }
 
 /// What the page opens with when nothing else seeds it: one definition with
@@ -175,8 +229,18 @@ async fn sample_page(
     {
         seed_pattern = Some(snapshot.source.to_string());
     }
+    let corpus = opened
+        .as_ref()
+        .map(|sentence| sentence.corpus.clone())
+        .or(query.corpus);
+    let analyzer_choice = store.sample_analyzer.is_some() || corpus.is_some();
     SamplePage {
+        configured_analyzer: store.sample_analyzer.as_ref().map(|analyzer| analyzer.name.clone()),
+        vibrato_available: store.context.dict_path().is_some(),
+        opened_unavailable: query.sentence.is_some() && opened.is_none(),
         opened,
+        corpus,
+        analyzer_choice,
         seed_pattern: seed_pattern.unwrap_or_else(|| {
             store
                 .sample_seed
@@ -227,14 +291,17 @@ pub async fn run_sample(
     };
     let pattern = form.pattern;
     let sample = form.sample;
-    if let Some(sentence) = form.corpus_sentence {
+    if let Some(sentence) = form
+        .corpus_sentence
+        .filter(|_| form.analyzer == SampleAnalyzerChoice::Auto)
+    {
         let Some((words, schema, analyzer)) =
             stored_sentence(&store, form.corpus.as_deref(), sentence).await
         else {
             return fragment(
                 StatusCode::NOT_FOUND,
                 "sample.stored_unavailable",
-                "This corpus sentence could not be read. Edit the text to analyze it with the sample tokenizer.",
+                "This corpus sentence could not be read. Refresh the page or choose a live analyzer.",
             );
         };
         let report = tokio::task::spawn_blocking(move || {
@@ -243,22 +310,7 @@ pub async fn run_sample(
         })
         .await;
         return match report {
-            Ok(report) => SampleResults {
-                analysis: report.analysis,
-                run: report.run,
-            }
-            .render()
-            .map(Html)
-            .map_or_else(
-                |_| {
-                    fragment(
-                        StatusCode::INTERNAL_SERVER_ERROR,
-                        "sample.render_failed",
-                        "Could not render sample results.",
-                    )
-                },
-                IntoResponse::into_response,
-            ),
+            Ok(report) => render_report(report),
             Err(_) => fragment(
                 StatusCode::INTERNAL_SERVER_ERROR,
                 "sample.render_failed",
@@ -266,7 +318,79 @@ pub async fn run_sample(
             ),
         };
     }
-    let corpus = super::pattern_editor::corpus_schema(&store, form.corpus.as_deref()).await;
+    let mut corpus_record = None;
+    if let Some(name) = form.corpus.as_deref().filter(|name| !name.is_empty()) {
+        if let Some(slot) = store.corpora.resolve(Some(name)) {
+            corpus_record = ready_corpus(&slot.runtime)
+                .await
+                .map(|ready| ready.artifact.analyzer().clone());
+        } else if form.analyzer == SampleAnalyzerChoice::Auto {
+            return fragment(
+                StatusCode::NOT_FOUND,
+                "sample.corpus_unavailable",
+                "This corpus is unavailable.",
+            );
+        }
+    }
+    let bound_live = store.sample_analyzer.as_ref().filter(|analyzer| {
+        corpus_record
+            .as_ref()
+            .is_some_and(|corpus| corpus.semantic_identity == analyzer.semantic_identity)
+    });
+    let live = match form.analyzer {
+        SampleAnalyzerChoice::Auto if form.corpus.as_deref().is_none_or(str::is_empty) => {
+            store.sample_analyzer.as_ref()
+        }
+        SampleAnalyzerChoice::Auto => bound_live,
+        SampleAnalyzerChoice::Configured => store.sample_analyzer.as_ref(),
+        SampleAnalyzerChoice::Vibrato => None,
+    };
+    if let Some(analyzer) = live {
+        let semantic_identity = analyzer.semantic_identity.clone();
+        let result = Arc::clone(analyzer).analyze(pattern, sample, permit).await;
+        return match result {
+            Ok(mut report) => {
+                if let Some(run) = &mut report.run {
+                    run.compare_with_corpus(&semantic_identity, corpus_record.as_ref());
+                }
+                render_report(report)
+            }
+            Err(crate::sample_analyzer::LiveSampleError::TimedOut) => fragment(
+                StatusCode::GATEWAY_TIMEOUT,
+                "sample.analysis_timeout",
+                "The analyzer took too long. Try a shorter sample.",
+            ),
+            Err(crate::sample_analyzer::LiveSampleError::Failed) => fragment(
+                StatusCode::SERVICE_UNAVAILABLE,
+                "sample.analysis_failed",
+                "The configured analyzer could not analyze this sample. Try again or choose another analyzer.",
+            ),
+        };
+    }
+    if form.analyzer == SampleAnalyzerChoice::Configured {
+        return fragment(
+            StatusCode::SERVICE_UNAVAILABLE,
+            "sample.analysis_unconfigured",
+            "No live sample analyzer is configured.",
+        );
+    }
+    if form.analyzer == SampleAnalyzerChoice::Auto
+        && corpus_record
+            .as_ref()
+            .is_some_and(|corpus| corpus.family != "vibrato" || store.context.dict_path().is_none())
+    {
+        return missing_corpus_analyzer();
+    }
+    if form.analyzer == SampleAnalyzerChoice::Auto
+        && form.corpus.as_deref().is_some_and(|name| !name.is_empty())
+        && corpus_record.is_none()
+    {
+        return fragment(
+            StatusCode::SERVICE_UNAVAILABLE,
+            "sample.corpus_unavailable",
+            "This corpus is unavailable.",
+        );
+    }
     // The tokenizer's first-call dictionary load is synchronous I/O; resolve it
     // inside the blocking pool so the async executor never blocks. A load
     // failure returns `Err(TokenizerUnavailable)` (503); a genuine join failure
@@ -275,6 +399,13 @@ pub async fn run_sample(
         let _permit = permit;
         let plan = store.context.plan()?;
         let analyzer = lingrep_corpus::AnalyzerRecord::from_descriptor(plan.descriptor());
+        if form.analyzer == SampleAnalyzerChoice::Auto
+            && corpus_record
+                .as_ref()
+                .is_some_and(|corpus| corpus.semantic_identity != analyzer.semantic_identity)
+        {
+            return Ok(None);
+        }
         let dictionary = store
             .context
             .dict_path()
@@ -287,31 +418,15 @@ pub async fn run_sample(
             &plan,
             format!("{} {}{dictionary}", analyzer.family, analyzer.profile),
         );
-        if let (Some(run), Some((schema, corpus_analyzer))) = (&mut report.run, corpus)
-            && schema != *plan.schema()
-        {
-            run.corpus_analyzer = Some(corpus_analyzer);
+        if let Some(run) = &mut report.run {
+            run.compare_with_corpus(&analyzer.semantic_identity, corpus_record.as_ref());
         }
-        Ok::<_, TokenizerUnavailable>(report)
+        Ok::<_, TokenizerUnavailable>(Some(report))
     })
     .await;
     match outcome {
-        Ok(Ok(report)) => SampleResults {
-            analysis: report.analysis,
-            run: report.run,
-        }
-        .render()
-        .map(Html)
-        .map_or_else(
-            |_| {
-                fragment(
-                    StatusCode::INTERNAL_SERVER_ERROR,
-                    "sample.render_failed",
-                    "Could not render sample results.",
-                )
-            },
-            IntoResponse::into_response,
-        ),
+        Ok(Ok(Some(report))) => render_report(report),
+        Ok(Ok(None)) => missing_corpus_analyzer(),
         Ok(Err(TokenizerUnavailable::NoDictionary)) => fragment(
             StatusCode::SERVICE_UNAVAILABLE,
             "sample.unavailable",
@@ -329,6 +444,33 @@ pub async fn run_sample(
             "Sample analysis failed.",
         ),
     }
+}
+
+fn missing_corpus_analyzer() -> Response {
+    fragment(
+        StatusCode::CONFLICT,
+        "sample.analyzer_mismatch",
+        "Live analysis for this corpus is unavailable. Choose another analyzer or open a stored sentence.",
+    )
+}
+
+fn render_report(report: crate::sample::SampleReport) -> Response {
+    SampleResults {
+        analysis: report.analysis,
+        run: report.run,
+    }
+    .render()
+    .map(Html)
+    .map_or_else(
+        |_| {
+            fragment(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "sample.render_failed",
+                "Could not render sample results.",
+            )
+        },
+        IntoResponse::into_response,
+    )
 }
 
 #[cfg(test)]
@@ -362,6 +504,7 @@ mod tests {
                         sample: "猫".into(),
                         corpus: None,
                         corpus_sentence: None,
+                        analyzer: SampleAnalyzerChoice::Auto,
                     }),
                 );
                 tokio::pin!(pending);

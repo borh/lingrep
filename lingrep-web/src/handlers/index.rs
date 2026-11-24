@@ -511,6 +511,8 @@ fn render_index(
 ) -> Html<String> {
     let retained_options = crate::state::retention_offers(store.config.detail_limits.max_kwic);
     IndexPage {
+        sample_analyzer_name: store.sample_analyzer.as_ref().map(|analyzer| analyzer.name.clone()),
+        sample_vibrato_available: store.context.dict_path().is_some(),
         search_scope: landing.search_scope,
         workbench_id: WorkbenchId::random().as_str().to_owned(),
         current_page: "corpus",

@@ -30,6 +30,7 @@ pub mod result_index;
 pub mod revision;
 pub mod revision_status;
 pub mod sample;
+mod sample_analyzer;
 mod sample_view;
 pub mod section_analysis;
 pub mod section_comparison;

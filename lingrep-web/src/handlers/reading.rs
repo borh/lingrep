@@ -73,6 +73,11 @@ async fn context(
             "Reading context is unavailable for this corpus.",
         );
     };
+    let corpus = store
+        .corpora
+        .iter()
+        .find(|(_, slot)| Arc::ptr_eq(&slot.runtime, &runtime))
+        .map(|(name, _)| name.as_str().to_owned());
     respond(
         &store,
         permit,
@@ -90,6 +95,8 @@ async fn context(
             target_id: format!("reading-body-{pattern_key}-{reference_ordinal}"),
             document: scope == "document",
             admission: snapshot.admission.clone(),
+            corpus,
+            search: Some((workbench_id, revision)),
         },
     )
     .await
@@ -165,6 +172,8 @@ async fn read(
             target_id: READER_TARGET.into(),
             document: scope == "document",
             admission: SentenceAdmission::All,
+            corpus: Some(corpus),
+            search: None,
         },
     )
     .await
@@ -180,6 +189,8 @@ struct Opening {
     document: bool,
     /// The sentences the displayed run admitted.
     admission: SentenceAdmission,
+    corpus: Option<String>,
+    search: Option<(String, u64)>,
 }
 
 /// The rendered document when `opening` asks for the document and a sidecar
@@ -473,6 +484,8 @@ async fn header(
         });
     }
     let mut page = ReadingPage {
+        debug_corpus: opening.corpus.clone(),
+        debug_search: opening.search.clone(),
         show_excluded: opening.query.show_excluded,
         root_url: opening.root_url.clone(),
         target_id: opening.target_id.clone(),

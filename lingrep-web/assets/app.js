@@ -487,7 +487,8 @@ if (typeof document !== "undefined") {
             target.setAttribute("aria-busy", "true");
             try {
                 const corpus = document.querySelector("[data-corpus-search] input[name=corpus]")?.value ?? "";
-                const body = new URLSearchParams({ pattern, sample, corpus }).toString();
+                const analyzer = document.getElementById("inline-sample-analyzer")?.value ?? "auto";
+                const body = new URLSearchParams({ pattern, sample, corpus, analyzer }).toString();
                 const response = await fetch("api/sample", {
                     method: "POST",
                     headers: { "Content-Type": "application/x-www-form-urlencoded" },
@@ -519,8 +520,13 @@ if (typeof document !== "undefined") {
             }
         });
 
+        document.addEventListener("change", (event) => {
+            if (event.target.id === "inline-sample-analyzer") void runInlineSample();
+        });
+
         document.addEventListener("input", (event) => {
             if (!event.target.matches?.("[data-inline-sample-text]")) return;
+            sampleAbort?.abort();
             clearTimeout(sampleInputTimer);
             sampleInputTimer = setTimeout(() => {
                 if (shouldAutoRunInlineSample(Boolean(drawer()?.hidden), sampleInput()?.value)) {

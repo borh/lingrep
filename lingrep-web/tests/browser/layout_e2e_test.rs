@@ -1364,6 +1364,8 @@ fn dendrogram_fixture_html() -> String {
 fn header_help_fixture_html() -> String {
     use askama::Template;
     lingrep_web::templates::IndexPage {
+        sample_analyzer_name: None,
+        sample_vibrato_available: true,
         search_scope: Default::default(),
         corpora: vec![],
         workbench_id: "header-fixture".into(),

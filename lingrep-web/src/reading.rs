@@ -126,6 +126,8 @@ pub(crate) struct ReadingParagraphChoice {
 #[derive(Template)]
 #[template(path = "fragments/reading.html")]
 pub(crate) struct ReadingPage {
+    pub debug_corpus: Option<String>,
+    pub debug_search: Option<(String, u64)>,
     pub show_excluded: bool,
     pub root_url: String,
     pub target_id: String,
@@ -143,6 +145,16 @@ pub(crate) struct ReadingPage {
 }
 
 impl ReadingPage {
+    pub fn debug_href(&self, sentence: &u64) -> Option<String> {
+        Some(crate::handlers::sample::debug_href(
+            Some(self.debug_corpus.as_deref()?),
+            self.debug_search
+                .as_ref()
+                .map(|(workbench, revision)| (workbench.as_str(), *revision)),
+            *sentence,
+        ))
+    }
+
     pub fn rows(&self) -> Vec<&ReadingSentence> {
         self.sentences
             .iter()
@@ -266,6 +278,8 @@ mod tests {
 
     fn empty_page() -> ReadingPage {
         ReadingPage {
+            debug_corpus: None,
+            debug_search: None,
             show_excluded: false,
             root_url: "api/hit-context/reading/1/0/0".into(),
             target_id: "reader".into(),

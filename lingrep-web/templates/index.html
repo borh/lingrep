@@ -143,6 +143,14 @@
 さらなる検証が必要であると思われる。
 その可能性が高いと言えるのではないだろうか。</textarea>
             <div class="inline-sample-actions">
+                <label for="inline-sample-analyzer" class="sample-analyzer-choice">
+                  <span data-i18n="sample.analyzer">Analyzer</span>
+                  <select id="inline-sample-analyzer" name="analyzer">
+                    <option value="auto" data-i18n="sample.analyzer_auto">Automatic</option>
+                    {% match sample_analyzer_name %}{% when Some with (name) %}<option value="configured">{{ name }}</option>{% when None %}{% endmatch %}
+                    {% if sample_vibrato_available %}<option value="vibrato">Vibrato</option>{% endif %}
+                  </select>
+                </label>
                 <button type="button" class="btn btn-primary" data-run-inline-sample><span data-i18n="sample.run">Run on sample</span></button>
                 <button type="button" class="btn btn-secondary" data-sample-drawer-close><span data-i18n="editor.help_close">Close</span></button>
                 <span class="sample-status" role="status" aria-live="polite" data-inline-sample-status></span>

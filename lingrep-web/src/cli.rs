@@ -116,6 +116,43 @@ pub struct Args {
     #[arg(long, value_name = "PATH", env = "LINGREP_VECTORS_PATH")]
     pub vectors: Option<std::path::PathBuf>,
 
+    /// External analyzer configuration for live sample text and catalog examples.
+    #[arg(
+        long,
+        value_name = "PATH",
+        env = "LINGREP_WEB_SAMPLE_ANALYZER_CONFIG",
+        hide_env_values = true
+    )]
+    pub sample_analyzer_config: Option<std::path::PathBuf>,
+
+    /// Sudachi system dictionary for live samples.
+    #[arg(
+        long,
+        value_name = "PATH",
+        env = "LINGREP_WEB_SAMPLE_SUDACHI_DICT",
+        hide_env_values = true,
+        conflicts_with = "sample_analyzer_config"
+    )]
+    pub sample_sudachi_dict: Option<std::path::PathBuf>,
+
+    /// Sudachi resource directory for live samples.
+    #[arg(
+        long,
+        value_name = "PATH",
+        env = "LINGREP_WEB_SAMPLE_SUDACHI_RESOURCES",
+        hide_env_values = true,
+        requires = "sample_sudachi_dict"
+    )]
+    pub sample_sudachi_resources: Option<std::path::PathBuf>,
+
+    /// Sudachi split mode for live samples.
+    #[arg(long, env = "LINGREP_WEB_SAMPLE_SUDACHI_SPLIT", default_value = "c", value_parser = ["a", "b", "c"], requires = "sample_sudachi_dict")]
+    pub sample_sudachi_split: String,
+
+    /// Normalize live samples to NFC before analysis.
+    #[arg(long, env = "LINGREP_WEB_SAMPLE_NFC")]
+    pub sample_nfc: bool,
+
     /// Maximum KWIC lines retained for each pattern
     #[arg(long, default_value_t = 1_000)]
     pub max_kwic_lines_per_pattern: usize,

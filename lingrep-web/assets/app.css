@@ -139,6 +139,7 @@ td, th, code, pre, dd, .pattern-selector, .surface-tail { overflow-wrap: anywher
 .reading-sentence { display: grid; grid-template-columns: 2rem minmax(0, 1fr); gap: var(--space-2); padding: var(--space-1) var(--space-2); margin: 0; }
 .reading-sentence-selected { background: var(--selected-bg); }
 .reading-sentence-number { color: var(--text-muted); font-variant-numeric: tabular-nums; font-size: var(--text-sm); }
+.reading-debug { font-size: var(--text-sm); margin-inline-start: var(--space-2); }
 .reading-sentence-text { white-space: pre-wrap; overflow-wrap: anywhere; line-height: 1.7; }
 .reading-reconstructed { display: inline-block; white-space: normal; margin-inline-start: var(--space-1); }
 .reading-paragraph-label { margin-block: var(--space-2) var(--space-1); border-top: 1px solid var(--border-light); padding-top: var(--space-1); }
@@ -1372,6 +1373,7 @@ form .btn { margin-top: var(--space-3); }
   align-items: center;
   font-size: var(--text-sm);
 }
+.sample-analyzer-choice { display: flex; align-items: baseline; flex-wrap: wrap; gap: var(--space-2); }
 .sample-actions .btn { margin-top: 0; }
 .sample-status:empty { display: none; }
 .sample-stale {

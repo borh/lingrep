@@ -27,6 +27,23 @@ fn plan_access_memoizes_a_real_dictionary() {
     });
     let a = store.context.plan().expect("real dict builds");
     let b = store.context.plan().expect("second call");
+    use lingrep_core::analysis::{
+        ExtractionProfile, NormalizationPolicy, SegmentationMode, VibratoPlan,
+    };
+    let fingerprint = store
+        .context
+        .dictionary_fingerprint()
+        .expect("dictionary identity");
+    assert_eq!(
+        a.descriptor(),
+        &VibratoPlan::descriptor_for(
+            fingerprint,
+            ExtractionProfile::Morphology,
+            SegmentationMode::Input,
+            NormalizationPolicy::None,
+        ),
+        "live and prepared analysis identify the same dictionary"
+    );
     assert!(
         std::sync::Arc::ptr_eq(&a, &b),
         "the plan is memoized, not rebuilt"

@@ -112,9 +112,10 @@ not compared. Pairs involving regex tests are omitted. The comparison uses
 token spans and excludes captures, keys, and result policy.
 
 The Sample debugger and the Workbench’s **Test on sample** drawer tokenize
-catalog examples and counterexamples with the server’s Vibrato dictionary,
-independently of the sample text. The checks run if the catalog binds to the
-sample schema and all referenced attributes are available. Otherwise, the
+catalog examples and counterexamples with the analyzer selected for the
+sample. For standalone samples, the server uses Vibrato or a configured
+live analyzer. The checks run if the catalog binds to the sample schema and
+all referenced attributes are available. Otherwise, the
 debugger reports the binding error or missing attributes. Select a failed
 entry’s text to add it to the sample. Each run checks up to 256 entries in
 catalog order and reports how many were skipped. The debugger spends up to
@@ -160,8 +161,14 @@ search so it also works in a new tab. If the Workbench has moved on to a
 later search, the link opens the same sentence with the server’s default
 pattern. The debugger uses the tokens and schema stored in the corpus
 artifact and names the corpus’s analyzer. In this mode it skips catalog
-claims and enhanced dependency relations. Edit the sentence to use the
-sample tokenizer instead.
+claims and enhanced dependency relations. In the sentence reader, use
+**Debug sentence** to inspect a sentence without a hit.
+
+Editing the text uses a live analyzer. **Automatic** uses the corpus's
+analyzer when its configuration is available on the server. Choose another
+analyzer to run a separate analysis if the corpus's analyzer is unavailable.
+The result names the analyzer that ran. See
+[Configure live analysis for the Sample debugger](deployment-guide.md#configure-live-analysis-for-the-sample-debugger).
 
 A passing counterexample may be unrelated to its definition. To check whether
 it exercises a specific constraint, verification tries to match the sentence

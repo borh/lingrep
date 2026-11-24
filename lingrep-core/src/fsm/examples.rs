@@ -350,6 +350,14 @@ pub fn try_verify_examples_within<T: TokenInfoTrait>(
     tokenize: &dyn Fn(&str) -> Vec<T>,
     limit: usize,
 ) -> Result<ExampleReport, crate::fsm::MatchPublicationError> {
+    try_verify_analyzed_examples_within(matcher, tokenize, limit)
+}
+
+pub fn try_verify_analyzed_examples_within<S: crate::token_match::TokenSequence>(
+    matcher: &CompiledCatalog,
+    analyze: &dyn Fn(&str) -> S,
+    limit: usize,
+) -> Result<ExampleReport, crate::fsm::MatchPublicationError> {
     let mut report = ExampleReport::default();
     for (name, pattern) in matcher.patterns() {
         for (key, must_match) in VERIFIED_KEYS {
@@ -380,7 +388,7 @@ pub fn try_verify_examples_within<T: TokenInfoTrait>(
                     report.unchecked += 1;
                     continue;
                 }
-                let tokens = tokenize(entry);
+                let tokens = analyze(entry);
                 let matched = matcher
                     .try_find_matches(&tokens)?
                     .iter()
@@ -400,7 +408,7 @@ pub fn try_verify_examples_within<T: TokenInfoTrait>(
             }
         }
     }
-    verify_post_policy(matcher, tokenize, limit, &mut report)?;
+    verify_post_policy(matcher, analyze, limit, &mut report)?;
     // `patterns()` is an IndexMap in source order, which is stable, but the
     // sort makes the report independent of it so a reordering in the catalog
     // cannot reorder a CLI diff.
@@ -426,9 +434,9 @@ pub fn try_verify_examples_within<T: TokenInfoTrait>(
 /// A claim is judged against the name the definition *publishes* under, so a
 /// rename is not itself a failure. Synthesized emitters carry no metadata and
 /// are absent from `patterns()`, so they are not claim-carriers here either.
-fn verify_post_policy<T: TokenInfoTrait>(
+fn verify_post_policy<S: crate::token_match::TokenSequence>(
     matcher: &CompiledCatalog,
-    tokenize: &dyn Fn(&str) -> Vec<T>,
+    analyze: &dyn Fn(&str) -> S,
     limit: usize,
     report: &mut ExampleReport,
 ) -> Result<(), crate::fsm::MatchPublicationError> {
@@ -440,7 +448,7 @@ fn verify_post_policy<T: TokenInfoTrait>(
     // omits them, so one broken claim is not counted twice.
     for (name, must_match, entry) in declared_claims(matcher).take(limit) {
         let published_name = policy.published_name(name);
-        let tokens = tokenize(entry);
+        let tokens = analyze(entry);
         let published = matcher.try_find_published_matches(&tokens)?;
         let matched = published
             .iter()

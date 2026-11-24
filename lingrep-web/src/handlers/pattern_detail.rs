@@ -119,14 +119,7 @@ async fn hit_detail(
 /// The `/sample` address for `sentence` of `corpus`, seeded with the pattern
 /// of `revision`. Without `corpus` the page reads the default corpus.
 fn debug_href(corpus: Option<&str>, workbench_id: &str, revision: u64, sentence: u64) -> String {
-    let (sentence, revision) = (sentence.to_string(), revision.to_string());
-    let mut query = vec![("sentence", sentence.as_str())];
-    query.extend(corpus.map(|corpus| ("corpus", corpus)));
-    query.extend([("workbench", workbench_id), ("revision", &revision)]);
-    format!(
-        "sample?{}",
-        serde_urlencoded::to_string(query).unwrap_or_default()
-    )
+    super::sample::debug_href(corpus, Some((workbench_id, revision)), sentence)
 }
 
 fn render_hit_detail(

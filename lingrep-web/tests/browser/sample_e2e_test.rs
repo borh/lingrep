@@ -907,6 +907,7 @@ async fn a_hit_opens_in_the_sample_debugger_with_stored_tokens_until_the_text_is
             .execute(
                 "const text = document.querySelector('#sample-text'); \
                  text.value = 'x x'; \
+                 document.querySelector('#sample-analyzer').value = 'vibrato'; \
                  text.dispatchEvent(new Event('input', {bubbles: true}));",
                 vec![],
             )
@@ -917,6 +918,22 @@ async fn a_hit_opens_in_the_sample_debugger_with_stored_tokens_until_the_text_is
                && !!document.querySelector('[data-sample-run] [data-i18n=\"sample.tokenized_by\"]') \
                && document.querySelector('[data-corpus-sentence-note] [data-i18n]').dataset.i18n === 'sample.opened_edited'",
             "the sample tokenizer after the text is edited",
+        )
+        .await?;
+        driver
+            .execute(
+                "const text = document.querySelector('#sample-text'); \
+                 text.value = text.defaultValue; \
+                 document.querySelector('#sample-analyzer').value = 'auto'; \
+                 text.dispatchEvent(new Event('input', {bubbles: true}));",
+                vec![],
+            )
+            .await?;
+        wait_for(
+            &driver,
+            "return !!document.querySelector('[data-sample-stored]') \
+               && document.querySelector('[data-corpus-sentence-note] [data-i18n]').dataset.i18n === 'sample.opened_stored'",
+            "stored analysis after restoring the original sentence",
         )
         .await?;
         Ok(())

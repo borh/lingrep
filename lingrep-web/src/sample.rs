@@ -17,7 +17,8 @@ use crate::patterns::format_pattern_compile_error;
 use crate::templates::{TokenInspectionFragment, TrustedFragmentHtml};
 use lingrep_core::analysis::{AnalyzerPlan, VibratoPlan};
 use lingrep_core::fsm::{CompileOutput, ExampleFailure, ExampleFailureKind, ExampleReport};
-use lingrep_core::token_match::{TokenInfo, TokenSchema};
+use lingrep_core::token_match::{BoundTokenSentence, TokenInfo, TokenSchema, TokenSequence};
+use std::borrow::Cow;
 
 #[derive(Debug, Clone)]
 pub struct TokenView {
@@ -366,7 +367,7 @@ fn build_line_analysis<S: lingrep_core::token_match::TokenSequence + ?Sized>(
     })
 }
 
-fn whole<'a>(lines: &[&'a [TokenInfo]]) -> Vec<lingrep_core::fsm::ContextSegment<'a, [TokenInfo]>> {
+fn whole<'a, S: TokenSequence>(lines: &[&'a S]) -> Vec<lingrep_core::fsm::ContextSegment<'a, S>> {
     lines
         .iter()
         .map(|line| lingrep_core::fsm::ContextSegment {
@@ -395,6 +396,17 @@ fn analyze_compiled(
     pattern_source: &str,
     lines: &[Vec<TokenInfo>],
 ) -> SampleAnalysis {
+    analyze_sequences(output, pattern_source, lines, |line| {
+        Cow::Borrowed(line.as_slice())
+    })
+}
+
+fn analyze_sequences<S: TokenSequence>(
+    output: &CompileOutput,
+    pattern_source: &str,
+    lines: &[S],
+    display: impl Fn(&S) -> Cow<'_, [TokenInfo]>,
+) -> SampleAnalysis {
     let matcher = &output.matcher;
     if pattern_source.trim().is_empty() {
         return SampleAnalysis::EmptyPattern;
@@ -406,11 +418,7 @@ fn analyze_compiled(
     let mut explained = 0;
     let mut token_count = 0;
     let mut match_count = 0;
-    let lines: Vec<&[TokenInfo]> = lines
-        .iter()
-        .map(Vec::as_slice)
-        .filter(|line| !line.is_empty())
-        .collect();
+    let lines: Vec<_> = lines.iter().filter(|line| !line.is_empty()).collect();
     for (index, line) in lines.iter().copied().enumerate() {
         let context = lingrep_core::fsm::LookaroundContext {
             windows: std::collections::BTreeMap::from([(
@@ -432,8 +440,9 @@ fn analyze_compiled(
                 });
             }
         };
+        let tokens = display(line);
         let mut analysis = match build_line_analysis(
-            line,
+            &tokens,
             line,
             explanation,
             output,
@@ -451,8 +460,14 @@ fn analyze_compiled(
                 .iter()
                 .take(UNMATCHED_DEFINITION_LIMIT)
                 .filter_map(|(name, _)| {
-                    let mut why =
-                        why_not(output, pattern_source, name, line, &analysis.candidates)?;
+                    let mut why = why_not_over(
+                        output,
+                        pattern_source,
+                        name,
+                        &tokens,
+                        line,
+                        &analysis.candidates,
+                    )?;
                     if matches!(
                         why.outcome,
                         WhyNotOutcome::Stopped(_) | WhyNotOutcome::WhereRejected { .. }
@@ -462,7 +477,7 @@ fn analyze_compiled(
                             pattern_source,
                             name,
                             "counterexamples",
-                            &surface_text(line),
+                            &surface_text(&tokens),
                         );
                     }
                     Some(why)
@@ -642,25 +657,6 @@ pub struct WhyNotElement {
     pub text: String,
 }
 
-/// `None` when the definition published a match.
-fn why_not(
-    output: &CompileOutput,
-    pattern_source: &str,
-    definition: &str,
-    tokens: &[TokenInfo],
-    candidates: &[lingrep_core::fsm::ExplainedMatch],
-) -> Option<WhyNot> {
-    why_not_over(
-        output,
-        pattern_source,
-        definition,
-        tokens,
-        tokens,
-        candidates,
-    )
-}
-
-/// [`why_not`] with the tokens as displayed apart from the tokens as matched.
 fn why_not_over<S: lingrep_core::token_match::TokenSequence + ?Sized>(
     output: &CompileOutput,
     pattern_source: &str,
@@ -837,11 +833,27 @@ pub struct SampleRun {
     /// The tokens are a corpus sentence's stored analysis, and `analyzer`
     /// names the corpus's analyzer.
     pub stored: bool,
-    /// The selected corpus's analyzer, when its token schema differs from the
-    /// sample tokenizer's.
+    /// The corpus analyzer when the run uses a different configuration.
     pub corpus_analyzer: Option<String>,
+    pub corpus_analyzer_match: bool,
     pub binding: SampleBinding,
     pub claims: SampleClaims,
+}
+
+impl SampleRun {
+    pub(crate) fn compare_with_corpus(
+        &mut self,
+        semantic_identity: &str,
+        corpus: Option<&lingrep_corpus::AnalyzerRecord>,
+    ) {
+        if let Some(corpus) = corpus {
+            if corpus.semantic_identity == semantic_identity {
+                self.corpus_analyzer_match = true;
+            } else {
+                self.corpus_analyzer = Some(format!("{} {}", corpus.family, corpus.profile));
+            }
+        }
+    }
 }
 
 /// Binds `output` to `schema` and, when every referenced attribute is
@@ -855,7 +867,15 @@ pub fn sample_run(
     budget: ClaimBudget,
 ) -> SampleRun {
     let binding = sample_binding(output, schema);
-    sample_run_bound(output, pattern_source, analyzer, binding, tokenize, budget)
+    sample_run_bound(
+        output,
+        pattern_source,
+        analyzer,
+        binding,
+        tokenize,
+        Clone::clone,
+        budget,
+    )
 }
 
 fn sample_binding(output: &CompileOutput, schema: &TokenSchema) -> SampleBinding {
@@ -883,12 +903,13 @@ fn sample_binding(output: &CompileOutput, schema: &TokenSchema) -> SampleBinding
     }
 }
 
-fn sample_run_bound(
+fn sample_run_bound<S: TokenSequence>(
     output: &CompileOutput,
     pattern_source: &str,
     analyzer: String,
     binding: SampleBinding,
-    tokenize: &dyn Fn(&str) -> Vec<TokenInfo>,
+    analyze: &dyn Fn(&str) -> S,
+    display: impl Fn(&S) -> Vec<TokenInfo>,
     budget: ClaimBudget,
 ) -> SampleRun {
     let declared = output.matcher.patterns().iter().any(|(_, pattern)| {
@@ -902,9 +923,9 @@ fn sample_run_bound(
     } else if !complete {
         SampleClaims::Unverifiable
     } else {
-        match lingrep_core::fsm::try_verify_examples_within(
+        match lingrep_core::fsm::try_verify_analyzed_examples_within(
             &output.matcher,
-            tokenize,
+            analyze,
             budget.claims,
         ) {
             Ok(report) => {
@@ -914,20 +935,20 @@ fn sample_run_bound(
                         failure.kind,
                         ClaimFailureKind::ExpectedMatch | ClaimFailureKind::ExpectedPublication
                     ) {
-                        let tokens = tokenize(&failure.example);
-                        failure.why_not = output
-                            .matcher
-                            .try_explain_sentence(tokens.as_slice())
-                            .ok()
-                            .and_then(|explained| {
-                                why_not(
-                                    output,
-                                    pattern_source,
-                                    &failure.definition,
-                                    &tokens,
-                                    &explained.candidates,
-                                )
-                            });
+                        let tokens = analyze(&failure.example);
+                        failure.why_not =
+                            output.matcher.try_explain_sentence(&tokens).ok().and_then(
+                                |explained| {
+                                    why_not_over(
+                                        output,
+                                        pattern_source,
+                                        &failure.definition,
+                                        &display(&tokens),
+                                        &tokens,
+                                        &explained.candidates,
+                                    )
+                                },
+                            );
                     }
                 }
                 let relaxing = std::time::Instant::now();
@@ -945,7 +966,7 @@ fn sample_run_bound(
                         continue;
                     }
                     if let lingrep_core::fsm::RelaxationOutcome::Vacuous { tried } =
-                        output.relax_definition(definition, tokenize(example).as_slice())
+                        output.relax_definition(definition, &analyze(example))
                     {
                         report.vacuous.push(VacuousClaim {
                             definition: definition.to_string(),
@@ -962,6 +983,7 @@ fn sample_run_bound(
     SampleRun {
         analyzer,
         corpus_analyzer: None,
+        corpus_analyzer_match: false,
         stored: false,
         binding,
         claims,
@@ -1018,19 +1040,46 @@ pub struct SampleReport {
     pub run: Option<SampleRun>,
 }
 
+pub(crate) fn compile_sample(pattern: &str) -> Result<CompileOutput, SampleAnalysisError> {
+    compile_web_pattern(pattern).map_err(|error| SampleAnalysisError {
+        message: format_pattern_compile_error(&error),
+    })
+}
+
+pub(crate) fn analyze_live_sample(
+    output: &CompileOutput,
+    pattern: &str,
+    schema: &TokenSchema,
+    analyzer: String,
+    lines: &[BoundTokenSentence],
+    claims: &dyn Fn(&str) -> BoundTokenSentence,
+    budget: ClaimBudget,
+) -> SampleReport {
+    let binding = sample_binding(output, schema);
+    let display = |sentence: &BoundTokenSentence| {
+        (0..sentence.len())
+            .filter_map(|index| stored_token(schema, sentence, index))
+            .collect()
+    };
+    let analysis = analyze_sequences(output, pattern, lines, |line| Cow::Owned(display(line)));
+    let run = sample_run_bound(output, pattern, analyzer, binding, claims, display, budget);
+    SampleReport {
+        analysis,
+        run: Some(run),
+    }
+}
+
 pub fn analyze_sample(
     pattern_source: &str,
     sample_text: &str,
     plan: &VibratoPlan,
     analyzer: String,
 ) -> SampleReport {
-    let output = match compile_web_pattern(pattern_source) {
+    let output = match compile_sample(pattern_source) {
         Ok(output) => output,
         Err(error) => {
             return SampleReport {
-                analysis: SampleAnalysis::Failed(SampleAnalysisError {
-                    message: format_pattern_compile_error(&error),
-                }),
+                analysis: SampleAnalysis::Failed(error),
                 run: None,
             };
         }
@@ -1079,6 +1128,7 @@ pub fn analyze_stored_sentence(
     let run = SampleRun {
         analyzer,
         corpus_analyzer: None,
+        corpus_analyzer_match: false,
         stored: true,
         binding: sample_binding(&output, schema),
         claims: SampleClaims::Undeclared,

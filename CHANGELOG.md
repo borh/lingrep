@@ -50,10 +50,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   consumed. You can also add a sample sentence to a definition’s examples
   or counterexamples. Both editors show the diagram for the definition
   or fragment at the cursor.
-- Open a Workbench hit in the Sample debugger with the sentence’s stored
-  analysis, including basic dependencies when available. Editing the sentence
-  switches to the sample tokenizer. The debugger skips enhanced dependency
-  relations. [Sample and catalog checks](docs/cli-usage-guide.md#catalogs-and-matching)
+- Open a Workbench hit or a sentence from the sentence reader in the
+  Sample debugger. Pattern edits reuse the stored analysis. Edited or
+  pasted text can use a configured GiNZA, spaCy, Stanza, protocol adapter,
+  or Sudachi analyzer. The debugger supports basic dependencies when
+  available. [Live sample analyzer setup](docs/deployment-guide.md#configure-live-analysis-for-the-sample-debugger)
 - The Question page groups hits by work with work totals, expandable excerpts,
   and source positions for available chapters, paragraphs, and sentences.
   Navigate through all indexed hits in either By work or KWIC view.

@@ -108,3 +108,108 @@ async fn real_dictionary_returns_a_rendered_match() {
         "{html}"
     );
 }
+
+#[cfg(unix)]
+#[tokio::test]
+async fn configured_adapter_analyzes_text_edits_and_reuses_tokens_for_pattern_edits() {
+    use clap::Parser;
+    use std::process::Command;
+
+    let artifact = super::v6_support::build_artifact(vec![(
+        "sample.txt",
+        0,
+        false,
+        vec![vec![
+            lingrep_core::token_match::TokenInfo::default().with_orth("猫"),
+        ]],
+    )]);
+    let bundle = tempfile::tempdir().unwrap();
+    let config_path = bundle.path().join("analyzer.toml");
+    let batches = bundle.path().join("batches.txt");
+    let marker = r#"    elif kind == "batch_begin":"#;
+    let adapter = include_str!("../../../lingrep-core/tests/fixtures/external_echo_adapter.py")
+        .replace(marker, &format!(
+            "{marker}\n        with open({}, 'a') as batch_log:\n            batch_log.write('batch\\n')",
+            serde_json::to_string(&batches.to_string_lossy()).unwrap(),
+        ))
+        .replace(
+            "values.append(text if attribute[\"key\"] == \"text\" else None)",
+            "values.append(text if attribute[\"key\"] == \"text\" else [\"echo\"])",
+        );
+    std::fs::write(bundle.path().join("adapter.py"), adapter).unwrap();
+    let python = Command::new("python3")
+        .args(["-c", "import sys; print(sys.executable)"])
+        .output()
+        .unwrap();
+    assert!(python.status.success());
+    let python = std::str::from_utf8(&python.stdout).unwrap().trim();
+    std::fs::write(
+        &config_path,
+        format!(
+            "version = 1\nkind = 'protocol'\npython = '{python}'\nentrypoint = 'adapter.py'\nlanguage = 'ja'\nschema = [{{ key = 'text', kind = 'scalar' }}, {{ key = 'echo.markers', kind = 'string_set' }}]\n"
+        ),
+    )
+    .unwrap();
+    let args = lingrep_web::cli::Args::try_parse_from([
+        std::ffi::OsStr::new("lingrep-web"),
+        std::ffi::OsStr::new("--input"),
+        artifact.path.as_os_str(),
+        std::ffi::OsStr::new("--sample-analyzer-config"),
+        config_path.as_os_str(),
+    ])
+    .expect("server accepts a sample analyzer bundle");
+    let mut config = lingrep_web::serve::config(&args).unwrap();
+    config.dict_path = None;
+    let store = lingrep_web::serve::store(&args, config).await.unwrap();
+    let app = lingrep_web::handlers::sample::routes().with_state(store);
+    let res = post(
+        &app,
+        encode_form(
+            "examples: [\"猫が走る\"] counterexamples: [\"猫\", \"\"] whole := [text=猫が走る & echo.markers has echo].",
+            "猫が走る",
+        ),
+    )
+    .await;
+    assert_eq!(res.status(), StatusCode::OK);
+    let body = res.into_body().collect().await.unwrap().to_bytes();
+    let html = std::str::from_utf8(&body).unwrap();
+    assert!(html.contains("external morphology"), "{html}");
+    assert!(html.contains("data-sample-match="), "{html}");
+    assert!(html.contains("data-sample-claims=\"hold\""), "{html}");
+
+    let count_batches = || std::fs::read_to_string(&batches).unwrap().lines().count();
+    assert_eq!(count_batches(), 2);
+    let changed_pattern =
+        "examples: [\"猫が走る\"] counterexamples: [\"猫\"] whole := [surface=猫が走る].";
+    let res = post(&app, encode_form(changed_pattern, "猫が走る")).await;
+    assert_eq!(res.status(), StatusCode::OK);
+    assert_eq!(
+        count_batches(),
+        2,
+        "pattern edits reuse sample and claim tokens"
+    );
+
+    let res = post(&app, encode_form(changed_pattern, "犬が走る")).await;
+    assert_eq!(res.status(), StatusCode::OK);
+    assert_eq!(count_batches(), 3, "text edits run the configured analyzer");
+
+    let res = post(
+        &app,
+        format!("{}&corpus=default", encode_form("word := [text=猫].", "猫")),
+    )
+    .await;
+    assert_eq!(res.status(), StatusCode::CONFLICT);
+
+    let res = post(
+        &app,
+        format!(
+            "{}&corpus=default&analyzer=configured",
+            encode_form("word := [text=猫].", "猫")
+        ),
+    )
+    .await;
+    assert_eq!(res.status(), StatusCode::OK);
+    let body = res.into_body().collect().await.unwrap().to_bytes();
+    let html = std::str::from_utf8(&body).unwrap();
+    assert!(html.contains("data-sample-corpus-differs"), "{html}");
+}

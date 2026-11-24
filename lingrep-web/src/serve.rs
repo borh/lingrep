@@ -120,6 +120,14 @@ fn block_on<F: Future>(future: F) -> std::io::Result<F::Output> {
 ///
 /// Invalid declarations or unreadable configured inputs.
 pub fn config(args: &Args) -> Result<Config, ServeError> {
+    if args.sample_nfc
+        && args.sample_analyzer_config.is_none()
+        && args.sample_sudachi_dict.is_none()
+    {
+        return Err(ServeError::InvalidArguments(
+            "--sample-nfc requires a configured live sample analyzer".to_owned(),
+        ));
+    }
     let config = Config {
         dict_path: args.dict.resolve().map(|path| path.display().to_string()),
         corpora: crate::cli::declared_corpora(args).map_err(ServeError::InvalidArguments)?,
@@ -322,6 +330,50 @@ async fn store_in(
     config: Config,
     context: Arc<ServerContext>,
 ) -> Result<RequestStore, String> {
+    use lingrep_core::analysis::{NormalizationPolicy, SudachiSplit};
+    let normalization = if args.sample_nfc {
+        NormalizationPolicy::Nfc
+    } else {
+        NormalizationPolicy::None
+    };
+    let sample_analyzer = if let Some(path) = args.sample_sudachi_dict.clone() {
+        let resources = args.sample_sudachi_resources.clone();
+        let split = match args.sample_sudachi_split.as_str() {
+            "a" => SudachiSplit::A,
+            "b" => SudachiSplit::B,
+            _ => SudachiSplit::C,
+        };
+        Some(Arc::new(
+            tokio::task::spawn_blocking(move || {
+                crate::sample_analyzer::LiveSampleAnalyzer::load_sudachi(
+                    &path,
+                    resources.as_deref(),
+                    split,
+                    normalization,
+                )
+            })
+            .await
+            .map_err(|error| error.to_string())??,
+        ))
+    } else if let Some(path) = args.sample_analyzer_config.clone() {
+        #[cfg(unix)]
+        {
+            Some(Arc::new(
+                tokio::task::spawn_blocking(move || {
+                    crate::sample_analyzer::LiveSampleAnalyzer::load_external(&path, normalization)
+                })
+                .await
+                .map_err(|error| error.to_string())??,
+            ))
+        }
+        #[cfg(not(unix))]
+        return Err(format!(
+            "external sample analyzers require Unix: {}",
+            path.display()
+        ));
+    } else {
+        None
+    };
     let labels = crate::metadata_labels::KeyLabels::read(&args.metadata_labels)?;
     let max_active_sessions =
         NonZeroUsize::new(args.max_active_sessions).unwrap_or(NonZeroUsize::MIN);
@@ -377,6 +429,10 @@ async fn store_in(
             .with_catalogs(catalogs)
             .with_frequency(frequency)
             .with_reading_sidecars(reading_sidecars);
+    let store = RequestStore {
+        sample_analyzer,
+        ..store
+    };
     Ok(store)
 }
 

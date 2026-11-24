@@ -1,4 +1,6 @@
 mod args;
+#[cfg(unix)]
+pub mod external_analyzer;
 mod markdown_args;
 pub mod packaged_dictionaries;
 pub mod release_download;

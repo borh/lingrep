@@ -131,6 +131,65 @@ export. The export streams all indexed matches using
 `lingrep.question-results/v1`, including sentences above the 1 MiB limit for
 loading a preview. Export memory grows with the largest matched sentence.
 
+## Configure live analysis for the Sample debugger
+
+Register the same analyzer configuration that built the corpus to analyze
+pasted or edited text interactively. On Unix, pass a trusted spaCy, GiNZA,
+Stanza, or protocol adapter configuration as `--sample-analyzer-config`.
+The setting applies to the standalone Sample debugger and Workbench's
+**Test on sample** drawer.
+
+For a local GiNZA setup, save a few UTF-8 test sentences in `samples.txt`
+and run:
+
+```bash
+ling analyzer prepare ginza --output ./analyzers/ginza
+ling corpus build --analyzer-config "$PWD/analyzers/ginza/analyzer.toml" \
+  --output demo.lingcorpus samples.txt
+ling serve --corpus demo=demo.lingcorpus \
+  --sample-analyzer-config "$PWD/analyzers/ginza/analyzer.toml"
+```
+
+Open `http://127.0.0.1:3000/workbench`, select **demo**, search for
+`word := [].`, and open a hit in the Sample debugger. Change the pattern to
+check the stored tokens. Then edit the sample sentence and check that the
+result shows **GiNZA** and **Matches the corpus configuration**.
+
+To configure Sudachi, pass `--sample-sudachi-dict PATH` with a
+`system_small.dic`, `system_core.dic`, or `system_full.dic` file. Supply
+`--sample-sudachi-resources DIR` and `--sample-sudachi-split a|b|c` when
+the corpus was built with custom resources or a split other than `c`.
+Use `--sample-nfc` for a live analyzer that must reproduce a build with
+`--normalization nfc`. The server accepts one added analyzer configuration
+per process. Live samples use the morphology profile and input segmentation
+with one sentence per line.
+
+For the NixOS service, set
+`services.lingrep-web.environment.LINGREP_WEB_SAMPLE_ANALYZER_CONFIG` to
+the absolute path of the bundle configuration. For Sudachi, set
+`LINGREP_WEB_SAMPLE_SUDACHI_DICT` in the same environment. The optional
+`LINGREP_WEB_SAMPLE_SUDACHI_RESOURCES` and `LINGREP_WEB_SAMPLE_SUDACHI_SPLIT`
+variables mirror their CLI flags. Set `LINGREP_WEB_SAMPLE_NFC` to `true`
+if the corpus uses NFC. Keep bundle files and the interpreter in a
+service-readable location such as `/var/lib/lingrep` or the Nix store. The
+unit hides home directories.
+
+Opening a corpus sentence starts with its stored tokens. Pattern edits reuse
+those tokens. After a text edit, **Automatic** requires the exact corpus
+analyzer identity when the sample is tied to a corpus. Choose a named
+analyzer explicitly to analyze the text with a different configuration.
+Restoring the original text in **Automatic** restores the stored analysis.
+If you open Sample without a corpus, **Automatic** uses the configured analyzer,
+or Vibrato when none is configured. For a pretokenized corpus, edit the
+pattern on stored tokens or choose a live analyzer for edited text.
+
+The server checks the analyzer configuration at startup and starts the
+external process when needed. Give the service read and execute access to
+the bundle and interpreter. The TOML file selects executable code, so use
+operator-controlled paths and bundles. Timeout and error messages appear
+under the sample, where you can shorten the text, retry, or choose another
+analyzer.
+
 ## Frequencies view
 
 `services.lingrep-web.countTables` lists count tables written by

@@ -589,6 +589,20 @@ async fn a_line_opens_its_document_and_returning_restores_the_lines() -> WebDriv
         json!({"runs": 1, "sentences": 4, "headings": 0, "rendered": false})
     );
 
+    let debug_links = driver
+        .execute(
+            "return [...document.querySelectorAll('#document-reader-body [data-reading-debug]')].map(link => { \
+             const url = new URL(link.href); \
+             return [url.pathname.split('/').at(-1), url.searchParams.get('corpus'), url.searchParams.get('sentence'), link.closest('[data-reading-sentence]').dataset.readingSentence]; });",
+            Vec::new(),
+        )
+        .await?
+        .convert::<Vec<[String; 4]>>()?;
+    assert_eq!(debug_links.len(), 4);
+    assert!(debug_links.iter().all(|[route, corpus, ordinal, row]| {
+        route == "sample" && corpus == "plain" && ordinal == row
+    }));
+
     assert_no_page_errors(&driver).await?;
     assert_eq!(*served.statuses.lock().unwrap(), Vec::<String>::new());
     served.server.abort();

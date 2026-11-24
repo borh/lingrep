@@ -5,7 +5,9 @@ use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex, PoisonError};
 
-use lingrep_core::analysis::VibratoPlan;
+use lingrep_core::analysis::{
+    ExtractionProfile, NormalizationPolicy, SegmentationMode, VibratoPlan,
+};
 use rayon::ThreadPool;
 
 use lingrep_core::PipelineError;
@@ -132,7 +134,19 @@ impl ServerContext {
                 .ok_or(TokenizerUnavailable::NoDictionary)?;
             let tokenizer = create_tokenizer_from_path(&path.to_string_lossy())
                 .map_err(|_| TokenizerUnavailable::LoadFailed)?;
-            let plan = VibratoPlan::new(tokenizer, path).map_err(|error| {
+            let fingerprint = self.dictionary_fingerprint().map_err(|error| {
+                tracing::warn!(%error, "Could not identify the Vibrato dictionary");
+                TokenizerUnavailable::LoadFailed
+            })?;
+            let plan = VibratoPlan::configured(
+                tokenizer,
+                path,
+                fingerprint,
+                ExtractionProfile::Morphology,
+                SegmentationMode::Input,
+                NormalizationPolicy::None,
+            )
+            .map_err(|error| {
                 tracing::warn!(%error, cause = %error.source, "Vibrato plan construction failed");
                 TokenizerUnavailable::LoadFailed
             })?;

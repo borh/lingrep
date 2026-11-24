@@ -459,6 +459,17 @@ function isErrorFragment(html) {
     probe.content.firstElementChild.matches('div.error[role="status"]');
 }
 
+const sampleRequests = new WeakMap();
+
+function sampleRequestInputs(form) {
+  return JSON.stringify([...new FormData(form)]);
+}
+
+function markPreviousSample() {
+  const note = document.querySelector("[data-sample-previous]");
+  if (note && document.querySelector("#sample-results [data-sample-results]")) note.hidden = false;
+}
+
 function beginSampleRequest(form) {
   const status = form.querySelector("[data-sample-status]");
   status.classList.remove("visually-hidden");
@@ -467,6 +478,8 @@ function beginSampleRequest(form) {
 }
 
 function finishSampleRequest(target) {
+  const previous = document.querySelector("[data-sample-previous]");
+  if (previous) previous.hidden = true;
   target.setAttribute("aria-busy", "false");
   markSampleStale(false);
   const status = target.closest("[data-sample-workspace]")
@@ -1794,6 +1807,7 @@ if (typeof document !== "undefined") {
     if (form && event.detail.elt.closest("form") === form) beginCorpusRequest(form);
     const sampleForm = event.detail.elt.closest?.(".sample-form");
     if (sampleForm && event.detail.elt.closest("form") === sampleForm) {
+      if (event.detail.xhr) sampleRequests.set(event.detail.xhr, sampleRequestInputs(sampleForm));
       beginSampleRequest(sampleForm);
     }
     if (event.detail.elt.closest?.(".pattern-selector")) {
@@ -1810,6 +1824,16 @@ if (typeof document !== "undefined") {
   });
 
   document.addEventListener("htmx:beforeSwap", (event) => {
+    const inputs = sampleRequests.get(event.detail.xhr);
+    const sampleForm = document.querySelector(".sample-form");
+    if (event.detail.target?.id === "sample-results" && inputs !== undefined &&
+        sampleForm && inputs !== sampleRequestInputs(sampleForm)) {
+      event.detail.shouldSwap = false;
+      event.detail.target.setAttribute("aria-busy", "false");
+      const status = sampleForm.querySelector("[data-sample-status]");
+      if (status) status.textContent = "";
+      return;
+    }
     if (event.detail.target?.matches?.(".reading-body") && event.detail.xhr?.status >= 400) {
       event.detail.shouldSwap = true;
     }
@@ -1888,16 +1912,22 @@ if (typeof document !== "undefined") {
   onLocaleChange(() => { void renderSampleReference(); });
   document.addEventListener("sample:rendered", (event) => restoreSampleSelection(event.target));
   // An edited corpus sentence is no longer the sentence the corpus stores.
+  document.addEventListener("change", (event) => {
+    if (event.target.id === "sample-analyzer") markPreviousSample();
+  }, true);
   document.addEventListener("input", (event) => {
     if (event.target.id !== "sample-text") return;
-    const stored = document.querySelector("[data-corpus-sentence]:not([disabled])");
+    markPreviousSample();
+    const stored = document.querySelector("[data-corpus-sentence]");
     if (!stored) return;
-    stored.disabled = true;
+    const edited = event.target.value !== event.target.defaultValue;
+    stored.disabled = edited;
     const note = document.querySelector("[data-corpus-sentence-note] [data-i18n]");
     if (note) {
-      note.dataset.i18n = "sample.opened_edited";
-      delete note.dataset.i18nArgs;
-      note.textContent = t("sample.opened_edited");
+      const args = edited ? null : { ordinal: stored.value };
+      note.dataset.i18n = edited ? "sample.opened_edited" : "sample.opened_stored";
+      note.dataset.i18nArgs = JSON.stringify(args);
+      note.textContent = t(note.dataset.i18n, args);
     }
   }, true);
   document.addEventListener("click", (event) => {
