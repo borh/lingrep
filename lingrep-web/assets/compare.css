@@ -1,6 +1,6 @@
 .cmp {
   --cmp-where: light-dark(#2a6fb8, #4a8fd8);
-  --cmp-versus: light-dark(#c25a1c, #d4702f);
+  --cmp-versus: light-dark(#a94b16, #d4702f);
 }
 html { scrollbar-gutter: stable; }
 

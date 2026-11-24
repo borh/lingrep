@@ -39,13 +39,13 @@
   --space-4: 1rem;
   --space-5: 1.5rem;
   --space-6: 2rem;
-  /* The question page's type scale: 13, 14, 15 (body) and 16 px, with 20 px
-     headings. The root is 15 px, so these are fractions of it. */
   --text-sm: 0.8667rem;
   --text-md: 0.9333rem;
   --text-lg: 1.0667rem;
   --font-size-h2: 1.3333rem;
   --font-size-h3: var(--text-lg);
+  /* The question page's type scale: 13, 14, 15 (body) and 16 px, with 20 px
+     headings. The root is 15 px, so these are fractions of it. */
   /* Shared colours and typefaces come from assets/questions/site.css.
      Matches use the Question page's wash and rule. Amber marks captures. */
 }
@@ -1383,7 +1383,6 @@ form .btn { margin-top: var(--space-3); }
   color: var(--alert-error-text);
   font-size: var(--text-md);
 }
-#sample-results[data-stale] { opacity: 0.5; }
 .link-button {
   padding: 0;
   border: 0;
@@ -1456,7 +1455,7 @@ form .btn { margin-top: var(--space-3); }
 /* Cells abut so a bar runs unbroken under the tokens it covers; the space
    between chips is the chip's own margin. */
 .sample-ribbon { gap: var(--space-2) 0; margin: 0; }
-.sample-cell { display: inline-flex; flex-direction: column; align-items: stretch; }
+.sample-cell { display: inline-flex; flex-direction: column; align-items: stretch; min-inline-size: 0; max-inline-size: 100%; }
 .sample-cell > .kwic-token { margin-inline: 0.15rem; }
 .sample-bar,
 .sample-bar-gap { block-size: 1.6rem; margin-block-start: 3px; }
@@ -1467,7 +1466,7 @@ form .btn { margin-top: var(--space-3); }
   background: var(--match-bg);
   color: var(--text);
 }
-button.sample-bar { padding: 0; font: inherit; text-align: start; cursor: pointer; }
+button.sample-bar { display: grid; align-items: center; min-inline-size: 0; padding: 0; font: inherit; text-align: start; cursor: pointer; }
 .sample-bar-start { margin-inline-start: 0.15rem; border-inline-start-width: 1px; border-start-start-radius: 3px; border-end-start-radius: 3px; }
 .sample-bar-end { margin-inline-end: 0.15rem; border-inline-end-width: 1px; border-start-end-radius: 3px; border-end-end-radius: 3px; }
 .sample-bar-capture {
@@ -1476,18 +1475,21 @@ button.sample-bar { padding: 0; font: inherit; text-align: start; cursor: pointe
   color: var(--capture-text);
 }
 .sample-bar-label {
-  position: absolute;
-  inset-block-start: 50%;
-  inset-inline-start: 0.3rem;
-  z-index: 1;
-  translate: 0 -50%;
+  max-inline-size: 24ch;
+  padding-inline: 0.3rem;
+  overflow: hidden;
+  text-overflow: ellipsis;
   font-family: var(--font-mono);
   font-size: var(--text-sm);
-  line-height: 1;
+  line-height: 1.2;
   white-space: nowrap;
 }
 .sample-bar[data-selected] { background: var(--link-color); color: var(--surface); }
-.sample-bar-capture[data-selected] { background: var(--capture-border); color: var(--surface); }
+.sample-bar-capture[data-selected] {
+  background: color-mix(in srgb, var(--capture-bg) 60%, var(--capture-border));
+  color: var(--capture-text);
+  font-weight: 600;
+}
 .sample-policy,
 .sample-why { margin-block-start: var(--space-2); font-size: var(--text-sm); }
 .sample-policy > summary,
@@ -1542,6 +1544,7 @@ button.sample-bar { padding: 0; font: inherit; text-align: start; cursor: pointe
 .sample-detail-panel { padding: var(--space-3); overflow: auto; }
 .sample-detail-panel > :first-child { margin-block-start: 0; }
 .sample-detail-head { display: flex; flex-wrap: wrap; align-items: baseline; gap: var(--space-2); margin: 0 0 var(--space-3); }
+.sample-definitions th, .sample-detail-head, .sample-captures th { overflow-wrap: anywhere; }
 .sample-consumed,
 .sample-captures,
 .sample-reference { table-layout: auto; margin: 0 0 var(--space-3); font-size: var(--text-sm); }

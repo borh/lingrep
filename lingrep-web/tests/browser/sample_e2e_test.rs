@@ -16,7 +16,7 @@ use serde_json::json;
 use thirtyfour::prelude::*;
 use tokio::net::TcpListener;
 
-use crate::frequency_e2e_test::{driver, observed, wait_for};
+use crate::frequency_e2e_test::{driver, observed, two_frames, wait_for};
 
 #[allow(dead_code, clippy::duplicate_mod)]
 #[path = "../suite/v6_support.rs"]
@@ -426,6 +426,13 @@ async fn a_pattern_error_marks_the_previous_results_until_the_pattern_compiles_a
             )
             .await?;
         wait_for(&driver, &shows(true, 1), "the same results, marked").await?;
+        observed(
+            &driver,
+            "return getComputedStyle(document.querySelector('#sample-results')).opacity",
+            json!("1"),
+            "full opacity on stale results",
+        )
+        .await?;
         driver
             .execute(
                 set,
@@ -435,6 +442,69 @@ async fn a_pattern_error_marks_the_previous_results_until_the_pattern_compiles_a
         wait_for(&driver, &shows(false, 0), "results of the repaired pattern")
             .await
             .map(drop)
+    }
+    .await;
+    driver.quit().await?;
+    served.server.abort();
+    result
+}
+
+#[tokio::test]
+async fn sample_annotations_fit_on_mobile_and_keep_full_names_on_selection() -> WebDriverResult<()>
+{
+    let Some(driver) = driver().await? else {
+        return Ok(());
+    };
+    let served = serve().await;
+    let result: WebDriverResult<()> = async {
+        let name = "an_annotation_name_that_cannot_fit_inside_a_single_token_cell";
+        driver.goto(&served.base).await?;
+        wait_for(&driver, CHECKED, "the editor's first check").await?;
+        crate::resize(&driver, 320, 900).await?;
+        driver
+            .execute(
+                r#"for (const [id, value] of arguments[0]) {
+                     const field = document.getElementById(id);
+                     field.value = value;
+                     field.dispatchEvent(new Event('input', {bubbles: true}));
+                   }"#,
+                vec![json!([
+                    ["sample-text", "猫"],
+                    ["sample-pattern", &format!("pattern p := (?<{name}> [text=猫]).")],
+                ])],
+            )
+            .await?;
+        wait_for(
+            &driver,
+            "return !!document.querySelector('button[data-sample-capture]')",
+            "the capture annotation",
+        )
+        .await?;
+        observed(
+            &driver,
+            r#"const button = document.querySelector('button[data-sample-capture]');
+               const label = button.querySelector('.sample-bar-label');
+               return label.getBoundingClientRect().right <= button.getBoundingClientRect().right
+                   && getComputedStyle(label).textOverflow === 'ellipsis';"#,
+            json!(true),
+            "the annotation contained by its button",
+        )
+        .await?;
+        driver
+            .execute(
+                "document.querySelector('button[data-sample-capture]').scrollIntoView({block:'center'})",
+                Vec::new(),
+            )
+            .await?;
+        two_frames(&driver).await?;
+        driver.find(By::Css("button[data-sample-capture]")).await?.click().await?;
+        observed(
+            &driver,
+            "return document.querySelector('[data-sample-panel]:not([hidden]) [data-sample-capture-row][data-selected] th').textContent",
+            json!(name),
+            "the full selected capture name",
+        )
+        .await
     }
     .await;
     driver.quit().await?;

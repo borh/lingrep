@@ -12,6 +12,8 @@ export function valuesHint(q, shown, matching) {
 
 export function createConditionPicker({ sentence, view, keyName, label, anchor, commit, render }) {
   const pop = Object.assign(document.createElement("div"), { className: "fq-pop", hidden: true });
+  pop.id = "condition-picker";
+  pop.setAttribute("role", "dialog");
   sentence.after(pop);
   let openPop = null, drawn = null, pending = null, find = "", values = null, valueMatches = 0, selectedValues = [], valueRequest = 0, valueTimer;
   const dims = (scope) => view(scope).dimensions;
@@ -19,12 +21,35 @@ export function createConditionPicker({ sentence, view, keyName, label, anchor, 
   const dim = (key) => dims(openPop?.scope).find((d) => d.key === key);
   const shownKeys = (scope = null) => dims(scope).map((d) => d.key).filter((k) => k in conds(scope) || (pending?.scope === scope && pending.key === k));
   function placePop(anchor) {
-    const r = anchor.getBoundingClientRect(), top = r.bottom + 6;
-    pop.style.top = `${top}px`;
-    pop.style.maxHeight = `${Math.max(160, innerHeight - top - 12)}px`;
-    pop.style.left = `${Math.max(8, Math.min(r.left, innerWidth - pop.offsetWidth - 8))}px`;
+    const viewport = window.visualViewport;
+    const left = viewport?.offsetLeft ?? 0, top = viewport?.offsetTop ?? 0;
+    const width = viewport?.width ?? innerWidth, height = viewport?.height ?? innerHeight;
+    const minLeft = left + 8, minTop = top + 8, maxBottom = top + height - 8;
+    const r = anchor.getBoundingClientRect();
+    pop.style.maxWidth = `${Math.max(0, width - 16)}px`;
+    const desiredHeight = pop.scrollHeight + pop.offsetHeight - pop.clientHeight;
+    const belowTop = Math.max(minTop, r.bottom + 6), aboveBottom = Math.min(maxBottom, r.top - 6);
+    const below = Math.max(0, maxBottom - belowTop), above = Math.max(0, aboveBottom - minTop);
+    const aboveAnchor = desiredHeight > below && above > below;
+    const room = aboveAnchor ? above : below;
+    const fitBeside = room >= Math.min(desiredHeight, 120);
+    pop.style.maxHeight = `${fitBeside ? room : Math.max(0, height - 16)}px`;
+    pop.style.top = `${fitBeside ? (aboveAnchor ? aboveBottom - pop.offsetHeight : belowTop) : minTop}px`;
+    pop.style.left = `${Math.max(minLeft, Math.min(r.left, left + width - pop.offsetWidth - 8))}px`;
   }
   const anchorOf = (o) => anchor(o.scope, o.key);
+  let placementFrame = 0;
+  function schedulePlacement() {
+    if (pop.hidden || placementFrame) return;
+    placementFrame = requestAnimationFrame(() => {
+      placementFrame = 0;
+      const trigger = openPop && anchorOf(openPop);
+      if (trigger && !pop.hidden) placePop(trigger);
+    });
+  }
+  window.addEventListener("scroll", schedulePlacement, { passive: true });
+  window.visualViewport?.addEventListener("scroll", schedulePlacement);
+  window.visualViewport?.addEventListener("resize", schedulePlacement);
   function closePop() {
     const o = openPop, active = document.activeElement;
     const refocus = o && (pop.contains(active) || active === document.body);
@@ -74,13 +99,13 @@ export function createConditionPicker({ sentence, view, keyName, label, anchor, 
     const kept = drawn === openPop ? controls() : null;
     if (openPop.key == null) {
       const free = dims(openPop.scope).filter((d) => !shownKeys(openPop.scope).includes(d.key));
-      pop.innerHTML = `<ul class="addlist" role="menu">${free.map((d) => `<li><button role="menuitem" data-add="${esc(d.key)}">${esc(keyName(d.key))}</button></li>`).join("")}</ul>`;
+      pop.innerHTML = `<ul class="addlist">${free.map((d) => `<li><button type="button" data-add="${esc(d.key)}">${esc(keyName(d.key))}</button></li>`).join("")}</ul>`;
       pop.setAttribute("aria-label", label(openPop.scope, null));
       pop.hidden = false;
       placePop(anchor);
       drawn = openPop;
       if (kept) restore(kept);
-      else pop.querySelector("button")?.focus();
+      else pop.querySelector("button")?.focus({ preventScroll: true });
       return;
     }
     const d = dim(openPop.key), w = conds(openPop.scope)[d.key];
@@ -103,7 +128,7 @@ export function createConditionPicker({ sentence, view, keyName, label, anchor, 
     sentence.querySelectorAll("[aria-expanded]").forEach((b) => b.setAttribute("aria-expanded", "false"));
     anchorOf(o)?.setAttribute("aria-expanded", "true");
     popover();
-    if (o.key != null) (pop.querySelector("[data-find], [data-lo]") ?? pop.querySelector("button"))?.focus();
+    if (o.key != null) (pop.querySelector("[data-find], [data-lo]") ?? pop.querySelector("button"))?.focus({ preventScroll: true });
     if (o.key != null && dim(o.key)?.kind === "categorical") await loadValues(o);
   }
   async function loadValues(o) {
@@ -120,6 +145,7 @@ export function createConditionPicker({ sentence, view, keyName, label, anchor, 
     if (r.status === "ok") [values, valueMatches, selectedValues] = [r.values, r.matching, r.selected];
     else values = null;
     pop.querySelector(".opts").innerHTML = valueList();
+    schedulePlacement();
     restore(kept);
   }
   const setCondition = (scope, key, w) => {

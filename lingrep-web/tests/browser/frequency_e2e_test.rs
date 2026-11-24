@@ -1483,6 +1483,28 @@ async fn an_entry_profile_previews_without_moving_the_page_and_names_every_value
         after,
         json!({"readout": format!("essay: {essays} occurrences in 2 documents"), "pressed": "true", "table": true})
     );
+    crate::resize(&driver, 390, 844).await?;
+    let year_table = ".fq-chart[data-key=year] details";
+    tap(&format!("{year_table} summary")).await?;
+    let year_button = format!("{year_table} [data-table-col][data-lo='1956']");
+    let fits: bool = driver
+        .execute(
+            "const b = document.querySelector(arguments[0]); \
+             return b && b.getBoundingClientRect().height >= 44;",
+            vec![json!(year_button)],
+        )
+        .await?
+        .convert()?;
+    assert!(fits, "a year row has a 44px touch target");
+    tap(&year_button).await?;
+    wait_for(
+        &driver,
+        "const w = JSON.parse(new URLSearchParams(location.hash.slice(1)).get('w')); \
+         return w.year?.lo === 1956 && w.year?.hi === 1956 && \
+           document.querySelector('.fq-chart[data-key=year] [data-table-col][data-lo=\"1956\"]')?.getAttribute('aria-pressed') === 'true';",
+        "the range selected from the table",
+    )
+    .await?;
     driver
         .cdp()
         .send_raw(
@@ -1587,6 +1609,38 @@ async fn the_condition_picker_keeps_keyboard_focus_and_typed_bounds() -> WebDriv
         |selector: &str| format!("return !!document.activeElement?.matches('{selector}')");
     let result: WebDriverResult<()> = async {
         open(&driver, &format!("{}#pattern=noun", served.base), ROWS).await?;
+        crate::resize(&driver, 390, 360).await?;
+        driver
+            .execute(
+                "const add = document.querySelector('button.add'); \
+                 add.style.cssText = 'position: fixed; bottom: 16px; right: 16px'; add.click();",
+                Vec::new(),
+            )
+            .await?;
+        observed(
+            &driver,
+            "const popup = document.querySelector('.fq-pop'); const r = popup.getBoundingClientRect(); \
+             const add = document.querySelector('button.add'); \
+             return [popup.getAttribute('role'), add.getAttribute('aria-haspopup'), \
+               popup.contains(document.activeElement), \
+               r.top >= 0 && r.bottom <= innerHeight && r.left >= 0 && r.right <= innerWidth, \
+               r.bottom <= add.getBoundingClientRect().top];",
+            json!(["dialog", "dialog", true, true, true]),
+            "the condition list above a bottom-edge trigger",
+        )
+        .await?;
+        driver.action_chain().send_keys(Key::Escape).perform().await?;
+        observed(
+            &driver,
+            "return document.querySelector('.fq-pop').hidden && document.activeElement.matches('button.add')",
+            json!(true),
+            "focus restored to Add condition after Escape",
+        )
+        .await?;
+        driver
+            .execute("document.querySelector('button.add').removeAttribute('style')", Vec::new())
+            .await?;
+        crate::resize(&driver, 1280, 900).await?;
         driver.execute(COUNT_FETCHES, Vec::new()).await?;
         driver
             .execute(
@@ -3126,6 +3180,19 @@ async fn an_exact_value_without_entries_offers_to_clear_the_exact_values() -> We
             names.iter().all(|name| name.as_str().is_some_and(|name| name.ends_with(", exact value"))),
             "{names:?}"
         );
+        crate::resize(&driver, 320, 780).await?;
+        observed(
+            &driver,
+            "const label = document.querySelector('.fq-key label'); \
+             label.firstChild.textContent = 'candidate: lemma (dictionary form) ='; \
+             const right = document.documentElement.clientWidth; \
+             return [...document.querySelectorAll('.fq-key input')].every(input => { \
+               const box = input.getBoundingClientRect(); return box.left >= 0 && box.right <= right; \
+             });",
+            json!(true),
+            "the exact-key inputs fit a 320px viewport with a long field name",
+        )
+        .await?;
         driver
             .find(By::Css(".fq-key input"))
             .await?
@@ -3220,24 +3287,35 @@ async fn select_question_kwic(driver: &WebDriver) -> WebDriverResult<()> {
 }
 
 #[tokio::test]
-async fn question_actions_fit_at_intermediate_widths() -> WebDriverResult<()> {
+async fn question_actions_fit_and_keep_save_available_at_narrow_widths() -> WebDriverResult<()> {
     let Some(driver) = driver().await? else {
         return Ok(());
     };
     let served = serve_entries().await;
     let result: WebDriverResult<()> = async {
         driver.goto(served.base.trim_end_matches("frequencies")).await?;
-        for width in [481, 600] {
+        for width in [320, 390, 481, 600] {
             crate::resize(&driver, width, 550).await?;
             two_frames(&driver).await?;
             let summary = driver.find(By::Css("#question-actions > summary")).await?;
             assert!(summary.is_displayed().await?, "question actions at {width}px");
             summary.click().await?;
+            assert!(driver.find(By::Id("save-question")).await?.is_displayed().await?, "Save question at {width}px");
             observed(&driver,
                 "const nav = document.querySelector('#question-actions nav').getBoundingClientRect(); \
                  return nav.width > 0 && nav.left >= 0 && nav.right <= document.documentElement.clientWidth",
                 json!(true), "question actions fit the viewport").await?;
             driver.find(By::Id("language")).await?.click().await?;
+            observed(
+                &driver,
+                "return [document.documentElement.lang, document.querySelector('#question-actions nav').getAttribute('aria-label'), document.querySelector('#token-lab').getAttribute('aria-label')]",
+                if width == 320 || width == 481 {
+                    json!(["ja", "問いのファイル操作", "トークンの属性"])
+                } else {
+                    json!(["en", "Question document", "Token attributes"])
+                },
+                "localized action and token names",
+            ).await?;
             summary.click().await?;
         }
         crate::resize(&driver, 1100, 700).await?;
@@ -3245,6 +3323,73 @@ async fn question_actions_fit_at_intermediate_widths() -> WebDriverResult<()> {
         assert!(driver.find(By::Id("language")).await?.is_displayed().await?);
         assert_no_page_errors(&driver).await
     }.await;
+    driver.quit().await?;
+    served.server.abort();
+    result
+}
+
+#[tokio::test]
+async fn sorted_question_pages_retry_and_keep_the_sort_when_inspecting() -> WebDriverResult<()> {
+    let Some(driver) = driver().await? else {
+        return Ok(());
+    };
+    let served = serve_entries().await;
+    let result: WebDriverResult<()> = async {
+        driver.goto(limited_question(&served.base, ENTRY_CATALOG, true)).await?;
+        select_question_kwic(&driver).await?;
+        wait_for(
+            &driver,
+            "return document.querySelector('.kwic-list[aria-busy=false]')?.querySelectorAll('.kwic-row').length === 20",
+            "the first concordance page",
+        ).await?;
+        driver.execute(
+            "const fetchPage = window.fetch; let fail = true; \
+             window.fetch = (url, options) => { \
+               if (fail && String(url).includes('/sorted-documents?')) { \
+                 fail = false; \
+                 return Promise.resolve(new Response(JSON.stringify({error:'sort unavailable'}), {status:503})); \
+               } \
+               return fetchPage(url, options); \
+             }; \
+             const select = document.querySelector('.kwic-sort select'); \
+             select.value = 'match'; select.dispatchEvent(new Event('change', {bubbles:true}));",
+            Vec::new(),
+        ).await?;
+        wait_for(
+            &driver,
+            "return !!document.querySelector('.kwic-list[aria-busy=false]') && \
+             !!document.querySelector('.document-pages:not([hidden]) [data-page-retry]:not([hidden])')",
+            "a settled sort error with a retry control",
+        ).await?;
+        driver.find(By::Css("[data-page-retry]")).await?.click().await?;
+        wait_for(
+            &driver,
+            "const rows = [...document.querySelectorAll('.kwic-list[aria-busy=false] .kwic-row')]; \
+             return rows.length === 20 && rows.every(row => row.querySelector('mark').textContent === '猫')",
+            "the first page in Japanese collation order",
+        ).await?;
+        driver.find(By::Css("[data-page-step='1']")).await?.click().await?;
+        wait_for(
+            &driver,
+            "return document.querySelector('.kwic-list[aria-busy=false] .kwic-row .line-number')?.textContent === '21'",
+            "the second sorted page",
+        ).await?;
+        driver.find(By::Css(".kwic-list .kwic-row")).await?.click().await?;
+        wait_for(
+            &driver,
+            "return !document.querySelector('#token-lab').hidden",
+            "inspection of the sorted row",
+        ).await?;
+        observed(
+            &driver,
+            "const view = JSON.parse(new URLSearchParams(location.hash.slice(1)).get('view')); \
+             return [view.returnTo.sort, view.returnTo.after, document.querySelector('.kwic-sort select').value]",
+            json!(["match", 20, "match"]),
+            "the sorted position in the inspection URL",
+        ).await?;
+        assert_no_page_errors(&driver).await
+    }
+    .await;
     driver.quit().await?;
     served.server.abort();
     result

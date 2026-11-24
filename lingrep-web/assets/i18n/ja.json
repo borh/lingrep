@@ -111,6 +111,7 @@
   "frequency.no_value": "値なし",
   "frequency.more_values": "ほか{n}種",
   "frequency.as_table": "表",
+  "frequency.range_table": "表で範囲を絞り込む",
   "frequency.head_value": "値",
   "frequency.lines": "用例",
   "frequency.lines_shown": "{of}件中{n}件",

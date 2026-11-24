@@ -113,11 +113,11 @@ export function mountCompare(root) {
       return {
         name: keyName(key),
         any: isAny(d, w),
-        html: blank(keyName(key), `<button class="pick" data-scope="${scope}" data-key="${esc(key)}" aria-haspopup="dialog" aria-expanded="${isOpen(scope, key)}">${esc(conditionText(d, w, keyName(key)))}</button>`),
+        html: blank(keyName(key), `<button class="pick" data-scope="${scope}" data-key="${esc(key)}" aria-haspopup="dialog" aria-controls="condition-picker" aria-expanded="${isOpen(scope, key)}">${esc(conditionText(d, w, keyName(key)))}</button>`),
       };
     });
     const free = shownKeys(scope).length < dims().length;
-    const add = free ? `<button class="add" data-scope="${scope}" data-add aria-haspopup="menu" aria-expanded="${isOpen(scope, null)}" aria-label="${esc(t("compare.add_label", { scope: t(ROLE[scope]) }))}">${esc(t("views.add"))}</button>` : "";
+    const add = free ? `<button class="add" data-scope="${scope}" data-add aria-haspopup="dialog" aria-controls="condition-picker" aria-expanded="${isOpen(scope, null)}" aria-label="${esc(t("compare.add_label", { scope: t(ROLE[scope]) }))}">${esc(t("views.add"))}</button>` : "";
     return `<span class="cmp-scope" data-scope="${scope}">${swatch}${scopeDocuments(items) || esc(t("compare.scope_all"))}${add}</span>`;
   }
 

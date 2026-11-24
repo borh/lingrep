@@ -226,12 +226,12 @@
   box-shadow: 0 12px 32px -18px var(--fq-shadow);
   padding: 0.6rem;
   width: min(28rem, calc(100vw - 16px));
-  max-height: 62vh;
   overflow: auto;
+  overscroll-behavior: contain;
   font: 13px/1.4 var(--font-cjk);
 }
 .fq-pop[hidden] { display: none; }
-.fq-pop .head { display: flex; gap: 1rem; align-items: baseline; justify-content: space-between; margin: 0 0 0.45rem; }
+.fq-pop .head { display: flex; flex-wrap: wrap; gap: 0.3rem 1rem; align-items: baseline; justify-content: space-between; margin: 0 0 0.45rem; }
 .fq-pop .mode { display: inline-flex; border: 1px solid var(--fq-rule); }
 .fq-pop .mode button { all: unset; cursor: pointer; padding: 0.15rem 0.55rem; font-size: 12px; }
 .fq-pop .mode button[aria-pressed="true"] { background: var(--fq-accent); color: var(--fq-on-accent); }
@@ -242,7 +242,7 @@
   text-decoration: underline;
   text-underline-offset: 0.2em;
   font-size: 12px;
-  white-space: nowrap;
+  overflow-wrap: anywhere;
 }
 .fq-pop .find {
   display: block;
@@ -386,6 +386,28 @@
 .fq-chart details td, .fq-chart details th { padding: 0.15rem 0.3rem; border-bottom: 1px solid var(--fq-rule); text-align: left; overflow-wrap: anywhere; }
 .fq-chart details th { font-weight: 500; color: var(--fq-soft); }
 .fq-chart details .r { text-align: right; font-variant-numeric: tabular-nums; white-space: nowrap; }
+.fq-chart [data-table-col] {
+  border: 0;
+  background: transparent;
+  color: var(--fq-accent);
+  cursor: pointer;
+  min-block-size: 24px;
+  inline-size: 100%;
+  overflow-wrap: anywhere;
+  padding: 0;
+  text-align: start;
+  text-decoration: underline;
+  text-underline-offset: 0.2em;
+}
+.fq-chart [data-table-col]:is(:hover, [aria-pressed="true"]) { background: var(--fq-accent-wash); }
+.fq-chart [data-table-col][aria-pressed="true"] { font-weight: 600; }
+@media (max-width: 40rem), (pointer: coarse) {
+  .fq-chart summary { min-block-size: 44px; align-content: center; }
+  .fq-chart [data-table-col] { min-block-size: 44px; }
+  .fq-pop .addlist button, .fq-pop .mode button, .fq-pop .any,
+  .fq-pop .opts label { min-block-size: 44px; }
+  .fq-pop .find, .fq-pop .range input { min-block-size: 44px; font-size: 16px; }
+}
 .fq-entry.previewing .fq-chart-body, .fq-entry.previewing [data-e="figures"], .fq-entry.previewing .fq-kwic { opacity: 0.78; }
 
 .fq-lines h3 { margin: 1.2rem 0 0.3rem; font: 500 13px/1.4 var(--font-sans); }
@@ -420,12 +442,14 @@
 
 .fq-key { display: flex; flex-wrap: wrap; align-items: baseline; gap: 0.4rem 1rem; margin-top: 0.6rem; font-size: 0.95rem; }
 .fq-key-label { color: var(--fq-soft); }
-.fq-key label { display: inline-flex; align-items: baseline; gap: 0.35rem; white-space: nowrap; }
+.fq-key label { display: inline-flex; flex-wrap: wrap; align-items: baseline; gap: 0.2rem 0.35rem; max-inline-size: 100%; }
+.fq-key label > span { min-inline-size: 0; overflow-wrap: anywhere; }
 .fq-key input {
   font-family: var(--font-cjk);
   font-weight: 600;
   line-height: 1.3;
   width: 7em;
+  max-inline-size: 100%;
   min-height: 0;
   color: var(--fq-accent);
   background: transparent linear-gradient(var(--fq-accent), var(--fq-accent)) 0 100% / 100% 1.5px no-repeat;
@@ -435,6 +459,10 @@
 }
 .fq-key input::placeholder { color: var(--fq-soft); font-weight: 400; }
 .fq-key input:hover { background-color: var(--fq-accent-wash); }
+@media (max-width: 40rem) {
+  .fq-key label { flex-basis: 100%; }
+  .fq-key input { min-block-size: 44px; font-size: 16px; }
+}
 .fq-machinery { margin: 0.5rem 0 0; }
 .fq-machinery > summary { cursor: pointer; width: fit-content; font: 14px/1.6 var(--font-sans); color: var(--fq-soft); }
 .fq-machinery > summary:hover { color: var(--text); }

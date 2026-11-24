@@ -265,7 +265,7 @@ export function mountFrequency(root) {
       return {
         name: keyName(key),
         any: isAny(d, w),
-        html: blank(role(keyName(key), key), `<button class="pick" data-b="${esc(key)}" aria-haspopup="dialog" aria-expanded="${picker.isOpen(key)}">${esc(conditionText(d, w, keyName(key)))}</button>`),
+        html: blank(role(keyName(key), key), `<button class="pick" data-b="${esc(key)}" aria-haspopup="dialog" aria-controls="condition-picker" aria-expanded="${picker.isOpen(key)}">${esc(conditionText(d, w, keyName(key)))}</button>`),
       };
     });
     const roles = { pattern: t("views.role_pattern"), catalog: t("views.role_catalog"), order: t("frequency.role_order"), filter: t("frequency.role_filter") };
@@ -280,7 +280,7 @@ export function mountFrequency(root) {
         order: blank(role(roles.order), select("sort", roles.order, SORTS.map(([value, key]) => [value, t(key)]), s.sort)),
         filter: blank(role(roles.filter, "filter"), `<input data-b="q" type="search" placeholder="${esc(t("frequency.placeholder"))}" aria-label="${esc(roles.filter)}" value="${esc(s.q)}">`),
         stop: fullStop(),
-      }) + keyFieldsHtml() + (free ? `<button class="add" data-b="add" aria-haspopup="menu" aria-expanded="${picker.isOpen(null)}" aria-label="${esc(t("frequency.add_label"))}">${esc(t("views.add"))}</button>` : "")
+      }) + keyFieldsHtml() + (free ? `<button class="add" data-b="add" aria-haspopup="dialog" aria-controls="condition-picker" aria-expanded="${picker.isOpen(null)}" aria-label="${esc(t("frequency.add_label"))}">${esc(t("views.add"))}</button>` : "")
     );
   }
 
@@ -291,7 +291,7 @@ export function mountFrequency(root) {
     const fields = keyFields();
     if (fields.length < 2) return "";
     const label = t("frequency.key_equals");
-    return `<span class="fq-key" role="group" aria-label="${esc(label)}"><span class="fq-key-label">${esc(label)}</span>${fields.map((f) => `<label title="${esc(f)}">${esc(keyFieldLabel(f))} = <input data-k="${esc(f)}" aria-label="${esc(t("frequency.key_field", { field: keyFieldLabel(f) }))}" type="search" size="6" value="${esc(s.k[f] ?? "")}" placeholder="${esc(t("frequency.key_any"))}"></label>`).join("")}</span>`;
+    return `<span class="fq-key" role="group" aria-label="${esc(label)}"><span class="fq-key-label">${esc(label)}</span>${fields.map((f) => `<label title="${esc(f)}"><span>${esc(keyFieldLabel(f))} =</span><input data-k="${esc(f)}" aria-label="${esc(t("frequency.key_field", { field: keyFieldLabel(f) }))}" type="search" size="6" value="${esc(s.k[f] ?? "")}" placeholder="${esc(t("frequency.key_any"))}"></label>`).join("")}</span>`;
   }
 
   function renderSentence() {
@@ -575,12 +575,13 @@ export function mountFrequency(root) {
     const more = rows.more ? `<p class="fq-more-values">${c.distinct > c.bars.length ? esc(t("frequency.more_values", { n: num(c.distinct - c.bars.length) })) : "&nbsp;"}</p>` : "";
     return `<ol class="fq-bars" style="--lw:${Math.min(rows.lw, 14).toFixed(1)}em">${all.map(bar).join("")}${pad}</ol>${more}`;
   }
+  const insideRange = (w, { lo, hi }) =>
+    w?.m === "range" && (w.lo != null || w.hi != null)
+    && (w.lo == null || +lo >= w.lo) && (w.hi == null || +hi <= w.hi);
   function columnsHtml(c) {
     const d = dim(c.key), w = s.w[c.key], max = Math.max(1, ...c.columns.map((x) => x.count));
-    const ranged = w?.m === "range" && (w.lo != null || w.hi != null);
-    const inside = (x) => ranged && (w.lo == null || +x.lo >= w.lo) && (w.hi == null || +x.hi <= w.hi);
     const columns = c.columns
-      .map((x) => (x.lo == null ? '<span class="gap"></span>' : `<button data-col data-lo="${esc(x.lo)}" data-hi="${esc(x.hi)}" aria-pressed="${inside(x)}" aria-label="${esc(readoutText(span(x), x))}"><i style="height:${((x.count / max) * 100).toFixed(1)}%"></i></button>`))
+      .map((x) => (x.lo == null ? '<span class="gap"></span>' : `<button data-col data-lo="${esc(x.lo)}" data-hi="${esc(x.hi)}" aria-pressed="${insideRange(w, x)}" aria-label="${esc(readoutText(span(x), x))}"><i style="height:${((x.count / max) * 100).toFixed(1)}%"></i></button>`))
       .join("");
     const none = c.none ? readoutText(t("frequency.no_value"), c.none) : "";
     return `<div class="fq-columns${c.columns.length > 60 ? " dense" : ""}">${columns}</div><div class="fq-axis" aria-hidden="true"><span>${d ? tick(d.min) : ""}</span><span>${d ? tick(d.max) : ""}</span></div><p class="fq-none">${none ? esc(none) : "&nbsp;"}</p>`;
@@ -588,14 +589,17 @@ export function mountFrequency(root) {
   const tick = (n) => (Number.isInteger(n) && Math.abs(n) < 10000 ? String(n) : num(n));
   const bodyHtml = (c) => (c.kind === "categorical" ? barsHtml(c) : columnsHtml(c));
   function chartTable(c) {
-    const rows =
-      c.kind === "categorical"
-        ? barsOf(c).map((b) => [valueName(b.value), b.count, b.works])
-        : [...c.columns.filter((x) => x.lo != null && x.count).map((x) => [span(x), x.count, x.works]), ...(c.none ? [[t("frequency.no_value"), c.none.count, c.none.works]] : [])];
-    return `<table><thead><tr>${TABLE_HEADS.map((h, i) => `<th${i ? ' class="r"' : ""}>${esc(t(h))}</th>`).join("")}</tr></thead><tbody>${rows.map(([v, n, d]) => `<tr><td>${esc(v)}</td><td class="r">${num(n)}</td><td class="r">${num(d)}</td></tr>`).join("")}</tbody></table>`;
+    const w = s.w[c.key];
+    const row = (label, { count, works }) => `<tr><td>${label}</td><td class="r">${num(count)}</td><td class="r">${num(works)}</td></tr>`;
+    const rows = c.kind === "categorical"
+      ? barsOf(c).map((b) => row(esc(valueName(b.value)), b))
+      : c.columns.filter((x) => x.lo != null).map((x) =>
+        row(`<button type="button" data-table-col data-lo="${esc(x.lo)}" data-hi="${esc(x.hi)}" aria-pressed="${insideRange(w, x)}" aria-label="${esc(readoutText(span(x), x))}">${esc(span(x))}</button>`, x),
+      ).concat(c.none ? [row(esc(t("frequency.no_value")), c.none)] : []);
+    return `<table><thead><tr>${TABLE_HEADS.map((h, i) => `<th${i ? ' class="r"' : ""}>${esc(t(h))}</th>`).join("")}</tr></thead><tbody>${rows.join("")}</tbody></table>`;
   }
   const chartHtml = (c) =>
-    `<figure class="fq-chart" data-key="${esc(c.key)}"><figcaption>${esc(keyName(c.key))}</figcaption>${dim(c.key)?.list ? `<p class="fq-multivalue-note">${esc(t("frequency.multivalue_note"))}</p>` : ""}<p class="fq-readout" data-readout aria-live="polite">&nbsp;</p><div class="fq-chart-body" data-body>${bodyHtml(c)}</div><details${opened.has(c.key) ? " open" : ""}><summary>${esc(t("frequency.as_table"))}</summary>${chartTable(c)}</details></figure>`;
+    `<figure class="fq-chart" data-key="${esc(c.key)}"><figcaption>${esc(keyName(c.key))}</figcaption>${dim(c.key)?.list ? `<p class="fq-multivalue-note">${esc(t("frequency.multivalue_note"))}</p>` : ""}<p class="fq-readout" data-readout aria-live="polite">&nbsp;</p><div class="fq-chart-body" data-body>${bodyHtml(c)}</div><details${opened.has(c.key) ? " open" : ""}><summary>${esc(t(c.kind === "range" ? "frequency.range_table" : "frequency.as_table"))}</summary>${chartTable(c)}</details></figure>`;
 
   const lineHtml = (st) => {
     const named = documentNames(st.lines);
@@ -657,8 +661,8 @@ export function mountFrequency(root) {
       return;
     }
     const back = new URLSearchParams(stateEntries({ ...s, entry: null }));
-    const focused = document.activeElement?.closest?.("[data-bar], [data-col]");
-    const at = focused && entryEl.contains(focused) ? [focused.closest(".fq-chart").dataset.key, focused.dataset.v ?? null, focused.dataset.lo ?? null] : null;
+    const focused = document.activeElement?.closest?.("[data-bar], [data-col], [data-table-col]");
+    const at = focused && entryEl.contains(focused) ? [focused.closest(".fq-chart").dataset.key, focused.dataset.v ?? null, focused.dataset.lo ?? null, focused.hasAttribute("data-table-col")] : null;
     plan = planOf(profile);
     const names = keyNames(profile.group);
     entryEl.innerHTML = `<a class="fq-back" href="#${esc(back)}" data-e="back"><span aria-hidden="true">← </span>${phrase("frequency.back", { pattern: `<b>${esc(s.pattern)}</b>`, catalog: esc(s.catalog) })}</a>
@@ -670,7 +674,7 @@ export function mountFrequency(root) {
     showReadout();
     if (at) {
       const chart = entryEl.querySelector(`.fq-chart[data-key="${CSS.escape(at[0])}"]`);
-      const sel = at[1] != null ? `[data-bar][data-v="${CSS.escape(at[1])}"]` : `[data-col][data-lo="${CSS.escape(at[2])}"]`;
+      const sel = at[1] != null ? `[data-bar][data-v="${CSS.escape(at[1])}"]` : `[${at[3] ? "data-table-col" : "data-col"}][data-lo="${CSS.escape(at[2])}"]`;
       chart?.querySelector(sel)?.focus({ preventScroll: true });
     }
   }
@@ -914,7 +918,7 @@ export function mountFrequency(root) {
       openReader(line);
       return;
     }
-    const b = pointed(e);
+    const b = pointed(e) ?? e.target.closest?.("[data-table-col]");
     if (b) remember(b);
     if (!b || b.hasAttribute("data-none")) return;
     const key = b.closest(".fq-chart").dataset.key, w = s.w[key];

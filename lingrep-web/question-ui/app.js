@@ -35,7 +35,6 @@ focusedSentence.lang = 'ja';
 focusedSentence.tabIndex = -1;
 const exampleSteps = document.createElement('nav');
 exampleSteps.className = 'example-steps';
-exampleSteps.setAttribute('aria-label', 'Examples');
 exampleSteps.innerHTML = '<button type="button" data-example-step="-1"></button><button type="button" data-example-step="1"></button>';
 const tokenDetails = document.createElement('details');
 tokenDetails.id = 'token-details';
@@ -47,7 +46,7 @@ for (const element of [...tokenLab.children].slice(1))
     if (element !== dependencyPanel)
         tokenDetails.append(element);
 tokenLab.append(focusedSentence, exampleSteps, dependencyPanel, tokenDetails);
-function localizeExample() { tokenSummary.textContent = locale === 'ja' ? 'トークンを調べる' : 'Inspect tokens'; $('[data-example-step="-1"]', exampleSteps).textContent = locale === 'ja' ? '前の用例' : 'Previous example'; $('[data-example-step="1"]', exampleSteps).textContent = locale === 'ja' ? '次の用例' : 'Next example'; }
+function localizeExample() { exampleSteps.setAttribute('aria-label', locale === 'ja' ? '用例' : 'Examples'); tokenSummary.textContent = locale === 'ja' ? 'トークンを調べる' : 'Inspect tokens'; $('[data-example-step="-1"]', exampleSteps).textContent = locale === 'ja' ? '前の用例' : 'Previous example'; $('[data-example-step="1"]', exampleSteps).textContent = locale === 'ja' ? '次の用例' : 'Next example'; }
 const readerPanel = $('#inspector');
 const readerStatus = document.createElement('p');
 readerStatus.className = 'reader-status';
@@ -468,6 +467,12 @@ function translate() {
     $('#metadata-field').setAttribute('aria-label', locale === 'ja' ? 'メタデータの項目' : 'Metadata field');
     $('#results').setAttribute('aria-label', locale === 'ja' ? '検索結果' : 'Search results');
     $('.search-status').setAttribute('aria-label', locale === 'ja' ? '今回の検索' : 'Current search');
+    $('#question-actions nav').setAttribute('aria-label', locale === 'ja' ? '問いのファイル操作' : 'Question document');
+    $('.query').setAttribute('aria-label', locale === 'ja' ? '研究の問い' : 'Research question');
+    $('#metadata-picker').setAttribute('aria-label', locale === 'ja' ? '文書のメタデータ' : 'Document metadata');
+    tokenLab.setAttribute('aria-label', locale === 'ja' ? 'トークンの属性' : 'Token attributes');
+    $('#saved-searches').setAttribute('aria-label', locale === 'ja' ? '保存した検索' : 'Saved searches');
+    $('.reader-document-nav').setAttribute('aria-label', locale === 'ja' ? '文書の移動' : 'Document navigation');
     updateCorpus();
     updateDraft();
     render(true);
@@ -827,6 +832,7 @@ function render(force = false) {
     const ids = shown.map(run => run.id);
     for (const [id, panel] of panels) {
         if (!ids.includes(id)) {
+            clearSortedView(id);
             if (panel.contains(readerPanel))
                 document.body.append(readerPanel);
             if (panel.contains(tokenLab))
@@ -1010,7 +1016,7 @@ function bindResultModes(panel, id) {
             preferredLayout = layout;
             const active = inspecting?.run.id === id && !tokenLab.hidden ? inspecting.row : null;
             const top = active ? tokenLab.getBoundingClientRect().top : null;
-            const parent = { ...concordanceFor(run), layout, document: null, scopeDocument: null, after: -1,
+            const parent = { ...concordanceFor(run), layout, sort: undefined, document: null, scopeDocument: null, after: -1,
                 ...(layout === 'works' ? { workContext: preferredWorkContext } : {}),
             };
             const location = active ? { ...hitLocation(run, active, 'example'), returnTo: parent } : parent;
@@ -1020,7 +1026,11 @@ function bindResultModes(panel, id) {
                 }
             });
         });
-    $('.kwic-sort select', panel).addEventListener('change', () => renderLines(panel, runFor(id)));
+    $('.kwic-sort select', panel).addEventListener('change', event => {
+        const run = runFor(id), value = event.currentTarget.value;
+        const sort = value === 'original' ? undefined : value;
+        void navigateView(hrefFor(run, { ...concordanceFor(run), sort, after: sort ? 0 : -1 }), true);
+    });
     $('[data-work-context]', panel).addEventListener('change', event => {
         const input = event.currentTarget;
         if (!input.checkValidity()) {
@@ -1068,40 +1078,41 @@ function renderResultModes(panel, run, grouped) {
     }
     const sort = $('.kwic-sort', modes);
     sort.hidden = grouped;
+    $('select', sort).value = resultOrders.get(run.id) ?? 'original';
     setConcordanceText($('span', sort), locale === 'ja' ? '並べ替え' : 'Sort');
     const orders = locale === 'ja' ? ['出現順', '左の文脈', '一致箇所', '右の文脈'] : ['Corpus order', 'Left context', 'Match', 'Right context'];
     sort.querySelectorAll('option').forEach((option, index) => setConcordanceText(option, orders[index]));
 }
-// A sort covers every match of the definition, up to this many rows.
-const SORT_ROW_CAP = 2000;
-const sortedRows = new WeakMap();
-const sortLoads = new WeakMap();
-async function loadSortedRows(panel, run, pattern, view, key) {
-    sortLoads.set(view, key);
-    const rows = [];
-    let after = -1, total = 0;
-    try {
-        while (rows.length < SORT_ROW_CAP) {
-            const query = new URLSearchParams({ pattern, limit: '200', q: view.query, continuous: view.scopeDocument == null ? '1' : '0', after: String(after) });
-            if (view.scopeDocument != null)
-                query.set('document', String(view.scopeDocument));
-            const data = await request(`api/questions/runs/${run.id}/documents?${query}`);
-            if (sortLoads.get(view) !== key)
-                return;
-            rows.push(...data.rows);
-            total = data.matches_total;
-            if (data.next == null || !data.rows.length)
-                break;
-            after = data.next;
-        }
-        sortedRows.set(view, { key, rows: rows.slice(0, SORT_ROW_CAP), total });
-    }
-    catch (error) {
-        view.error = errorMessage(error);
-    }
-    sortLoads.delete(view);
-    if (panel.isConnected)
-        renderLines(panel, runFor(run.id));
+const resultOrders = new Map();
+const sortedViews = new Map();
+function clearSortedView(id) {
+    sortedViews.get(id)?.controller.abort();
+    sortedViews.delete(id);
+}
+function requestSortedPage(run, pattern, order, document, start, limit, signal) {
+    const params = new URLSearchParams({ pattern, order, start: String(start), limit: String(limit) });
+    if (document != null)
+        params.set('document', String(document));
+    return request(`api/questions/runs/${run.id}/sorted-documents?${params}`, { signal });
+}
+function loadSortedPage(run, pattern, order, document, start, force = false) {
+    const limit = controls.state.lines, previous = sortedViews.get(run.id);
+    if (!force && previous?.pattern === pattern && previous.document === document && previous.order === order
+        && previous.limit === limit && (previous.start === start || previous.page?.start === start))
+        return previous;
+    clearSortedView(run.id);
+    const controller = new AbortController();
+    const view = { pattern, document, order, start, limit, controller, task: null, page: null, error: null };
+    sortedViews.set(run.id, view);
+    view.task = requestSortedPage(run, pattern, order, document, start, limit, controller.signal)
+        .then(page => { view.page = page; }, error => { view.error = errorMessage(error); })
+        .finally(() => {
+        view.task = null;
+        const panel = panels.get(run.id);
+        if (panel?.isConnected && sortedViews.get(run.id) === view)
+            renderLines(panel, runFor(run.id));
+    });
+    return view;
 }
 async function loadDocumentPage(panel, run, pattern, document = null, after = -1, documentsOffset = null, scopeDocument = documentView(run, pattern).scopeDocument) {
     const view = documentView(run, pattern), epoch = ++view.epoch, limit = controls.state.lines;
@@ -1188,20 +1199,23 @@ function renderDocumentNavigation(panel, run, pattern, view) {
     const retry = $('[data-document-retry]', nav);
     retry.hidden = !view.error;
     retry.textContent = locale === 'ja' ? 'もう一度読み込む' : 'Retry loading documents';
-    if (!paging.children.length) {
+    renderPageNavigation(panel, run, view.previousAfter, view.next, view.loading, view.error, () => retryDocumentPage(panel, run, pattern, view));
+}
+function renderPageNavigation(panel, run, previous, next, busy, error, retry) {
+    const paging = $('.document-pages', panel);
+    if (!paging.children.length)
         paging.innerHTML = '<a data-view data-page-step="-1"></a><a data-view data-page-step="1"></a><button type="button" data-page-retry hidden></button>';
-        $('[data-page-retry]', paging).addEventListener('click', () => retryDocumentPage(panel, run, pattern, view));
-    }
-    paging.hidden = !view.error && view.previousAfter == null && view.next == null;
+    paging.hidden = !error && previous == null && next == null;
     for (const link of paging.querySelectorAll('[data-page-step]')) {
-        const direction = Number(link.dataset.pageStep), after = direction < 0 ? view.previousAfter : view.next;
+        const direction = Number(link.dataset.pageStep), after = direction < 0 ? previous : next;
         const lines = count(controls.state.lines);
         link.textContent = locale === 'ja' ? (direction < 0 ? `前の${lines}件` : `次の${lines}件`) : (direction < 0 ? `Previous ${lines}` : `Next ${lines}`);
-        updateNavigationLink(link, after == null ? null : hrefFor(run, { ...concordanceFor(run), after }), view.loading);
+        updateNavigationLink(link, after == null ? null : hrefFor(run, { ...concordanceFor(run), after }), busy);
     }
-    const pageRetry = $('[data-page-retry]', paging);
-    pageRetry.hidden = !view.error;
-    pageRetry.textContent = locale === 'ja' ? '用例を再読み込み' : 'Retry loading examples';
+    const button = $('[data-page-retry]', paging);
+    button.hidden = !error;
+    button.textContent = locale === 'ja' ? '用例を再読み込み' : 'Retry loading examples';
+    button.onclick = retry;
 }
 function updateNavigationLink(link, href, busy) {
     if (href) {
@@ -1507,6 +1521,7 @@ function renderLines(panel, run, _force = false) {
     panel.classList.toggle('work-results', grouped);
     list.classList.toggle('work-sample-list', grouped);
     $('.work-pages', panel).hidden = true;
+    $('.document-pages', panel).hidden = true;
     renderResultModes(panel, run, grouped);
     if (entryShown(run)) {
         renderEntryList(panel, run);
@@ -1521,57 +1536,58 @@ function renderLines(panel, run, _force = false) {
             renderWorkLines(panel, run, list, pattern, work);
         return;
     }
-    const sort = $('.kwic-sort select', panel).value;
-    const sortKeyId = `${view.query}\n${view.scopeDocument ?? ''}`;
-    const sortedMode = sort !== 'original' && run.phase === 'complete' && !isReplay;
-    if (sortedMode && sortedRows.get(view)?.key !== sortKeyId && sortLoads.get(view) !== sortKeyId && !view.error)
-        void loadSortedRows(panel, run, pattern, view, sortKeyId);
-    const sortedAll = sortedMode && sortedRows.get(view)?.key === sortKeyId ? sortedRows.get(view) : null;
-    if (!isReplay && run.phase === 'complete' && !view.loading && (!view.error && (view.documents === null || view.limit !== controls.state.lines) || view.error && view.request?.limit !== controls.state.lines)) {
-        void loadDocumentPage(panel, run, pattern, view.document, view.after);
-        return;
+    const order = run.phase === 'complete' && !isReplay ? resultOrders.get(run.id) : undefined;
+    const sortedMode = order !== undefined;
+    let sorted;
+    if (order) {
+        const previous = sortedViews.get(run.id);
+        const start = previous?.pattern === pattern && previous.order === order && previous.document === view.scopeDocument ? previous.start : 0;
+        sorted = loadSortedPage(run, pattern, order, view.scopeDocument, start);
+        $('.document-nav', panel).hidden = true;
+        const page = sorted.page;
+        renderPageNavigation(panel, run, page?.previous ?? null, page?.next ?? null, sorted.task !== null, sorted.error, () => {
+            loadSortedPage(run, pattern, order, view.scopeDocument, start, true);
+            renderLines(panel, run);
+        });
+    }
+    else {
+        if (!isReplay && run.phase === 'complete' && !view.loading && (!view.error && (view.documents === null || view.limit !== controls.state.lines) || view.error && view.request?.limit !== controls.state.lines)) {
+            void loadDocumentPage(panel, run, pattern, view.document, view.after);
+            return;
+        }
+        renderDocumentNavigation(panel, run, pattern, view);
     }
     $('.line-controls', panel).hidden = false;
-    renderDocumentNavigation(panel, run, pattern, view);
-    if (sortedMode) {
-        $('.document-nav', panel).hidden = true;
-        $('.document-pages', panel).hidden = true;
-    }
-    const pageReady = !isReplay && run.phase === 'complete' && view.documents !== null;
+    const sortedPage = sorted?.page;
+    const pageReady = sortedMode ? sortedPage != null : !isReplay && run.phase === 'complete' && view.documents !== null;
     const prefixVisible = !view.request || view.request.after === -1 && view.request.document == null && view.request.scopeDocument == null;
-    const allRows = sortedAll ? sortedAll.rows : pageReady ? view.rows : prefixVisible ? (run.rows[pattern] ?? []) : [];
+    const allRows = sortedMode ? (sortedPage?.rows ?? []) : pageReady ? view.rows : prefixVisible ? (run.rows[pattern] ?? []) : [];
     const filter = filters.get(run.id) ?? '', limit = controls.state.lines, context = controls.state.context;
     const landmarks = new Map(view.landmarks.map(document => [document.ordinal, document]));
-    const rows = allRows.filter(row => lineText(row).includes(filter)).slice(0, sortedAll ? SORT_ROW_CAP : limit);
-    if (sortedAll) {
-        const collator = new Intl.Collator('ja');
-        const sortKey = (row) => sort === 'left' ? words([...(row.left_context ?? [])].reverse()) : sort === 'right' ? words(row.right_context) : row.surface;
-        const keys = new Map(rows.map(row => [row, sortKey(row)]));
-        rows.sort((a, b) => collator.compare(keys.get(a), keys.get(b)) || a.sequence - b.sequence);
-    }
+    const rows = allRows.filter(row => !filter || lineText(row).includes(filter)).slice(0, limit);
     const shownCounts = new Map();
     for (const row of rows)
         shownCounts.set(row.document_ordinal, (shownCounts.get(row.document_ordinal) ?? 0) + 1);
-    const total = sortedAll ? sortedAll.total : pageReady ? view.matchesTotal : run.counts[pattern] ?? 0, shownLines = sortedAll ? allRows.length : Math.min(allRows.length, limit);
+    const total = sortedMode ? (sortedPage?.matches_total ?? run.counts[pattern] ?? 0) : pageReady ? view.matchesTotal : run.counts[pattern] ?? 0;
+    const shownLines = Math.min(allRows.length, limit), start = sortedMode ? (sortedPage?.start ?? 0) : view.start;
+    const busy = sortedMode ? sorted?.task != null : view.loading, error = sortedMode ? sorted?.error : view.error;
     {
         const input = $('.line-controls input', panel), hint = locale === 'ja' ? `表示中の${count(shownLines)}件から絞り込む` : `Filter the ${count(shownLines)} lines shown`;
         input.placeholder = hint;
         input.setAttribute('aria-label', hint);
         $('.line-controls span', panel).textContent = run.phase === 'complete' && !isReplay
             ? filter ? (locale === 'ja' ? `表示中の ${count(shownLines)} 件のうち ${count(rows.length)} 件 · 全 ${count(total)} 件` : `${count(rows.length)} of the ${count(shownLines)} lines shown · ${count(total)} total matches`)
-                : !rows.length ? '' : (locale === 'ja' ? `${count(view.start + 1)}–${count(view.start + rows.length)} 件を表示。` : `Reading ${count(rows.length ? view.start + 1 : 0)}–${count(view.start + rows.length)}.`)
+                : !rows.length ? '' : (locale === 'ja' ? `${count(start + 1)}–${count(start + rows.length)} 件を表示。` : `Reading ${count(rows.length ? start + 1 : 0)}–${count(start + rows.length)}.`)
             : locale === 'ja' ? `${count(total)} 件が見つかりました · ${count(rows.length)} 件を表示` : `${count(rows.length)} shown · ${count(total)} found`;
-        if (sortedAll && !filter)
-            $('.line-controls span', panel).textContent = sortedAll.rows.length < total ? (locale === 'ja' ? `全 ${count(total)} 件のうち最初の ${count(sortedAll.rows.length)} 件を並べ替え` : `Sorted the first ${count(sortedAll.rows.length)} of ${count(total)} matches`) : (locale === 'ja' ? `全 ${count(total)} 件を並べ替え` : `All ${count(total)} matches, sorted`);
-        if (view.loading && !rows.length)
+        if (busy && !rows.length)
             $('.line-controls span', panel).textContent = locale === 'ja' ? `全 ${count(total)} 件` : `${count(total)} total matches`;
     }
-    const matchingDocuments = pageReady ? (view.scopeDocument != null ? (total ? 1 : 0) : view.query ? null : view.documentsTotal) : null;
+    const matchingDocuments = pageReady ? (view.scopeDocument != null ? (total ? 1 : 0) : sortedMode || view.query ? null : view.documentsTotal) : null;
     setConcordanceText($('.evidence-sentence', panel), run.phase !== 'complete' && !isReplay ? (locale === 'ja' ? `途中までに ${count(total)} 件。` : `${count(total)} ${total === 1 ? 'match' : 'matches'} so far.`) : locale === 'ja' ? `${count(total)} 件${matchingDocuments == null ? '' : ` · ${count(matchingDocuments)} 文書`}。` : `${count(total)} ${total === 1 ? 'match' : 'matches'}${matchingDocuments == null ? '' : ` in ${count(matchingDocuments)} ${matchingDocuments === 1 ? 'document' : 'documents'}`}.`);
     const scope = $('.document-scope', panel);
     scope.hidden = view.scopeDocument == null;
     if (!scope.hidden) {
-        const markup = `<a data-view href="${escape(hrefFor(run, { ...concordanceFor(run), scopeDocument: null, document: null, after: view.returnAfter }))}">${locale === 'ja' ? 'すべての文書に戻る' : 'Return to all documents'}</a>`;
+        const markup = `<a data-view href="${escape(hrefFor(run, { ...concordanceFor(run), scopeDocument: null, document: null, after: order ? 0 : view.returnAfter }))}">${locale === 'ja' ? 'すべての文書に戻る' : 'Return to all documents'}</a>`;
         if (renderSignatures.get(scope) !== markup) {
             scope.innerHTML = markup;
             renderSignatures.set(scope, markup);
@@ -1579,11 +1595,12 @@ function renderLines(panel, run, _force = false) {
     }
     const note = $('.line-note', panel);
     note.setAttribute('role', 'status');
-    note.textContent = view.loading && (!rows.length || view.documents !== null) ? (locale === 'ja' ? '用例を読み込んでいます…' : 'Loading examples…') : view.loading ? '' : view.error ? (locale === 'ja' ? `用例を読み込めませんでした。${view.error}` : `Examples could not be loaded. ${view.error}`) : run.phase === 'running' ? t('notTotal') : '';
-    if (sortedMode && !sortedAll && !view.error)
-        note.textContent = locale === 'ja' ? 'すべての用例を並べ替えています…' : 'Sorting all matches…';
+    note.textContent = sortedMode
+        ? error ? (locale === 'ja' ? `用例を読み込めませんでした。${error}` : `Examples could not be loaded. ${error}`)
+            : busy ? (locale === 'ja' ? '用例を並べ替えています…' : 'Sorting matches…') : ''
+        : view.loading && (!rows.length || view.documents !== null) ? (locale === 'ja' ? '用例を読み込んでいます…' : 'Loading examples…') : view.loading ? '' : view.error ? (locale === 'ja' ? `用例を読み込めませんでした。${view.error}` : `Examples could not be loaded. ${view.error}`) : run.phase === 'running' ? t('notTotal') : '';
     note.hidden = !note.textContent;
-    list.setAttribute('aria-busy', String(view.loading || sortedMode && !sortedAll));
+    list.setAttribute('aria-busy', String(busy));
     let nodes = concordanceNodes.get(list);
     if (!nodes) {
         nodes = new Map();
@@ -1596,11 +1613,11 @@ function renderLines(panel, run, _force = false) {
         nodes.set(key, value);
     } return value; };
     const hrefScope = hrefFor(run, concordanceFor(run));
-    let previousDocument, sortedOrdinal = 0;
+    let previousDocument;
     for (const row of rows) {
         if (!sortedMode && previousDocument !== row.document_ordinal) {
             const ordinal = row.document_ordinal;
-            const heading = node(`document:${ordinal}:${sort === 'original' ? '' : row.sequence}`, 'div', 'document-heading');
+            const heading = node(`document:${ordinal}:`, 'div', 'document-heading');
             const landmark = landmarks.get(ordinal);
             const shown = shownCounts.get(ordinal) ?? 0;
             let content = concordanceHeadings.get(heading);
@@ -1636,7 +1653,7 @@ function renderLines(panel, run, _force = false) {
         else
             link.removeAttribute('aria-disabled');
         const matchText = omitted ? (locale === 'ja' ? '用例の全文は JSONL で確認できます' : 'Full example in JSONL download') : row.surface;
-        const ordinal = sortedAll ? ++sortedOrdinal : view.start + allRows.indexOf(row) + 1;
+        const ordinal = start + allRows.indexOf(row) + 1;
         const rowTitle = sortedMode ? documentTitle(row) : '';
         if (link.title !== rowTitle)
             link.title = rowTitle;
@@ -1680,7 +1697,7 @@ function renderLines(panel, run, _force = false) {
                 desired.push(readerPanel);
         }
     }
-    if (!rows.length) {
+    if (!rows.length && (!sortedMode || !busy && !error)) {
         const empty = node('empty', 'p', 'line-note');
         if (filter)
             filterEmpty(empty, run, pattern, filter, shownLines);
@@ -1960,10 +1977,11 @@ function renderExampleSteps() {
         $('#token-origin').textContent = [documentTitle(row), workPosition(row).long].filter(Boolean).join(' · ');
         return;
     }
-    const page = documentView(run, row.pattern), position = page.rows.findIndex(value => value.sequence === row.sequence);
-    previous.disabled = !adjacentExample(page.rows, row.sequence, -1) && page.previousAfter == null;
-    next.disabled = !adjacentExample(page.rows, row.sequence, 1) && page.next == null;
-    $('#token-origin').textContent = `${documentTitle(row)} · ${count(position < 0 ? row.sequence + 1 : page.start + position + 1)}`;
+    const page = documentView(run, row.pattern), sorted = sortedViews.get(run.id)?.page;
+    const rows = sorted?.rows ?? page.rows, position = rows.findIndex(value => value.sequence === row.sequence);
+    previous.disabled = !adjacentExample(rows, row.sequence, -1) && (sorted ? sorted.previous : page.previousAfter) == null;
+    next.disabled = !adjacentExample(rows, row.sequence, 1) && (sorted ? sorted.next : page.next) == null;
+    $('#token-origin').textContent = `${documentTitle(row)} · ${count(position < 0 ? row.sequence + 1 : (sorted?.start ?? page.start) + position + 1)}`;
 }
 async function openEntryLine(run, at) {
     const from = entryLines.at, target = entryLine(at), limited = runLimits.get(run.id)?.document;
@@ -1999,15 +2017,24 @@ for (const control of exampleSteps.querySelectorAll('button'))
         let successor = null;
         control.disabled = true;
         try {
-            let next = adjacentExample(samples ?? view.rows, row.sequence, step);
+            const sorted = sortedViews.get(run.id);
+            let next = adjacentExample(samples ?? sorted?.page?.rows ?? view.rows, row.sequence, step);
             let page;
             if (samples && !next)
                 return;
             if (!next) {
-                const query = new URLSearchParams({ pattern: row.pattern, limit: String(controls.state.lines), continuous: view.scopeDocument == null ? '1' : '0', after: String(step < 0 ? view.previousAfter ?? -1 : view.next ?? row.sequence), q: view.query });
-                if (view.scopeDocument != null)
-                    query.set('document', String(view.scopeDocument));
-                page = await request(`api/questions/runs/${run.id}/documents?${query}`);
+                if (sorted) {
+                    const start = step < 0 ? sorted.page?.previous : sorted.page?.next;
+                    if (start == null)
+                        return;
+                    page = await requestSortedPage(run, row.pattern, sorted.order, sorted.document, start, sorted.limit, sorted.controller.signal);
+                }
+                else {
+                    const query = new URLSearchParams({ pattern: row.pattern, limit: String(controls.state.lines), continuous: view.scopeDocument == null ? '1' : '0', after: String(step < 0 ? view.previousAfter ?? -1 : view.next ?? row.sequence), q: view.query });
+                    if (view.scopeDocument != null)
+                        query.set('document', String(view.scopeDocument));
+                    page = await request(`api/questions/runs/${run.id}/documents?${query}`);
+                }
                 next = step < 0 ? page.rows.findLast(row => !row.preview_omitted) : page.rows.find(row => !row.preview_omitted);
             }
             if (!next || epoch !== navigationEpoch || inspecting !== origin)
@@ -2019,11 +2046,13 @@ for (const control of exampleSteps.querySelectorAll('button'))
                 window.scrollBy(0, tokenLab.getBoundingClientRect().top - top);
         }
         catch (error) {
-            const notice = document.createElement('p');
-            notice.className = 'error';
-            notice.setAttribute('role', 'alert');
-            notice.textContent = errorMessage(error);
-            exampleSteps.after(notice);
+            if (epoch === navigationEpoch && inspecting === origin) {
+                const notice = document.createElement('p');
+                notice.className = 'error';
+                notice.setAttribute('role', 'alert');
+                notice.textContent = errorMessage(error);
+                exampleSteps.after(notice);
+            }
         }
         finally {
             if (inspecting === origin)
@@ -2055,7 +2084,13 @@ function selectToken(index) {
     const details = detailsOf(tokenData.tokens, index, inspecting?.row ?? { span: { start: 0, end: 0 } }, config?.value_names, locale, t('root'));
     const row = ({ key, name, values }) => {
         const label = name ? `${escape(name)} <code>${escape(key)}</code>` : escape(key);
-        return values.length ? values.map(({ value, gloss }) => { const selected = field === key && attributeMember === value; return `<button type="button" data-attribute="${escape(key)}" data-member="${escape(value)}" class="attribute-row ${selected ? 'selected' : ''}" aria-pressed="${selected}"><span>${label}</span><strong>${escape(gloss ?? value)}${gloss && gloss !== value ? ` <code>${escape(value)}</code>` : ''}</strong></button>`; }).join('') : `<div class="attribute-row"><span>${label}</span><span>${locale === 'ja' ? '値なし' : 'No values'}</span></div>`;
+        if (!values.length)
+            return `<div class="attribute-row"><span>${label}</span><span>${locale === 'ja' ? '値なし' : 'No values'}</span></div>`;
+        return values.map(({ value, gloss }) => {
+            const selected = field === key && attributeMember === value;
+            const translation = gloss && gloss !== value ? ` <span class="attribute-gloss">${escape(gloss)}</span>` : '';
+            return `<button type="button" data-attribute="${escape(key)}" data-member="${escape(value)}" class="attribute-row ${selected ? 'selected' : ''}" aria-pressed="${selected}"><span>${label}</span><span class="attribute-value"><strong>${escape(value)}</strong>${translation}</span></button>`;
+        }).join('');
     };
     const attributes = $('#token-attributes'), more = attributes.querySelector(':scope>details')?.open ?? false, expanded = attributes.querySelector('.attribute-more')?.open ?? false;
     const roles = details.roles.join(', ');
@@ -2550,11 +2585,13 @@ function displayedEvidence() {
 }
 function concordanceFor(run) {
     const pattern = selection.get(run.id) ?? run.definitions[0] ?? '', page = documentView(run, pattern);
-    const layout = resultLayout(run);
+    const layout = resultLayout(run), sort = layout === 'kwic' ? resultOrders.get(run.id) : undefined;
+    const sorted = sortedViews.get(run.id);
     const work = workView(page);
     return {
         kind: 'concordance', layout, pattern, scopeDocument: layout === 'works' ? null : page.scopeDocument,
-        returnAfter: page.returnAfter, document: null, after: layout === 'works' ? work.after : page.after,
+        returnAfter: page.returnAfter, document: null, after: layout === 'works' ? work.after : sort ? (sorted?.page?.start ?? sorted?.start ?? 0) : page.after,
+        ...(sort ? { sort } : {}),
         filter: filters.get(run.id) ?? '',
         ...(layout === 'works' && work.overview ? { workOverview: true } : {}),
         ...(layout === 'works' && preferredWorkContext !== DEFAULT_WORK_CONTEXT ? { workContext: preferredWorkContext } : {}),
@@ -2610,7 +2647,7 @@ async function applyView(run, target, pin = true, epoch = ++navigationEpoch) {
     viewLocation = target;
     const parent = target.kind === 'concordance' ? target : target.returnTo;
     const context = parent.kind === 'concordance' ? parent : parent.returnTo;
-    const layout = context.scopeDocument != null ? 'kwic' : context.layout ?? (target.kind !== 'concordance' || context.after >= 0 || context.document != null || context.filter ? 'kwic' : resultLayout(run));
+    const layout = context.scopeDocument != null || context.sort ? 'kwic' : context.layout ?? (target.kind !== 'concordance' || context.after >= 0 || context.document != null || context.filter ? 'kwic' : resultLayout(run));
     const changedLayout = layout !== resultLayout(run);
     resultLayouts.set(run.id, layout);
     if (layout === 'works')
@@ -2674,13 +2711,29 @@ async function applyView(run, target, pin = true, epoch = ++navigationEpoch) {
         page.loading = false;
         page.request = null;
     }
-    const needsPage = !byWork(run) && run.phase === 'complete' && (page.documents === null || page.scopeDocument !== scope || page.after !== context.after || context.document != null && context.document !== page.document);
+    const order = layout === 'kwic' && !entryShown(run) && run.phase === 'complete' ? context.sort : undefined;
+    const needsPage = !order && !byWork(run) && run.phase === 'complete' && (page.documents === null || page.scopeDocument !== scope || page.after !== context.after || context.document != null && context.document !== page.document);
+    if (order) {
+        resultOrders.set(run.id, order);
+        if (page.scopeDocument !== scope) {
+            page.scopeDocument = scope;
+            page.documents = null;
+            page.error = null;
+        }
+    }
+    else {
+        resultOrders.delete(run.id);
+        clearSortedView(run.id);
+    }
+    const ordered = order ? loadSortedPage(run, pattern, order, scope, Math.max(0, context.after)) : null;
     page.returnAfter = context.returnAfter ?? -1;
     render();
     const panel = panels.get(run.id);
     if (!panel)
         return;
-    if (needsPage)
+    if (ordered?.task)
+        await ordered.task;
+    else if (needsPage)
         await loadDocumentPage(panel, run, pattern, context.document, context.after, null, scope);
     else if (grouped && work.loading)
         await work.loading;
@@ -2690,7 +2743,8 @@ async function applyView(run, target, pin = true, epoch = ++navigationEpoch) {
         (panel.querySelector(`[data-sequence="${returnFocus}"]`) ?? $('#results')).focus({ preventScroll: true });
     if (target.kind !== 'concordance') {
         const matchesTarget = (row) => target.sequence != null && row.sequence === target.sequence;
-        let row = grouped ? work.groups.flatMap(group => group.rows).find(matchesTarget) : page.rows.find(matchesTarget) ?? run.rows[pattern]?.find(matchesTarget);
+        let row = grouped ? work.groups.flatMap(group => group.rows).find(matchesTarget)
+            : (ordered?.page?.rows ?? page.rows).find(matchesTarget) ?? run.rows[pattern]?.find(matchesTarget);
         if (!row && inspecting?.run.id === run.id && matchesTarget(inspecting.row) && (!grouped || inspecting.row.work_location))
             row = inspecting.row;
         if (!row && run.phase !== 'complete') {
@@ -2711,9 +2765,11 @@ async function applyView(run, target, pin = true, epoch = ++navigationEpoch) {
             link = panel.querySelector(`[data-sequence="${row.sequence}"]`);
         }
         else if (!link) {
-            const ordinal = scope == null ? null : row.document_ordinal;
             filters.set(run.id, '');
-            await loadDocumentPage(panel, run, pattern, ordinal, row.sequence - 1, null, scope);
+            if (ordered)
+                renderLines(panel, run);
+            else
+                await loadDocumentPage(panel, run, pattern, scope == null ? null : row.document_ordinal, row.sequence - 1, null, scope);
             link = panel.querySelector(`[data-sequence="${row.sequence}"]`);
         }
         if (epoch !== navigationEpoch || !link)

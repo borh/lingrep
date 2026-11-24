@@ -366,11 +366,12 @@ async fn paragraph_and_document_context_preserve_text_boundaries_and_match_count
 }
 
 #[tokio::test]
-async fn missing_paragraphs_fall_back_to_document_and_nested_paragraphs_require_a_choice() {
+async fn missing_paragraphs_show_the_match_and_nested_paragraphs_require_a_choice() {
     let missing = fixture(vec!["HIT".into()], vec![]).await;
     let html = get(&missing, "paragraph").await.1;
     assert!(html.contains("data-reading-unavailable"));
-    assert!(ordinals(&html).is_empty());
+    assert_eq!(ordinals(&html), [0]);
+    assert!(html.contains("<mark>HIT</mark>"));
     assert_eq!(ordinals(&get(&missing, "document").await.1), [0]);
     let multiple = fixture(
         vec!["HIT".into(), "SECOND".into(), "THIRD".into()],

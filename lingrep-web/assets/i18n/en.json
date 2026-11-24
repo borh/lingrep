@@ -111,6 +111,7 @@
   "frequency.no_value": "no value",
   "frequency.more_values": "{n} more values",
   "frequency.as_table": "Table",
+  "frequency.range_table": "Filter by range in table",
   "frequency.head_value": "Value",
   "frequency.lines": "Lines",
   "frequency.lines_shown": "{n} of {of}",

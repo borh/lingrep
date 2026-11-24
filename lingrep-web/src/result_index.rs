@@ -15,6 +15,7 @@ const DISK_BUDGET: u64 = 128 * 1024 * 1024;
 const RECORD_BYTES: usize = 1024 * 1024;
 const BUFFER_BYTES: usize = 4 * 1024 * 1024;
 const BUFFER_ROWS: usize = 256;
+const SORT_BATCH_ROWS: i64 = 64;
 const PAGE_BYTES: u64 = 4096;
 
 #[derive(Debug, thiserror::Error)]
@@ -105,8 +106,155 @@ pub struct DocumentPage {
 #[derive(Debug)]
 pub struct ResultIndex {
     pool: SqlitePool,
+    pub(crate) sorted: tokio::sync::Mutex<Option<SortedIndex>>,
     directory: TempDir,
     publication_attributes: Arc<[AttributeKey]>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub(crate) enum ConcordanceOrder {
+    Left,
+    #[serde(rename = "match")]
+    Matched,
+    Right,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct SortScope {
+    pub pattern: PatternKey,
+    pub document: Option<u64>,
+    pub order: ConcordanceOrder,
+}
+
+#[derive(Debug)]
+pub(crate) struct SortedIndex {
+    connection: SqliteConnection,
+    _directory: TempDir,
+    pub scope: SortScope,
+    total: u64,
+}
+
+impl SortedIndex {
+    pub(crate) async fn open(scope: SortScope) -> Result<Self, ResultIndexError> {
+        let directory =
+            tempfile::tempdir().map_err(|error| ResultIndexError::Storage(error.to_string()))?;
+        let options = SqliteConnectOptions::new()
+            .filename(directory.path().join("sort.sqlite3"))
+            .create_if_missing(true)
+            .page_size(PAGE_BYTES as u32)
+            .journal_mode(SqliteJournalMode::Off)
+            .synchronous(SqliteSynchronous::Off)
+            .pragma("cache_size", "-2048")
+            .pragma("temp_store", "FILE");
+        let mut connection = SqliteConnection::connect_with(&options)
+            .await
+            .map_err(database)?;
+        let mut limit = QueryBuilder::<Sqlite>::new("PRAGMA max_page_count = ");
+        limit.push((DISK_BUDGET / PAGE_BYTES).to_string());
+        limit
+            .build()
+            .execute(&mut connection)
+            .await
+            .map_err(database)?;
+        sqlx::raw_sql(
+            "CREATE TABLE keys (key BLOB NOT NULL, sequence INTEGER NOT NULL, PRIMARY KEY (key, sequence)) WITHOUT ROWID;
+             CREATE TABLE ranks (rank INTEGER PRIMARY KEY, sequence INTEGER NOT NULL);
+             BEGIN IMMEDIATE;",
+        )
+        .execute(&mut connection)
+        .await
+        .map_err(database)?;
+        Ok(Self {
+            connection,
+            _directory: directory,
+            scope,
+            total: 0,
+        })
+    }
+
+    pub(crate) async fn append(&mut self, rows: &[(u64, Vec<u8>)]) -> Result<(), ResultIndexError> {
+        let mut query = QueryBuilder::<Sqlite>::new("INSERT INTO keys (key, sequence) ");
+        query.push_values(rows, |mut values, (sequence, key)| {
+            values.push_bind(key).push_bind(*sequence as i64);
+        });
+        query
+            .build()
+            .persistent(false)
+            .execute(&mut self.connection)
+            .await
+            .map_err(database)?;
+        self.total += rows.len() as u64;
+        Ok(())
+    }
+
+    pub(crate) async fn finish(&mut self) -> Result<(), ResultIndexError> {
+        sqlx::raw_sql(
+            "INSERT INTO ranks (sequence) SELECT sequence FROM keys ORDER BY key, sequence;
+             DROP TABLE keys;
+             COMMIT;",
+        )
+        .execute(&mut self.connection)
+        .await
+        .map_err(database)?;
+        Ok(())
+    }
+
+    pub(crate) async fn page(
+        &mut self,
+        index: &ResultIndex,
+        requested: u64,
+        limit: usize,
+    ) -> Result<ResultPage, ResultIndexError> {
+        let step = limit as u64;
+        let start = if requested < self.total {
+            requested
+        } else {
+            self.total.saturating_sub(1) / step * step
+        };
+        let sequences = sqlx::query_scalar::<_, i64>(
+            "SELECT sequence FROM ranks WHERE rank > ? ORDER BY rank LIMIT ?",
+        )
+        .bind(integer(start)?)
+        .bind(integer(step)?)
+        .fetch_all(&mut self.connection)
+        .await
+        .map_err(database)?;
+        let mut rows = Vec::new();
+        if !sequences.is_empty() {
+            let mut query = QueryBuilder::<Sqlite>::new(
+                "SELECT sequence, document, payload FROM matches WHERE sequence IN (",
+            );
+            let mut variables = query.separated(", ");
+            for sequence in &sequences {
+                variables.push_bind(sequence);
+            }
+            variables.push_unseparated(")");
+            let mut by_sequence = query
+                .build()
+                .persistent(false)
+                .fetch_all(&index.pool)
+                .await
+                .map_err(database)?
+                .into_iter()
+                .map(|row| occurrence(row).map(|row| (row.sequence as i64, row)))
+                .collect::<Result<HashMap<_, _>, _>>()?;
+            for sequence in sequences {
+                rows.push(
+                    by_sequence
+                        .remove(&sequence)
+                        .ok_or(ResultIndexError::InvalidPosition)?,
+                );
+            }
+        }
+        Ok(ResultPage {
+            matches_total: self.total,
+            start,
+            previous: (start > 0).then(|| start.saturating_sub(step) as i64),
+            next: (start + step < self.total).then_some(start + step),
+            rows,
+        })
+    }
 }
 
 impl PartialEq for ResultIndex {
@@ -119,6 +267,28 @@ impl Eq for ResultIndex {}
 impl ResultIndex {
     pub fn publication_attributes(&self) -> &[AttributeKey] {
         &self.publication_attributes
+    }
+
+    pub(crate) async fn sort_batch(
+        &self,
+        scope: SortScope,
+        after: i64,
+    ) -> Result<Vec<ResultOccurrence>, ResultIndexError> {
+        let mut query = QueryBuilder::new("SELECT sequence, document, payload FROM matches WHERE ");
+        self::scope(&mut query, scope.pattern, scope.document)?;
+        query
+            .push(" AND sequence > ")
+            .push_bind(after)
+            .push(" ORDER BY sequence LIMIT ")
+            .push_bind(SORT_BATCH_ROWS);
+        query
+            .build()
+            .fetch_all(&self.pool)
+            .await
+            .map_err(database)?
+            .into_iter()
+            .map(occurrence)
+            .collect()
     }
 
     /// Returns occurrences after the exclusive global sequence; -1 starts at the beginning.
@@ -551,6 +721,7 @@ impl ResultIndexWriter {
             .map_err(database)?;
         Ok(Arc::new(ResultIndex {
             pool,
+            sorted: tokio::sync::Mutex::new(None),
             directory: self.directory,
             publication_attributes: self.publication_attributes,
         }))
@@ -789,6 +960,55 @@ mod tests {
             }),
             in_chain: true,
         }
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn sorted_pages_include_late_occurrences_and_keep_sequence_ties_across_pages() {
+        let index = tokio::task::spawn_blocking(|| {
+            let mut writer = ResultIndexWriter::new(Arc::from([])).unwrap();
+            for sequence in 0..2_003 {
+                writer
+                    .append(sequence % 2, &reference(sequence, 0))
+                    .unwrap();
+            }
+            writer.finish().unwrap()
+        })
+        .await
+        .unwrap();
+        let scope = SortScope {
+            pattern: PatternKey::new(0).unwrap(),
+            document: Some(0),
+            order: ConcordanceOrder::Matched,
+        };
+        let mut ordered = SortedIndex::open(scope).await.unwrap();
+        let mut after = -1;
+        loop {
+            let rows = index.sort_batch(scope, after).await.unwrap();
+            let Some(last) = rows.last() else { break };
+            after = last.sequence as i64;
+            let keys = rows
+                .iter()
+                .map(|row| (row.sequence, vec![u8::from(row.sequence < 2_000)]))
+                .collect::<Vec<_>>();
+            ordered.append(&keys).await.unwrap();
+        }
+        ordered.finish().await.unwrap();
+        let page = ordered.page(&index, 0, 1).await.unwrap();
+        assert_eq!(page.rows[0].sequence, 2_000);
+        assert_eq!(
+            (page.matches_total, page.previous, page.next),
+            (1_002, None, Some(1))
+        );
+        let next = ordered.page(&index, 1, 1).await.unwrap();
+        assert_eq!(next.rows[0].sequence, 2_002);
+        assert_eq!(
+            (next.start, next.previous, next.next),
+            (1, Some(0), Some(2))
+        );
+        assert_eq!(
+            ordered.page(&index, 2, 1).await.unwrap().rows[0].sequence,
+            0
+        );
     }
 
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]

@@ -24,7 +24,9 @@ use serde_json::{Value, json};
 use crate::coordinator::{CoordinatorView, RevisionRequest};
 use crate::corpus_runtime::ReadyCorpus;
 use crate::question_corpus::{TokenRow, token_rows_for_keys};
-use crate::result_index::{ResultIndex, ResultOccurrence};
+use crate::result_index::{
+    ConcordanceOrder, ResultIndex, ResultIndexError, ResultOccurrence, SortScope, SortedIndex,
+};
 use crate::revision::{AttemptPhase, ErrorCategory, RevisionId, WorkbenchId};
 use crate::snapshot::{CaptureDescriptor, CompletedSnapshot, PatternKey};
 use crate::state::RequestStore;
@@ -72,6 +74,7 @@ pub(crate) fn routes() -> Router<RequestStore> {
         .route("/runs/{id}/events", get(events))
         .route("/runs/{id}/cancel", post(cancel))
         .route("/runs/{id}/documents", get(documents))
+        .route("/runs/{id}/sorted-documents", get(sorted_documents))
         .route("/runs/{id}/work-samples", get(work_samples))
         .route("/runs/{id}/work-results", get(work_results))
         .route("/runs/{id}/occurrence", get(occurrence))
@@ -1548,6 +1551,197 @@ async fn documents(
     Ok(Json(
         json!({"rows":rows,"landmarks":landmarks,"after":after,"start":page.start,"matches_total":page.matches_total,"previous":page.previous,"next":page.next,"document":document,"documents":inventory.documents,"documents_total":inventory.total,"documents_offset":inventory.offset,"selected":inventory.selected,"position":inventory.position,"previous_document":inventory.previous,"next_document":inventory.next}),
     ))
+}
+
+#[derive(Deserialize)]
+struct SortQuery {
+    pattern: String,
+    document: Option<u64>,
+    order: ConcordanceOrder,
+    start: Option<u64>,
+    limit: Option<usize>,
+}
+
+fn sort_error(error: ResultIndexError) -> ApiError {
+    match error {
+        ResultIndexError::BudgetExceeded => ApiError(
+            StatusCode::PAYLOAD_TOO_LARGE,
+            "These results exceed the space available for sorting. Narrow the search or sort one document.".into(),
+        ),
+        other => unavailable(other),
+    }
+}
+
+async fn build_sorted_index(
+    store: &RequestStore,
+    ready: &ReadyCorpus,
+    index: &ResultIndex,
+    scope: SortScope,
+) -> Result<SortedIndex> {
+    let mut sorted = SortedIndex::open(scope).await.map_err(sort_error)?;
+    let schema = ready.artifact.token_schema().map_err(unavailable)?;
+    let attributes: Arc<[_]> = schema
+        .keys()
+        .iter()
+        .filter(|key| matches!(key.as_str(), "text" | "surface"))
+        .cloned()
+        .collect();
+    let mut after = -1;
+    loop {
+        let batch = index.sort_batch(scope, after).await.map_err(sort_error)?;
+        let Some(last) = batch.last() else { break };
+        after = last.sequence as i64;
+        let reader = ready
+            .reader()
+            .map_err(unavailable)?
+            .bind(&ready.identity)
+            .ok_or_else(expired)?;
+        let artifact = Arc::clone(&ready.artifact);
+        let pool = Arc::clone(&ready.pool);
+        let schema = schema.clone();
+        let attributes = Arc::clone(&attributes);
+        let permit = store.coordinators.acquire_reading_permit().await;
+        let keys = tokio::task::spawn_blocking(move || {
+            let _permit = permit;
+            let mut sentences: Vec<u64> = batch
+                .iter()
+                .map(|row| row.reference.sentence_index)
+                .collect();
+            sentences.sort_unstable();
+            sentences.dedup();
+            let decoded = decode_projected_sentences(
+                &artifact,
+                &reader,
+                pool,
+                &schema,
+                &attributes,
+                sentences,
+                INSPECTION_BYTES,
+            )?;
+            let collator = icu_collator::Collator::try_new(
+                icu_locale::locale!("ja").into(),
+                Default::default(),
+            )
+            .map_err(|error| error.to_string())?;
+            batch
+                .into_iter()
+                .map(|row| {
+                    let mut key = Vec::new();
+                    if let Some((sentence, _)) = decoded
+                        .get(&row.reference.sentence_index)
+                        .and_then(Option::as_ref)
+                    {
+                        let sort_text =
+                            concordance_sort_text(sentence, row.reference.span, scope.order)?;
+                        let Ok(()) = collator.write_sort_key_to(&sort_text, &mut key);
+                    }
+                    Ok((row.sequence, key))
+                })
+                .collect::<std::result::Result<Vec<_>, String>>()
+        })
+        .await
+        .map_err(unavailable)?
+        .map_err(unavailable)?;
+        sorted.append(&keys).await.map_err(sort_error)?;
+    }
+    sorted.finish().await.map_err(sort_error)?;
+    Ok(sorted)
+}
+
+fn concordance_sort_text(
+    sentence: &BoundTokenSentence,
+    span: std::ops::Range<usize>,
+    order: ConcordanceOrder,
+) -> std::result::Result<String, String> {
+    use lingrep_core::token_match::{display_space_before, display_surface, display_text};
+    if span.start >= span.end || span.end > sentence.len() {
+        return Err("an indexed concordance span is outside its sentence".into());
+    }
+    Ok(match order {
+        ConcordanceOrder::Matched => display_text(sentence, span),
+        ConcordanceOrder::Right => display_text(
+            sentence,
+            span.end..span.end.saturating_add(24).min(sentence.len()),
+        ),
+        ConcordanceOrder::Left => {
+            let mut text = String::new();
+            for (offset, index) in (span.start.saturating_sub(24)..span.start)
+                .rev()
+                .enumerate()
+            {
+                if offset != 0 && display_space_before(sentence, index) {
+                    text.push(' ');
+                }
+                text.push_str(display_surface(sentence, index).unwrap_or_default());
+            }
+            text
+        }
+    })
+}
+
+async fn sorted_documents(
+    State(store): State<RequestStore>,
+    Path(id): Path<String>,
+    query: std::result::Result<Query<SortQuery>, axum::extract::rejection::QueryRejection>,
+) -> Result<Json<Value>> {
+    let Query(query) = query.map_err(|_| invalid("Choose a supported concordance sort order."))?;
+    let (snapshot, ready, index) = completed(&store, &id).await?;
+    let pattern = snapshot
+        .patterns
+        .iter()
+        .find(|pattern| pattern.name == query.pattern)
+        .map(|pattern| pattern.key)
+        .ok_or_else(|| invalid("Choose a pattern from this search."))?;
+    let scope = SortScope {
+        pattern,
+        document: query.document,
+        order: query.order,
+    };
+    let page = {
+        let mut sorted = index.sorted.lock().await;
+        if sorted
+            .as_ref()
+            .is_none_or(|existing| existing.scope != scope)
+        {
+            *sorted = None;
+            *sorted = Some(build_sorted_index(&store, &ready, &index, scope).await?);
+        }
+        sorted
+            .as_mut()
+            .expect("sort is present")
+            .page(
+                &index,
+                query.start.unwrap_or_default(),
+                query.limit.unwrap_or(20).clamp(1, MAX_DOCUMENT_PAGE_ROWS),
+            )
+            .await
+            .map_err(sort_error)?
+    };
+    let _permit = store.coordinators.acquire_reading_permit().await;
+    let patterns: Vec<_> = snapshot
+        .patterns
+        .iter()
+        .map(|pattern| pattern.name.clone())
+        .collect();
+    let rows = project_occurrences(
+        &ready,
+        &page.rows,
+        &snapshot.capture_catalog,
+        &patterns,
+        index.publication_attributes(),
+        INSPECTION_BYTES,
+        OccurrenceOutput::DocumentPage,
+    )
+    .await?;
+    Ok(Json(json!({
+        "rows": rows,
+        "after": page.start,
+        "start": page.start,
+        "matches_total": page.matches_total,
+        "previous": page.previous,
+        "next": page.next,
+        "document": query.document,
+    })))
 }
 
 #[derive(Deserialize)]

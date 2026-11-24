@@ -2135,11 +2135,10 @@ async function enhance(textarea, grammar, cm, options = {}) {
   });
   state.view = view;
   textarea.setAttribute("aria-describedby", `${statusNode.id} ${diagnosticNode.id}`);
-  // The <label for> targets the hidden source textarea; route its activation
-  // and accessible name to the CodeMirror input instead.
-  const label = textarea.id ? document.querySelector(`label[for="${textarea.id}"]`) : null;
+  const label = textarea.labels?.[0];
   if (label) {
-    view.contentDOM.setAttribute("aria-label", label.textContent.trim());
+    label.id ||= `${textarea.id}-label`;
+    view.contentDOM.setAttribute("aria-labelledby", label.id);
     label.addEventListener("click", () => view.focus());
   }
 
