@@ -110,6 +110,17 @@ development check, separate from GitHub CI. Use a real Soranoha plaintext author
 archive during iteration; it exercises catalog metadata and literary text that
 Markdown and constructed fixtures do not cover.
 
+[Soranoha](https://soranoha.org/) publishes the archives:
+
+| Archive | URL |
+|---|---|
+| Full corpus, plain text | `https://soranoha.org/bulk/soranoha-plaintext.zip` |
+| Full corpus, TEI | `https://soranoha.org/bulk/soranoha-tei.zip` |
+| One author, plain text | `https://soranoha.org/bulk/authors/soranoha-Akutagawa_Ryunosuke-000879-plaintext.zip` |
+
+Each URL serves the current release under a fixed name, so record the SHA-256
+of a downloaded archive when a result must be reproducible.
+
 Inside the development shell:
 
 ```bash
@@ -157,8 +168,9 @@ The full check verifies every artifact component and scans every sentence when
 building its count table; displayed concordance and export rows are bounded.
 It fails on an unavailable or incompatible artifact rather than substituting
 Markdown or an author subset. Rebuild an incompatible artifact from the full
-Soranoha ZIP into a new destination with `ling corpus build --input-format
-soranoha --output NEW.lingcorpus ARCHIVE.zip`. Report the corpus path and the
+Soranoha ZIP, `soranoha-plaintext.zip` in the table above, into a new
+destination with `ling corpus build --input-format soranoha --output
+NEW.lingcorpus soranoha-plaintext.zip`. Report the corpus path and the
 validation result when finishing work or preparing a release; report unavailable
 validation as pending.
 
