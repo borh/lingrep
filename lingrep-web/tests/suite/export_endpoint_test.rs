@@ -50,9 +50,9 @@ async fn store_with_sentences(
     sentences: Vec<Vec<TokenInfo>>,
     max_kwic: usize,
 ) -> (RequestStore, TempDir) {
-    let (fixture, runtime) = runtime_fixture("/private/science-corpus.jsonl", sentences);
+    let (fixture, runtime) = runtime_fixture("/private/papers-corpus.jsonl", sentences);
     let directory = fixture.directory;
-    let corpus_path = directory.path().join("science-corpus.jsonl");
+    let corpus_path = directory.path().join("papers-corpus.jsonl");
     let dict_path = directory.path().join("unidic-cwj-202512.dic");
     let store = RequestStore::with_runtime(
         Config {
@@ -60,7 +60,7 @@ async fn store_with_sentences(
             corpora: vec![(
                 CorpusName::default_key(),
                 corpus_path.clone(),
-                "science-corpus".into(),
+                "papers-corpus".into(),
             )],
             input_format: None,
             markdown: lingrep_core::corpus::MarkdownReaderConfig::new(

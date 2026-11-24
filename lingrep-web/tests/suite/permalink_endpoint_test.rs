@@ -54,7 +54,7 @@ fn config(dict_path: String, corpora: Vec<(CorpusName, std::path::PathBuf, Strin
 }
 
 async fn ready_store() -> (RequestStore, TempDir, String) {
-    let identity = CorpusIdentity::new("/private/science-corpus.jsonl");
+    let identity = CorpusIdentity::new("/private/papers-corpus.jsonl");
     let digest = identity_digest(&identity);
     let (fixture, runtime) = crate::v6_support::runtime_fixture(
         identity.as_str(),
@@ -63,7 +63,7 @@ async fn ready_store() -> (RequestStore, TempDir, String) {
         ]],
     );
     let directory = fixture.directory;
-    let corpus_path = directory.path().join("science-corpus.jsonl");
+    let corpus_path = directory.path().join("papers-corpus.jsonl");
     let dict_path = directory.path().join("unidic-cwj-202512.dic");
     let store = RequestStore::with_runtime(
         config(
@@ -71,7 +71,7 @@ async fn ready_store() -> (RequestStore, TempDir, String) {
             vec![(
                 CorpusName::default_key(),
                 corpus_path.clone(),
-                "science-corpus".into(),
+                "papers-corpus".into(),
             )],
         ),
         runtime,

@@ -38,7 +38,7 @@ let
         corpora = {
           # A source with an extension: the case that broke.
           default = {
-            path = "/srv/corpora/science-corpus.jsonl";
+            path = "/srv/corpora/papers-corpus.jsonl";
           };
           # A source without one — a Markdown document directory, which is
           # what an extensionless path already resolved to.

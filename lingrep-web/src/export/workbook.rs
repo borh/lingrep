@@ -275,7 +275,7 @@ mod tests {
             skipped_sentences: None,
             filters: "none".into(),
             overlaps: "catalog",
-            corpus: "science-corpus".into(),
+            corpus: "papers-corpus".into(),
             corpus_id: "a3f9c2e10b74".into(),
             dictionary: "unidic-cwj-202512".into(),
             revision: 7,

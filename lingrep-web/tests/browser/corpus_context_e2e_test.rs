@@ -123,7 +123,7 @@ async fn preparing_strip_swaps_to_ready_and_stops_polling() -> WebDriverResult<(
 
 /// The two corpora the selector fixture declares, keyed as the server keys them
 /// (`--input` occupies the reserved `default`).
-const CORPORA: [(&str, &str); 2] = [("default", "everyday-corpus"), ("sci", "science-corpus")];
+const CORPORA: [(&str, &str); 2] = [("default", "everyday-corpus"), ("sci", "papers-corpus")];
 
 fn display_name(key: &str) -> &'static str {
     CORPORA
@@ -339,7 +339,7 @@ async fn selecting_a_corpus_navigates_to_it_and_reruns_the_query() -> WebDriverR
             .text()
             .await?;
         assert!(
-            panel.contains("science-corpus"),
+            panel.contains("papers-corpus"),
             "the panel must describe the newly selected corpus: {panel}"
         );
         let selected = driver
