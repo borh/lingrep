@@ -114,7 +114,15 @@ def setup(kind: str, argv: list[str] | None = None) -> int:
     parser.add_argument(
         "--output", required=True, type=Path, help="persistent analyzer directory"
     )
-    parser.add_argument("--backend", choices=("cpu", "cuda", "rocm"), default="cpu")
+    if kind == "spacy":
+        parser.add_argument(
+            "--backend",
+            choices=("cpu", "cuda", "rocm", "mps"),
+            help="default: mps on Apple Silicon when the installed Torch "
+            "reports MPS available, otherwise cpu",
+        )
+    else:
+        parser.add_argument("--backend", choices=("cpu", "cuda", "rocm"), default="cpu")
     parser.add_argument("--probe-text", required=True)
     parser.add_argument(
         "--offline",
@@ -134,6 +142,10 @@ def setup(kind: str, argv: list[str] | None = None) -> int:
         parser.add_argument("--resource-root", type=Path)
     args = parser.parse_args(argv)
     try:
+        if args.backend is None:
+            from lingrep_spacy_adapter.adapter import default_spacy_backend
+
+            args.backend = default_spacy_backend(platform.system(), platform.machine())
         output = args.output.absolute()
         config = output / "analyzer.toml"
         if output.exists():

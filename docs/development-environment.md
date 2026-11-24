@@ -134,7 +134,11 @@ the GPU libraries itself and does not require this launcher.
 launcher's complete CoNLL-U output with CPU execution on a Japanese fixture.
 For ROCm, set `LINGREP_SPACY_RUN_ROCM=1` and
 `LINGREP_SPACY_GINZA_MODEL=ja_ginza`; that lane also checks the Rust-owned
-adapter's CPU/GPU parity.
+adapter's CPU/GPU parity. On Apple Silicon, `LINGREP_SPACY_RUN_MPS=1` with
+`LINGREP_SPACY_GINZA_MODEL=ja_ginza_bert_large` and
+`LINGREP_SPACY_MODEL_EXTRA=bert-large` runs the adapter on the `mps` backend;
+it downloads the model weights and does not compare the output with CPU
+execution.
 
 Two ROCm failures have a known cause. `ValueError: Cannot use GPU, CuPy is not
 installed` means CuPy was imported before Torch: the ROCm CuPy wheel loads its

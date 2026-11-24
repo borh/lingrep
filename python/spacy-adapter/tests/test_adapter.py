@@ -25,6 +25,7 @@ from lingrep_spacy_adapter.adapter import (
     _decode_document,
     _encode_record,
     analyze_document,
+    default_spacy_backend,
     initialize_spacy_backend,
     iter_analyzed_sentences,
     load_spacy_pipeline,
@@ -885,6 +886,81 @@ class BackendTests(unittest.TestCase):
             initialize_spacy_backend("rocm")
         self.assertEqual(imported, ["torch"])
 
+    def test_mps_initializes_torch_then_spacy_without_cupy_or_fallback(self) -> None:
+        imported = []
+        required = []
+        modules = {
+            "torch": SimpleNamespace(
+                backends=SimpleNamespace(mps=SimpleNamespace(is_available=lambda: True))
+            ),
+            "spacy": SimpleNamespace(
+                require_gpu=lambda device: required.append(device)
+            ),
+        }
+
+        def import_module(name: str):
+            imported.append(name)
+            return modules[name]
+
+        with patch(
+            "lingrep_spacy_adapter.adapter.importlib.import_module",
+            side_effect=import_module,
+        ):
+            backend = initialize_spacy_backend("mps")
+        self.assertEqual(imported, ["torch", "spacy"])
+        self.assertEqual(required, [0])
+        self.assertEqual(backend[1:], (None, None, None, None, None))
+
+    def test_mps_rejects_a_torch_without_mps_before_importing_spacy(self) -> None:
+        def missing_torch(name: str):
+            raise ImportError(name)
+
+        without_mps = SimpleNamespace(
+            backends=SimpleNamespace(mps=SimpleNamespace(is_available=lambda: False))
+        )
+        for label, torch in (
+            ("mps unavailable", lambda name: without_mps),
+            ("torch not installed", missing_torch),
+        ):
+            imported = []
+
+            def import_module(name: str, torch=torch, imported=imported):
+                imported.append(name)
+                return torch(name)
+
+            with (
+                self.subTest(label),
+                patch(
+                    "lingrep_spacy_adapter.adapter.importlib.import_module",
+                    side_effect=import_module,
+                ),
+                self.assertRaisesRegex(RuntimeError, "available MPS device"),
+            ):
+                initialize_spacy_backend("mps")
+            self.assertEqual(imported, ["torch"])
+
+    def test_setup_default_is_mps_only_on_apple_silicon_with_mps_available(
+        self,
+    ) -> None:
+        for system, machine, available, expected in (
+            ("Darwin", "arm64", True, "mps"),
+            ("Darwin", "arm64", False, "cpu"),
+            ("Darwin", "x86_64", True, "cpu"),
+            ("Linux", "aarch64", True, "cpu"),
+            ("Linux", "x86_64", True, "cpu"),
+        ):
+            with self.subTest(system=system, machine=machine, available=available):
+                self.assertEqual(
+                    default_spacy_backend(system, machine, lambda a=available: a),
+                    expected,
+                )
+
+    def test_adapter_command_line_accepts_the_mps_backend(self) -> None:
+        from lingrep_spacy_adapter.__main__ import parser
+
+        args = parser().parse_args(["--model-root", "model", "--backend", "mps"])
+        self.assertEqual(args.backend, "mps")
+
 
 class ProfileJsonTests(unittest.TestCase):
     def test_profile_rejects_duplicate_keys_at_each_depth(self) -> None:
@@ -1453,11 +1529,14 @@ class GiNzaModelTests(unittest.TestCase):
             "then record the golden file",
         )
 
-    @unittest.skipUnless(
-        os.environ.get("LINGREP_SPACY_RUN_ROCM") == "1",
-        "requires LINGREP_SPACY_RUN_ROCM=1 and the rocm uv extra",
-    )
-    def test_cpu_and_rocm_processes_emit_identical_ginza_sentences(self) -> None:
+    def _serve_sealed_model(
+        self, backends: tuple[str, ...], texts: tuple[str, ...]
+    ) -> dict[str, tuple[list[dict], dict]]:
+        """Seals LINGREP_SPACY_GINZA_MODEL and serves `texts` once per backend.
+
+        Returns each backend's sentence records and its run_ready record.
+        """
+
         zero = "00" * 32
         attributes = [
             {"key": "text", "kind": "scalar"},
@@ -1497,20 +1576,23 @@ class GiNzaModelTests(unittest.TestCase):
                 "max_stderr_tail_bytes": 65_536,
             },
         }
-        document = {
-            "record": "document",
-            "batch_id": 0,
-            "document_ordinal": 0,
-            "input_id": 10,
-            "kind": "sentence",
-            "text": "猫が走る。",
-            "provenance": {
-                "source_identity": zero,
-                "document_identity": 1,
-                "paragraph_identity": None,
-                "metadata_digest": zero,
-            },
-        }
+        documents = [
+            {
+                "record": "document",
+                "batch_id": 0,
+                "document_ordinal": ordinal,
+                "input_id": 10 + ordinal,
+                "kind": "sentence",
+                "text": text,
+                "provenance": {
+                    "source_identity": zero,
+                    "document_identity": 1,
+                    "paragraph_identity": None,
+                    "metadata_digest": zero,
+                },
+            }
+            for ordinal, text in enumerate(texts)
+        ]
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             model = root / "model"
@@ -1538,13 +1620,17 @@ class GiNzaModelTests(unittest.TestCase):
                 + b"\n"
                 for record in [
                     header,
-                    {"record": "batch_begin", "batch_id": 0, "document_count": 1},
-                    document,
+                    {
+                        "record": "batch_begin",
+                        "batch_id": 0,
+                        "document_count": len(documents),
+                    },
+                    *documents,
                     {"record": "batch_end", "batch_id": 0},
                 ]
             )
 
-            def result_for(backend: str) -> tuple[dict, dict]:
+            def result_for(backend: str) -> tuple[list[dict], dict]:
                 result = subprocess.run(
                     [
                         sys.executable,
@@ -1565,28 +1651,52 @@ class GiNzaModelTests(unittest.TestCase):
                 self.assertEqual(result.returncode, 0, result.stderr.decode())
                 records = list(map(json.loads, result.stdout.splitlines()))
                 return (
-                    next(
-                        record for record in records if record["record"] == "sentence"
-                    ),
+                    [record for record in records if record["record"] == "sentence"],
                     next(
                         record for record in records if record["record"] == "run_ready"
                     ),
                 )
 
-            cpu_sentence, cpu_ready = result_for("cpu")
-            rocm_sentence, rocm_ready = result_for("rocm")
-            self.assertEqual(cpu_sentence, rocm_sentence)
-            self.assertIn("host-", cpu_ready["execution"]["runtime"])
-            self.assertIn("platform-", cpu_ready["execution"]["runtime"])
-            for marker in (
-                "cupy-rocm-7-0-",
-                "accelerator-runtime-",
-                "accelerator-driver-",
-                "torch-build-",
-                "host-",
-                "platform-",
-            ):
-                self.assertIn(marker, rocm_ready["execution"]["runtime"])
+            return {backend: result_for(backend) for backend in backends}
+
+    @unittest.skipUnless(
+        os.environ.get("LINGREP_SPACY_RUN_ROCM") == "1",
+        "requires LINGREP_SPACY_RUN_ROCM=1 and the rocm uv extra",
+    )
+    def test_cpu_and_rocm_processes_emit_identical_ginza_sentences(self) -> None:
+        results = self._serve_sealed_model(("cpu", "rocm"), ("猫が走る。",))
+        cpu_sentences, cpu_ready = results["cpu"]
+        rocm_sentences, rocm_ready = results["rocm"]
+        self.assertEqual(len(cpu_sentences), 1)
+        self.assertEqual(cpu_sentences, rocm_sentences)
+        self.assertIn("host-", cpu_ready["execution"]["runtime"])
+        self.assertIn("platform-", cpu_ready["execution"]["runtime"])
+        for marker in (
+            "cupy-rocm-7-0-",
+            "accelerator-runtime-",
+            "accelerator-driver-",
+            "torch-build-",
+            "host-",
+            "platform-",
+        ):
+            self.assertIn(marker, rocm_ready["execution"]["runtime"])
+
+    @unittest.skipUnless(
+        os.environ.get("LINGREP_SPACY_RUN_MPS") == "1",
+        "requires LINGREP_SPACY_RUN_MPS=1 on Apple Silicon with the cpu uv extra",
+    )
+    def test_mps_process_analyzes_ginza_sentences(self) -> None:
+        texts = ("猫が走る。", "彼女は坂を一つ上った。", "犬は庭で寝ている。")
+        sentences, ready = self._serve_sealed_model(("mps",), texts)["mps"]
+        self.assertEqual(ready["execution"]["backend"], "mps")
+        self.assertIn("backend-mps", ready["execution"]["runtime"].split("/"))
+        self.assertEqual(
+            [sentence["document_ordinal"] for sentence in sentences],
+            list(range(len(texts))),
+        )
+        for text, sentence in zip(texts, sentences, strict=True):
+            self.assertEqual(sentence["source_range"], [0, len(text.encode())])
+            self.assertGreater(sentence["word_count"], 1)
 
 
 @unittest.skipUnless(

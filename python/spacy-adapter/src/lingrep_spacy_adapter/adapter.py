@@ -84,7 +84,7 @@ ADAPTER_SEMANTICS_REVISION = "lingrep.spacy-adapter/v2"
 
 ValueKind = Literal["scalar", "string_set"]
 Segmentation = Literal["input", "analyzer"]
-Backend = Literal["cpu", "cuda", "rocm"]
+Backend = Literal["cpu", "cuda", "rocm", "mps"]
 PipelineLoader = Callable[[str, str, str, str], "LoadedPipeline"]
 
 PORTABLE_KEYS = ("text", "lemma", "norm", "upos", "xpos")
@@ -610,10 +610,33 @@ def load_spacy_pipeline(
     )
 
 
+def _torch_mps_available() -> bool:
+    try:
+        torch = importlib.import_module("torch")
+    except ImportError:
+        return False
+    return bool(torch.backends.mps.is_available())
+
+
+def default_spacy_backend(
+    system: str,
+    machine: str,
+    mps_available: Callable[[], bool] = _torch_mps_available,
+) -> Backend:
+    """Returns the backend setup seals when `--backend` is not given.
+
+    `system` and `machine` are `platform.system()` and `platform.machine()`.
+    """
+
+    if system == "Darwin" and machine == "arm64" and mps_available():
+        return "mps"
+    return "cpu"
+
+
 def initialize_spacy_backend(
     backend: str,
 ) -> tuple[Any, str | None, str | None, str | None, str | None, str | None]:
-    if backend not in {"cpu", "cuda", "rocm"}:
+    if backend not in {"cpu", "cuda", "rocm", "mps"}:
         raise ValueError(f"unsupported backend {backend!r}")
     device = None
     accelerator_runtime = None
@@ -643,8 +666,10 @@ def initialize_spacy_backend(
         )
         cupy_distribution = "cupy-rocm-7-0" if backend == "rocm" else "cupy-cuda12x"
         device = torch.cuda.get_device_name(0)
+    if backend == "mps" and not _torch_mps_available():
+        raise RuntimeError("mps backend requires Torch with an available MPS device")
     spacy = importlib.import_module("spacy")
-    if backend in {"cuda", "rocm"}:
+    if backend != "cpu":
         spacy.require_gpu(0)
     return (
         spacy,
