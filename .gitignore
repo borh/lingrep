@@ -74,12 +74,8 @@ __pycache__/
 
 # Raw research corpora are kept on the filesystem beside their prepared
 # artifacts, too large for git; fetched or rebuilt per environment.
-data-archive/bccwj.txt
-data-archive/science-corpus.jsonl
-data-archive/corpus-2000.jsonl
-data-archive/corpus.jsonl
-data-archive/sample-science.jsonl
-data-archive/bench-corpus.jsonl
+data-archive/*
+!data-archive/test-corpus.jsonl
 # The 100-paper Markdown dialect sample: research text, not redistributable.
 /sample-markdown-corpus/
 

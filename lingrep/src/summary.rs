@@ -63,8 +63,8 @@ type ValueId = u32;
 ///
 /// A summary key is a tuple of token attribute values, and those values come
 /// from a corpus vocabulary orders of magnitude smaller than the record count:
-/// `patterns/ngrams.lx` over `sample-science` projects 34 million values drawn
-/// from 24 thousand distinct ones. Interning turns every comparison, spill
+/// `patterns/ngrams.lx` over a one-million-token corpus projects 34 million
+/// values drawn from 24 thousand distinct ones. Interning turns every comparison, spill
 /// encode and spill decode of a key into integer work.
 ///
 /// The hasher is the one `lingrep_corpus::tokens` already interns these same corpus

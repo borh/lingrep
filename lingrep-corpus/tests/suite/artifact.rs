@@ -2361,14 +2361,14 @@ fn canonical_artifact_path_is_content_addressed_and_colocated() {
     assert_eq!(format_identity(identity.as_bytes()), "0a".repeat(32));
 
     let path = canonical_artifact_path(
-        Path::new("data-archive/science-corpus.jsonl"),
+        Path::new("corpora/papers.jsonl"),
         &identity,
         TrustClass::LocallyExecuted,
     );
     assert_eq!(
         path,
         Path::new(&format!(
-            "data-archive/science-corpus.jsonl.g{CORPUS_ARTIFACT_FORMAT_GENERATION}.a1.{}.locally-executed.lingcorpus",
+            "corpora/papers.jsonl.g{CORPUS_ARTIFACT_FORMAT_GENERATION}.a1.{}.locally-executed.lingcorpus",
             "0a".repeat(32)
         ))
     );
