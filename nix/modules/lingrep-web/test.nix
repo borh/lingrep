@@ -99,7 +99,7 @@ pkgs.testers.nixosTest {
     machine.succeed("curl --fail --silent http://127.0.0.1:3000/mounted/frequencies")
     meta = machine.succeed("curl --fail --silent http://127.0.0.1:3000/mounted/api/frequency/meta")
     assert '"catalog":"catalog/nouns.lx"' in meta, meta
-    assert '"orthographic_style":{"en":"orthography"' in meta, meta
+    assert '"orthographic_style":{"en":"Orthography"' in meta, meta
     reader = machine.wait_until_succeeds("curl --fail --silent http://127.0.0.1:3000/mounted/api/read/papers/0/0/1/document")
     assert "data-doc-reader" in reader, reader
     machine.succeed("systemctl stop lingrep-web.service")
