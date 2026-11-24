@@ -120,8 +120,9 @@ Markdown and constructed fixtures do not cover.
 
 Each URL serves the current release under a fixed name, so record the SHA-256
 of a downloaded archive when a result must be reproducible.
-Analyze the full corpus with Vibrato. An external analyzer such as GiNZA
-processes it far more slowly; use an author archive for those.
+Analyze the full corpus with Vibrato or Sudachi. An external analyzer such as
+GiNZA or Stanza is too slow for it, with or without a GPU; validate those on an
+author archive.
 
 Inside the development shell:
 
