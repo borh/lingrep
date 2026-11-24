@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.10.0] - 2026-11-24
+
+See the [0.10.0 release notes](docs/release-notes/v0.10.0.md) for an overview and the upgrade steps.
+
 ### Added
 
 - Export direct or prepared input as CoNLL-U with
@@ -139,6 +143,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   commands and `ling dictionary install` escape untrusted terminal text.
 - Prepared-corpus recording uses fewer file descriptors on macOS.
   The web server localizes export errors for damaged corpora.
+- `url` 2.5.9 replaces 2.5.8, which overflows the stack in `Url::origin()` on
+  nested `blob:` URLs (RUSTSEC-2026-0592).
 
 ## [0.9.1] - 2026-11-20
 
