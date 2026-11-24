@@ -448,11 +448,16 @@ function translate() {
     for (const element of document.querySelectorAll('[data-t]'))
         element.textContent = t(element.dataset.t ?? '');
     $('#language').textContent = locale === 'en' ? '日本語' : 'English';
-    $('.sentence-period').textContent = locale === 'ja' ? 'を探す。' : '.';
+    $('.sentence-period').textContent = locale === 'ja' ? 'を' : '.';
     $('#corpus-join').textContent = locale === 'ja' ? '' : ' in ';
     $('#corpus-comma').textContent = '';
     $('#scope-end').textContent = locale === 'ja' ? 'から ' : '';
     $('.question-sentence').insertBefore($('#edit-source'), locale === 'ja' ? $('.sentence-period') : $('#corpus-join'));
+    // The verb is the button: it opens the English sentence and closes the Japanese one.
+    if (locale === 'ja')
+        $('.question-sentence').append($('#run'));
+    else
+        $('.question-sentence').prepend($('#run'));
     for (const button of document.querySelectorAll('[data-reader-document]'))
         button.textContent = Number(button.dataset.readerDocument) < 0 ? (locale === 'ja' ? '前の文書' : 'Previous document') : (locale === 'ja' ? '次の文書' : 'Next document');
     controls?.localize();
@@ -749,7 +754,7 @@ function render(force = false) {
     const current = state.current;
     if (current && documentSections.has(current.id))
         documentSections.get(current.id).run = current;
-    $('#run').hidden = current?.phase === 'running';
+    $('#run').toggleAttribute('data-running', current?.phase === 'running');
     $('#timeline').max = String(Math.max(0, recorded.length - 1));
     if (!isReplay)
         $('#timeline').value = String(Math.max(0, recorded.length - 1));
@@ -839,7 +844,7 @@ function render(force = false) {
             panel = document.createElement('article');
             panel.className = 'result-panel';
             panel.dataset.run = run.id;
-            panel.innerHTML = '<p class="result-scope"></p><ul class="result-notices" hidden></ul><div class="panel-body"><div class="lines-area"><div class="result-modes" hidden><div class="result-layout" role="group"><button type="button" data-layout="works"></button><button type="button" data-layout="kwic"></button></div><label class="kwic-sort"><span></span><select><option value="original"></option><option value="left"></option><option value="match"></option><option value="right"></option></select></label><div class="work-controls" hidden><label><span class="work-context-label"></span> <input type="number" data-work-context min="0" max="24" step="1" required></label><label><input type="checkbox" data-work-overview> <span class="work-overview-label"></span></label></div></div><div class="result-reading"><details class="pattern-picker"><summary></summary><div class="pattern-list"></div></details> <span class="evidence-sentence"></span> <span class="document-scope" hidden></span> <span class="line-controls"><span></span> <input type="search"></span> <details class="document-nav" aria-label="Documents" hidden><summary class="document-jump"></summary><div class="document-finder" hidden></div><div class="document-choice"></div></details> <span class="result-header"></span> <span class="line-note" role="status" hidden></span></div><div class="kwic-list"></div><nav class="document-pages" aria-label="Example pages" hidden></nav><nav class="work-pages" hidden><a data-view data-work-page="previous"></a><a data-view data-work-page="next"></a><button type="button" data-work-retry hidden></button></nav></div></div><details class="query-tools-detail"><summary></summary><pre></pre><div class="query-tools"><button type="button" data-copy></button><button type="button" data-source></button></div></details>';
+            panel.innerHTML = '<p class="result-scope"></p><ul class="result-notices" hidden></ul><div class="panel-body"><div class="lines-area"><div class="result-modes" hidden><div class="result-layout" role="group"><button type="button" data-layout="works"></button><button type="button" data-layout="kwic"></button></div><label class="kwic-sort"><span></span><select><option value="original"></option><option value="left"></option><option value="match"></option><option value="right"></option></select></label><div class="work-controls" hidden><label><span class="work-context-label"></span> <input type="number" class="number-span" data-work-context min="0" max="24" step="1" required> <span class="work-context-unit"></span></label><label><input type="checkbox" data-work-overview> <span class="work-overview-label"></span></label></div></div><div class="result-reading"><details class="pattern-picker"><summary></summary><div class="pattern-list"></div></details> <span class="evidence-sentence"></span> <span class="document-scope" hidden></span> <span class="line-controls"><span></span> <input type="search"></span> <details class="document-nav" aria-label="Documents" hidden><summary class="document-jump"></summary><div class="document-finder" hidden></div><div class="document-choice"></div></details> <span class="result-header"></span> <span class="line-note" role="status" hidden></span></div><div class="kwic-list"></div><nav class="document-pages" aria-label="Example pages" hidden></nav><nav class="work-pages" hidden><a data-view data-work-page="previous"></a><a data-view data-work-page="next"></a><button type="button" data-work-retry hidden></button></nav></div></div><details class="query-tools-detail"><summary></summary><pre></pre><div class="query-tools"><button type="button" data-copy></button><button type="button" data-source></button></div></details>';
             $('.document-nav', panel).open = false;
             bindResultModes(panel, run.id);
             $('.kwic-list', panel).addEventListener('click', event => { const row = event.target.closest('[data-entry-line]'); if (row)
@@ -1056,7 +1061,8 @@ function renderResultModes(panel, run, grouped) {
         const input = $('[data-work-context]', panel);
         if (document.activeElement !== input)
             input.value = String(preferredWorkContext);
-        setConcordanceText($('.work-context-label', panel), locale === 'ja' ? '前後のトークン数' : 'Context tokens per side');
+        setConcordanceText($('.work-context-label', panel), t('contextLabel'));
+        setConcordanceText($('.work-context-unit', panel), t('contextTokens'));
         $('[data-work-overview]', panel).checked = work.overview;
         setConcordanceText($('.work-overview-label', panel), locale === 'ja' ? '各作品1件' : 'One per work');
     }
