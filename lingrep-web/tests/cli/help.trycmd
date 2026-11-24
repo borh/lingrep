@@ -38,6 +38,33 @@ Options:
           
           [env: LINGREP_VECTORS_PATH=]
 
+      --sample-analyzer-config <PATH>
+          External analyzer configuration for live sample text and catalog examples
+          
+          [env: LINGREP_WEB_SAMPLE_ANALYZER_CONFIG]
+
+      --sample-sudachi-dict <PATH>
+          Sudachi system dictionary for live samples
+          
+          [env: LINGREP_WEB_SAMPLE_SUDACHI_DICT]
+
+      --sample-sudachi-resources <PATH>
+          Sudachi resource directory for live samples
+          
+          [env: LINGREP_WEB_SAMPLE_SUDACHI_RESOURCES]
+
+      --sample-sudachi-split <SAMPLE_SUDACHI_SPLIT>
+          Sudachi split mode for live samples
+          
+          [env: LINGREP_WEB_SAMPLE_SUDACHI_SPLIT=]
+          [default: c]
+          [possible values: a, b, c]
+
+      --sample-nfc
+          Normalize live samples to NFC before analysis
+          
+          [env: LINGREP_WEB_SAMPLE_NFC=]
+
       --max-kwic-lines-per-pattern <MAX_KWIC_LINES_PER_PATTERN>
           Maximum KWIC lines retained for each pattern
           
