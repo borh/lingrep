@@ -107,6 +107,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   accessible. Accessible control labels follow the selected language.
   Sample and Compare have improved contrast, and editor errors include
   line and column.
+- The Japanese interface uses セクション for a document section throughout
+  and no longer uses 用例 for a match or a counted occurrence.
 - The token inspector labels `norm` and UniDic fields in English and
   Japanese, displays `text` as テキスト in Japanese, and gives original
   values stronger contrast than labels and translations.
