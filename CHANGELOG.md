@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.10.0] - 2026-11-24
+
+See the [0.10.0 release notes](docs/release-notes/v0.10.0.md) for an overview and the upgrade steps.
+
 ### Added
 
 - Export direct or prepared input as CoNLL-U with
