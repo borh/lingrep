@@ -18,7 +18,9 @@ def parser() -> argparse.ArgumentParser:
     result.add_argument(
         "--model-root", required=True, help="sealed spaCy model directory"
     )
-    result.add_argument("--backend", required=True, choices=("cpu", "cuda", "rocm"))
+    result.add_argument(
+        "--backend", required=True, choices=("cpu", "cuda", "rocm", "mps")
+    )
     result.add_argument("--batch-size", type=int, default=32)
     result.add_argument("--prepare", action="store_true")
     result.add_argument("--probe-text")

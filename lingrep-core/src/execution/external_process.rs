@@ -90,8 +90,8 @@ impl ExternalAdapterCommand {
         if batch_size == 0 {
             return Err("spaCy adapter batch size must be nonzero");
         }
-        if !matches!(backend, "cpu" | "cuda" | "rocm") {
-            return Err("spaCy adapter backend must be cpu, cuda, or rocm");
+        if !matches!(backend, "cpu" | "cuda" | "rocm" | "mps") {
+            return Err("spaCy adapter backend must be cpu, cuda, rocm, or mps");
         }
         let model_root = model_root.into();
         normalized_relative_utf8(&model_root)

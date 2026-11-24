@@ -114,6 +114,60 @@ class SetupTests(unittest.TestCase):
             self.assertEqual(status, 1)
             self.assertEqual(list(output.iterdir()), [])
 
+    def test_spacy_setup_uses_the_default_backend_unless_one_is_given(self):
+        initialized = []
+
+        def stop_after_selection(backend):
+            initialized.append(backend)
+            raise RuntimeError("stop after selection")
+
+        for arguments, expected in (([], "mps"), (["--backend", "cpu"], "cpu")):
+            initialized.clear()
+            with (
+                self.subTest(arguments=arguments),
+                tempfile.TemporaryDirectory() as temporary,
+                patch(
+                    "lingrep_spacy_adapter.adapter.default_spacy_backend",
+                    return_value="mps",
+                ),
+                patch(
+                    "lingrep_spacy_adapter.adapter.initialize_spacy_backend",
+                    side_effect=stop_after_selection,
+                ),
+            ):
+                status = setup(
+                    "spacy",
+                    [
+                        "--model",
+                        "ja_ginza",
+                        "--probe-text",
+                        "猫。",
+                        "--output",
+                        str(Path(temporary) / "analyzer"),
+                        *arguments,
+                    ],
+                )
+                self.assertEqual(status, 1)
+                self.assertEqual(initialized, [expected])
+
+    def test_stanza_setup_rejects_the_mps_backend(self):
+        with self.assertRaises(SystemExit):
+            setup(
+                "stanza",
+                [
+                    "--language",
+                    "ja",
+                    "--package",
+                    "tokenize=gsd",
+                    "--probe-text",
+                    "猫。",
+                    "--output",
+                    "unused",
+                    "--backend",
+                    "mps",
+                ],
+            )
+
     def test_package_selection_and_runtime_changes_are_rejected(self):
         for values in (["tokenize"], ["pos="], ["pos=a", "pos=b"]):
             with self.assertRaises(ValueError):

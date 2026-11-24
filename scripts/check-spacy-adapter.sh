@@ -6,6 +6,7 @@ project="$repo_root/python/spacy-adapter"
 mode=${1:-full}
 run_rocm=${LINGREP_SPACY_RUN_ROCM:-0}
 run_cuda=${LINGREP_SPACY_RUN_CUDA:-0}
+run_mps=${LINGREP_SPACY_RUN_MPS:-0}
 python_cache=$(mktemp -d)
 trap 'rm -rf -- "$python_cache"' EXIT
 export PYTHONPYCACHEPREFIX=$python_cache
@@ -73,6 +74,17 @@ case "$mode" in
       LINGREP_SPACY_RUN_ROCM=0 \
         uv run --project "$project" --frozen --extra cuda --extra spacy \
         --extra "$model_extra" pytest "$project/tests" -k ginza_gpu_launcher
+    fi
+
+    if [[ $run_mps == 1 ]]; then
+      if [[ -z ${LINGREP_SPACY_GINZA_MODEL:-} ]]; then
+        echo "LINGREP_SPACY_RUN_MPS=1 requires LINGREP_SPACY_GINZA_MODEL" >&2
+        exit 2
+      fi
+      LINGREP_SPACY_RUN_ROCM=0 LINGREP_SPACY_RUN_CUDA=0 \
+        uv run --project "$project" --frozen --extra cpu --extra spacy \
+        --extra "$model_extra" pytest "$project/tests" \
+        -k mps_process_analyzes_ginza_sentences
     fi
     ;;
   *)

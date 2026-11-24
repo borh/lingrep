@@ -1533,6 +1533,32 @@ fn stanza_command_requires_normalized_resources_language_backend_and_batch_size(
 }
 
 #[test]
+fn mps_backend_is_accepted_for_spacy_and_rejected_for_stanza() {
+    let spacy = |backend| {
+        ExternalAdapterCommand::spacy(
+            "python3",
+            "adapter/bin/lingrep-spacy-adapter",
+            "model",
+            backend,
+            32,
+        )
+    };
+    assert!(spacy("mps").is_ok());
+    assert!(spacy("tpu").is_err());
+    assert!(
+        ExternalAdapterCommand::stanza(
+            "python3",
+            "adapter/bin/lingrep-stanza-adapter",
+            "model",
+            "ja",
+            "mps",
+            1
+        )
+        .is_err()
+    );
+}
+
+#[test]
 fn stanza_manifest_requires_the_exact_project_and_resource_closures() {
     let (directory, implementation, resources) = stanza_fixture();
     let command = ExternalAdapterCommand::stanza(

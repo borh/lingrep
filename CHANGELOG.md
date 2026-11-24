@@ -59,6 +59,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   Navigate through all indexed hits in either By work or KWIC view.
 - Switch between light and dark themes from the shared web navigation.
   The selected theme is saved in the browser.
+- Run a spaCy or GiNZA transformer model on Apple Silicon with
+  `backend = "mps"`. `lingrep-spacy-setup` selects it by default when the
+  environment's PyTorch reports MPS available. An analyzer set up for `mps`
+  fails at startup when MPS is unavailable instead of running on the CPU.
+  [External analyzer setup](docs/cli-usage-guide.md#use-an-external-protocol-adapter)
 
 ### Changed
 

@@ -2299,6 +2299,17 @@ to use this preparation command. The standalone `lingrep-spacy-setup` and
 `lingrep-stanza-setup` wheel entry points remain available for custom model and
 GPU setup, with a caller-managed Python environment.
 
+`lingrep-spacy-setup --backend` accepts `cpu`, `cuda`, `rocm` and `mps`, and
+writes the choice to `analyzer.toml`. `mps` is the Metal backend of PyTorch on
+Apple Silicon. It applies to the PyTorch components of a model, such as the
+transformer in `ja_ginza_bert_large`; the other components run on the CPU.
+Without `--backend`, setup on Apple Silicon selects `mps` when the environment's
+PyTorch reports MPS available, and `cpu` otherwise. `ling analyzer prepare
+ginza` installs no PyTorch, so its analyzer has `backend = "cpu"`. An analyzer
+with `backend = "mps"` fails at startup when PyTorch is not installed or reports
+MPS unavailable, and never runs on the CPU instead. `lingrep-stanza-setup`
+accepts `cpu`, `cuda` and `rocm`.
+
 The spaCy adapter wheel's `electra` and `bert-large` extras use the Transformers
 version constraint from spacy-transformers 1.4 (`transformers<4.53.3`). The
 project's `uv.lock` uses an override for `transformers==4.57.6`; that override is
