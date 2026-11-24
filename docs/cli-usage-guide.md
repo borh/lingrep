@@ -81,14 +81,14 @@ counterexamples. Successful example verification confirms consistency with autho
 claims, not linguistic correctness or recall. External adapters are rejected by this
 verification path.
 
-`check` also reports two findings that hold for every token sequence and need
-no corpus. A token test that no token satisfies, such as
-`[upos=VERB & upos=NOUN]`, is `warning[unsatisfiable_test]`, and a definition
-whose body requires one is `warning[unsatisfiable_definition]`. A regex test is
-not analysed, so a contradiction between two regexes is not reported.
+`ling check` reports `warning[unsatisfiable_test]` when no token can satisfy
+a test such as `[upos=VERB & upos=NOUN]`. If a definition requires such a test,
+the check reports `warning[unsatisfiable_definition]`. Both diagnostics are
+independent of the corpus. Contradictions between regexes are outside this
+check.
 
-`--containment` compares every pair of emitting definitions and lists the pairs
-in which one publishes only spans the other also publishes:
+`--containment` reports pairs of eligible definitions for which every span
+that the first definition publishes is also published by the second.
 
 ```text
 containment: 5 pair(s), 1 definition(s) not compared
@@ -96,91 +96,86 @@ containment: 5 pair(s), 1 definition(s) not compared
   そうだ not compared: its body has a lookaround
 ```
 
-A definition publishes its longest match from each start, so `[text=a]` is not
-contained in `[text=a] [text=b]?`: on `a b` the second publishes two tokens.
-A compared definition also drops a match that its own match from an earlier
-start extends past, and the comparison applies both steps of the
-[publication rule](pattern-language-reference.md#which-matches-a-definition-publishes)
-to both definitions. With `inner := [text=の].` and
-`outer := [text=の] | [text=猫] [text=の] [text=手].`, `猫の手` yields `outer`
-over all three tokens and `inner` over `の`, so `inner` is not listed as
-contained in `outer`.
+The check applies the
+[publication rules](pattern-language-reference.md#which-matches-a-definition-publishes)
+to both definitions. For example, on `a b`, `[text=a] [text=b]?` publishes
+the two-token span. The one-token span from `[text=a]` therefore disproves
+containment. For `inner := [text=の].` and
+`outer := [text=の] | [text=猫] [text=の] [text=手].`, `猫の手` disproves
+containment because `outer` publishes only the three-token span and `inner`
+publishes `の`.
+
 The comparison covers token tests, sequences, alternatives, repetition,
-captures, `&` and references. A definition with a lookaround, a position
-assertion, an any-order group, `same_as`, a `where` clause or a span annotation
-is listed as not compared, and a pair whose tests use a regex is omitted. Spans are compared,
-not records: captures, keys and the result policy are outside the comparison.
+captures, `&`, and references. The report lists definitions with lookaround,
+position assertions, `any_order`, `same_as`, `where`, or span annotations as
+not compared. Pairs involving regex tests are omitted. The comparison uses
+token spans and excludes captures, keys, and result policy.
 
-The Sample debugger of `ling serve` and the Workbench "Test on sample" drawer
-use the server's Vibrato dictionary to tokenize each example and counterexample
-independently of the sample text. They check these claims when the catalog binds
-to the sample token schema and all referenced attributes are available. Otherwise,
-the debugger reports the schema error or lists the missing attributes. Select a
-failed claim's text to add it to the sample for inspection. One run checks the
-first 256 claims of a catalog in catalog order and reports the number it did
-not check. It stops testing counterexamples for vacuity after two seconds and
-reports the number it did not test. `ling check --verify-examples` has neither
-limit.
+The Sample debugger and the Workbench’s **Test on sample** drawer tokenize
+catalog examples and counterexamples with the server’s Vibrato dictionary,
+independently of the sample text. The checks run if the catalog binds to the
+sample schema and all referenced attributes are available. Otherwise, the
+debugger reports the binding error or missing attributes. Select a failed
+entry’s text to add it to the sample. Each run checks up to 256 entries in
+catalog order and reports how many were skipped. The debugger spends up to
+two seconds checking whether counterexamples exercise a constraint.
+`ling check --verify-examples` has neither limit.
 
-Each `expected_match` failure carries an `explanation` of why the definition
-published no match for that example. Its `outcome` is one of:
+Each `expected_match` failure includes an `explanation` with one of these
+outcomes.
 
 | `outcome` | Meaning |
 |---|---|
-| `stopped` | No start position matched the body. `attempt` is the attempt that matched the most tokens: where it started, the token it stopped at, the failing element's location in the catalog source, and each attribute test of that element with the token's value. `stop` distinguishes a failed token element, the end of the sentence, a sentence anchor, and each lookaround kind. |
-| `where_rejected` | The body matched the token `spans`, and the `where` clause or a span constraint rejected each. |
+| `stopped` | No start position matched the body. `attempt` records the start that matched the most tokens, where it stopped, the source location of the failing element, and the element’s attribute tests with the token’s value. `stop` distinguishes a failed token element, the end of the sentence, a sentence anchor, and each lookaround kind. |
+| `where_rejected` | The body matched the listed token `spans`. A `where` clause or span constraint excluded each span. |
 | `not_published` | The definition matched the token `spans`, and result policy published none. |
-| `unexplained` | `detail` states why no explanation is available. |
+| `unexplained` | `detail` gives the reason an explanation is unavailable. |
 
-The matcher decides whether the definition matched and what policy published.
-The `stopped` and `where_rejected` outcomes come from a separate explanation
-pass that evaluates the definition body at each start position; `starts_tried`
-counts them, and `truncated` reports that the pass reached its step limit. The
-pass does not evaluate `same_as`, `within=` lookarounds, or definitions under
-`skip:`, and reports those as `unexplained`. Human output prints the same facts
-under each failure. The Sample debugger shows the explanation under each failed
-example and, for every sample line without a published match, per definition.
+The matcher determines the actual result. A separate explanation pass
+evaluates the body from each start position for `stopped` and
+`where_rejected`. `starts_tried` counts the start positions examined, and
+`truncated` marks an explanation cut short by the step limit. The pass reports
+`unexplained` for `same_as`, `within=` lookarounds, and definitions with
+`skip:`. Human output includes the explanation under each failed example.
+The Sample debugger also explains each definition’s result for sample lines
+without a published match.
 
-Selecting a match in the Sample debugger lists the pattern element that
-consumed each of its tokens, the references that element was reached through,
-and each attribute test of the element with the token's value. The list comes
-from the same explanation pass and shows one derivation; when a match has
-several, the reported captures can come from another. The pass does not follow
-any-order groups, and a match that contains one has no list.
+Select a match in the Sample debugger to see the element that consumed each
+token, the chain of references to that element, and its tests with the
+observed attribute values. The same explanation pass shows one derivation of
+the match. If several derivations produce the same span, the reported captures
+may come from another derivation. Any-order groups have no consumed-token
+explanation.
 
-The Sample debugger also writes claims. Each match has an action that adds its
-sentence to the definition's `examples`, and each definition that a sentence
-does not match has one that adds the sentence to its `counterexamples`. The
-action inserts into the pattern text, creating the key on the line above the
-definition when the definition does not write it, and the sample runs again.
-No action is offered when the list already holds the sentence or when the
-definition inherits the list from `defaults` or a bundle.
+Use the action beside a match to add its sentence to the definition’s
+`examples`. If the sentence fails to match a definition, use the action for
+that definition to add the sentence to its `counterexamples`. The debugger
+edits the pattern source, inserts a missing key above the definition, and
+checks the sample again. The action is unavailable for duplicate entries and
+lists inherited from `defaults` or a bundle.
 
-A hit's detail in the Workbench links to the Sample debugger with that corpus
-sentence and the pattern of the search that found the hit. The link's address
-names the sentence, the corpus and the search, so it also opens in a new tab;
-once the Workbench shows a later search, the address opens the sentence with
-the server's default pattern. The sentence is then explained with the
-tokens stored in the corpus artifact, under the corpus's token schema, and the
-results name the corpus's analyzer; the catalog's claims are not checked in
-that state, and enhanced dependency relations are not evaluated. Editing the
-text returns the page to the sample tokenizer.
+From a Workbench hit, open the Sample debugger with the corpus sentence and
+the pattern that found it. The link identifies the corpus, sentence, and
+search so it also works in a new tab. If the Workbench has moved on to a
+later search, the link opens the same sentence with the server’s default
+pattern. The debugger uses the tokens and schema stored in the corpus
+artifact and names the corpus’s analyzer. In this mode it skips catalog
+claims and enhanced dependency relations. Edit the sentence to use the
+sample tokenizer instead.
 
-A counterexample passes whenever its definition does not match it, including
-when the sentence is unrelated to the definition. Verification therefore also
-evaluates each passing counterexample against its definition once per
-attribute test, token element and lookaround of the body, with that one
-constraint removed. A counterexample that no such relaxation matches is
-reported under `vacuous_counterexamples` with the relaxations tried; it does
-not change the exit status. `unchecked_counterexamples` lists those whose
-definition the explanation pass cannot evaluate.
+A passing counterexample may be unrelated to its definition. To check whether
+it exercises a specific constraint, verification tries to match the sentence
+again after removing one attribute test, token element, or lookaround at a
+time. `vacuous_counterexamples` lists sentences that still fail to match
+after every supported relaxation. These findings leave the exit status
+unchanged. `unchecked_counterexamples` lists entries that the explanation
+pass cannot evaluate.
 
-`--propose-counterexamples FILE` runs the same relaxations over a file with one
-sentence per line, analyzed like the claims. `counterexample_candidates` lists
-sentences a definition does not match and does match with one constraint
-removed, at most three per definition and constraint, each with the constraint
-and the matched token span. The report gives the number of sentences scanned
-and the definitions that were not evaluated; it describes that file only.
+`--propose-counterexamples FILE` applies the same checks to one sentence
+per line. `counterexample_candidates` lists up to three sentences per
+definition and constraint that match only after removing that constraint.
+The report includes the constraint, matched token span, number of sentences
+scanned, and definitions that could not be evaluated.
 
 ### Pattern diagrams
 
@@ -444,17 +439,17 @@ report repeats it:
 Two definitions that match the same spans with different captures are `shared`
 at `span` and one-sided at `record`.
 
-The report states the sentences compared. A run stopped at `--limit` is
-compared over the sentences before the one it stopped in, the lowest such bound
-when both stopped, and requires a prepared corpus, which records its identity
-before the first sentence. Runs made with the same `--sample` or `--where`
-are compared within that selection. The last line is either the one-sided
-totals or `no difference in N sentences scanned`; it describes those sentences
-at that level and makes no statement about the rest of the corpus. `ling diff`
-exits with status 2 when either file lacks its completion record, kept a
-`--retain` sample, or was run over a different corpus, analysis, `--sample` or
-`--where` scope than the other. A direct run and a prepared run of the same
-files have different analysis identities, so compare two runs of the same kind.
+The report gives the number of sentences compared and either the one-sided
+totals or `no difference in N sentences scanned` at the selected level. If a
+run stops at `--limit`, compare prepared-corpus runs so both record the
+analysis identity before the scan. The comparison ends before the sentence
+where the first run stopped. With matching `--sample` or `--where` options,
+the comparison covers the selected sentences.
+
+`ling diff` exits with status 2 if a file lacks a completion record, either
+run uses `--retain`, or the runs differ in corpus, analysis, sample, or scope.
+Use two direct runs or two prepared runs because a direct and a prepared run
+of the same files have different analysis identities.
 `--examples N` sets how many one-sided occurrences are listed per definition
 and side (default 3), and `ling --json diff` writes `lingrep.diff/v1` records.
 Sentence text appears when the runs were made with `--evidence`.
@@ -912,8 +907,9 @@ ling --json summarize --by-window 300 --corpus corpus.lingcorpus \
 ling contracts lingrep.window-counts/v1
 ```
 
-Set the window size with `--by-window N`. Within each document, divide the
-zero-based token ordinal of a sentence's first word by `N` and round down. The result is the window ordinal. The entire sentence
+Set the window size with `--by-window N`. To get a sentence’s window
+ordinal, divide the document-local, zero-based index of its first token by
+`N` and round down. The entire sentence
 contributes to that window, even when the sentence crosses one or more window
 boundaries. Window ordinals restart at zero in each document and may have gaps.
 
@@ -2755,12 +2751,11 @@ holds anything but the header and section files that its format defines is
 A leftover is a staging directory or lock file from a build that did not
 publish; an entry with such a name that is not a directory or a regular file
 respectively, such as a FIFO or a symbolic link, is not reported or opened. It
-is `live` while a process holds its lock. It is `abandoned` when its lock
-records this host and is free, or when it has no lock file and the process ID in
-its name is not running on this host. It is `unknown` otherwise: the lock
-records another host, or the lock file is missing and that process ID is in use.
-The next build of the same name on the same host removes abandoned leftovers;
-see the
+is `live` while a process holds its lock. It is `abandoned` if the lock
+records the current hostname and can be acquired. On Unix, a lockless
+directory is also `abandoned` if the process ID in its name can be confirmed
+absent on the current host. Other cases are `unknown`. The next build of
+the same artifact on the same host can remove abandoned leftovers. See the
 [deployment guide](deployment-guide.md#interrupted-corpus-builds) for the
 others.
 

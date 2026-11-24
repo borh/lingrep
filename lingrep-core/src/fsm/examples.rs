@@ -342,12 +342,9 @@ pub fn declared_claims(
     })
 }
 
-/// As [`try_verify_examples`], checking the first `limit` entries in catalog
-/// order and counting the rest in [`ExampleReport::unchecked`].
-///
-/// For a caller that verifies a catalog it did not write and must bound the
-/// work one catalog can ask for. Malformed values are reported whatever the
-/// limit, because reporting one tokenizes nothing.
+/// Checks the first `limit` entries in catalog order and counts the remaining
+/// entries in [`ExampleReport::unchecked`]. Malformed values are reported
+/// independently of the limit.
 pub fn try_verify_examples_within<T: TokenInfoTrait>(
     matcher: &CompiledCatalog,
     tokenize: &dyn Fn(&str) -> Vec<T>,

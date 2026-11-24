@@ -375,7 +375,7 @@ mod tests {
     }
 
     #[test]
-    fn metadata_field_summary_agrees_across_typed_and_json_observations() {
+    fn typed_and_json_observations_produce_equal_field_summaries() {
         use super::MetadataFieldSummary;
         use lingrep_core::corpus::{MetadataScalar, MetadataValue};
 

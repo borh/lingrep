@@ -224,8 +224,8 @@ use the same indices as the captures. Record `tokenizer.dictionary_path`,
 
 Install the `arrow` extra for token tables. Each record batch includes the
 sentence index, token index and sentence-relative character offsets as
-unsigned integers. Conversion materializes the selected columns in batches
-that callers can process one at a time.
+unsigned integers. Conversion materializes the selected columns. Process the
+result one batch at a time.
 
 ```python
 import polars as pl

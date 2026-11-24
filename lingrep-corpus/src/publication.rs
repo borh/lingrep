@@ -205,9 +205,8 @@ impl Drop for StagingLock {
     }
 }
 
-/// Removes the staging directories for `name` whose build has stopped: the
-/// lock file records this host and can be locked exclusively, or there is no
-/// lock file and [`unlocked_owner_is_gone`].
+/// Reclaims staging directories for `name` after acquiring their recorded
+/// local lock or creating a lock for a directory whose local PID is absent.
 pub(crate) fn reclaim_orphaned_staging(parent: &Path, name: &str) {
     let Some(host) = host_name() else {
         return;
@@ -281,10 +280,8 @@ fn unlocked_owner_is_gone(_suffix: &str) -> bool {
     false
 }
 
-/// Opens and exclusively locks the lock file at `lock_path` when it records
-/// `host`, which is the evidence that the build that created it has stopped.
-///
-/// The returned file holds the lock until it is dropped.
+/// Returns an exclusive lock on the file at `lock_path` if it records
+/// `host` and still names the same file. The returned file holds the lock.
 fn lock_if_abandoned(lock_path: &Path, host: &[u8]) -> Option<File> {
     let mut file =
         crate::artifact::open_regular(File::options().read(true).write(true), lock_path).ok()?;

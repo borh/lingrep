@@ -198,8 +198,6 @@ fn machine() -> Machine {
     }
 }
 
-/// `--default-corpus` maps every tracked catalog, but a calibration measures
-/// only the primary; the mapping for the rest must not refuse the declaration.
 #[test]
 fn a_calibration_over_a_prepared_corpus_seals_only_the_primary_mapping() {
     let dir = scratch("calibration-prepared-corpus");

@@ -448,7 +448,7 @@ fn sentences(alphabet: &[TokenInfo], length: usize) -> Vec<Vec<TokenInfo>> {
 }
 
 #[hegel::test(test_cases = 300)]
-fn the_verdict_agrees_with_the_matcher(tc: hegel::TestCase) {
+fn containment_verdict_matches_published_spans(tc: hegel::TestCase) {
     let bytes = tc.draw(hegel::generators::binary().max_size(96));
     let mut bytes = bytes.into_iter();
     let left = body(&mut bytes, 2);

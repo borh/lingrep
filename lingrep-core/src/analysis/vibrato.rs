@@ -354,36 +354,9 @@ pub fn resolve_pos(
     )
 }
 
-/// The normalized form of a UniDic lemma — what `norm` means.
-///
-/// `norm` is the *dictionary's normalized form*. The name is Sudachi's
-/// (`normalized_form()`, spaCy's `norm_`); UniDic emits no such feature, so
-/// this pipeline derives it. Deriving it as a verbatim copy of `lemma`, which
-/// is what revision 1 did, is wrong under UniDic for two reasons:
-///
-/// * **A UniDic lemma is a lexeme identifier, not a form.** Homographs and
-///   loanwords carry a disambiguator after a hyphen — `システム-system`,
-///   `我々-代名詞`, `差す-他動詞`. Measured over 500 documents of academic
-///   prose, 7.60% of joined lemma values carry one.
-/// * **The light verb lemmatizes to 為る**, an uncommon authored orthography.
-///   natsume-simple ships the identical mapping as `simple_lemma`.
-///
-/// Split on the **first** hyphen: `ピックアップ-pick-up` shows the
-/// disambiguator can itself contain one, so splitting on the last keeps half
-/// of it. An empty head keeps the whole lemma, because a lemma that *is*
-/// punctuation (`-`, `--`, `->`) has no head to take — 15 such types occur in
-/// the same corpus.
-///
-/// This changes grouping almost not at all — 3 merges in 29,295 keyed pairs —
-/// because a disambiguator is deterministic per lexeme and so has nothing to
-/// merge with. It is a presentation rule, and it is applied here rather than
-/// at each rendering site so that counting and display cannot disagree.
-///
-/// Both rules are no-ops where the convention is absent: a lemma without a
-/// hyphen and a lexicon without 為る pass through untouched. The rule is
-/// nonetheless UniDic-specific. Any output-affecting change must move the
-/// applicable Vibrato analyzer policy digest in `analysis::VibratoPlan`, which
-/// is what current prepared-corpus identities record.
+// UniDic lemmas can include a disambiguator after the first hyphen, as in
+// ピックアップ-pick-up. Update the Vibrato policy digest in `VibratoPlan` if this
+// normalization changes the attributes stored in prepared corpora.
 fn normalized_lemma(lemma: &CompactString) -> CompactString {
     let head = lemma.split('-').next().unwrap_or(lemma.as_str());
     let base = if head.is_empty() {
@@ -398,18 +371,8 @@ fn normalized_lemma(lemma: &CompactString) -> CompactString {
     }
 }
 
-/// Visits each CSV field of one UniDic feature record with its column index.
-///
-/// The record is CSV, not a comma-joined list: vibrato stores it verbatim from
-/// the lexicon, where a field containing a comma or a quote is quoted with `"`
-/// and an embedded quote is doubled. UniDic uses this for the ASCII comma's own
-/// entry — `…,，,",",*,",",*,記号,…` — and for lexemes such as
-/// `1,2-ジクロロエタン`. Splitting on a bare comma turns one such field into
-/// two and shifts every column after it, which silently corrupted `orth`,
-/// `orthBase`, `goshu` and everything past them.
-///
-/// Borrowed and allocation-free whenever the record carries no quote at all,
-/// which is all but a fraction of a percent of tokens.
+// Vibrato retains UniDic's CSV quoting, including comma fields such as
+// `","` and lexemes such as `1,2-ジクロロエタン`.
 fn for_each_feature_field(feature: &str, mut visit: impl FnMut(usize, &str)) {
     if !feature.contains('"') {
         for (i, field) in feature.split(',').enumerate() {
@@ -827,13 +790,8 @@ mod tests {
         );
     }
 
-    /// Featurize the first token of `text` under a minimal in-memory
-    /// dictionary.
-    ///
-    /// `unk_def`'s feature field count is the whole point of these fixtures:
-    /// UniDic's real unknown-word entry carries six fields, so everything from
-    /// `lform` onward is *absent* rather than `*`. An eight-field entry would
-    /// deliver `lemma = "*"` and silently stop exercising the case.
+    // Use a six-field UniDic unknown-word entry to exercise absent features
+    // from `lform` onward.
     fn featurize_first(lexicon_csv: &str, unk_def: &str, text: &str) -> TokenInfo {
         let dictionary = SystemDictionaryBuilder::from_readers(
             lexicon_csv.as_bytes(),
@@ -855,8 +813,6 @@ mod tests {
         featurize(&worker.token(0), None)
     }
 
-    /// A token no lexicon entry covers. Reproduces the real unknown-word
-    /// attribute profile: `pos1`–`cform` present, twenty attributes absent.
     fn featurize_oov_token(surface: &str) -> TokenInfo {
         featurize_first(
             "表層,0,0,1,名詞,普通名詞,一般,*,*,*,ヒョウソウ,表層",
@@ -865,7 +821,6 @@ mod tests {
         )
     }
 
-    /// V1 renames this value to `xpos` and must not change how it is built.
     #[test]
     fn tag_joins_pos_components_and_drops_asterisks() {
         let token = featurize_first(
@@ -881,7 +836,6 @@ mod tests {
         );
     }
 
-    /// V1 renames this to `upos`. It is derived, not feature field 28.
     #[test]
     fn pos_is_derived_rather_than_read_from_the_feature_string() {
         let token = featurize_first(
@@ -908,7 +862,6 @@ mod tests {
         );
     }
 
-    /// Exactly two attributes get the OOV surface fallback. V1 must not widen it.
     #[test]
     fn oov_surface_fallback_covers_orthbase_and_lemma_only() {
         let token = featurize_oov_token("未知語");

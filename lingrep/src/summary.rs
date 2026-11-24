@@ -1392,8 +1392,7 @@ pub struct FinalizedSummary {
     values: Vec<Box<str>>,
 }
 
-/// Distinguishes spill/storage I/O failures from a caller-supplied visitor's
-/// own typed error without smuggling the visitor error through `Option<E>`.
+/// An error from reading spill storage or invoking the caller's visitor.
 #[derive(Debug)]
 pub enum VisitError<E> {
     Storage(io::Error),

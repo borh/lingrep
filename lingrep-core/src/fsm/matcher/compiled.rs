@@ -2484,7 +2484,7 @@ mod tests {
     }
 
     #[test]
-    fn trace_matches_and_events_agree_with_find_matches_with_and_without_assertions() {
+    fn trace_returns_matching_records_and_events_with_or_without_assertions() {
         use crate::fsm::types::TraceEvent;
 
         let tokens = vec![token("a", "X"), token("a", "X"), token("b", "X")];

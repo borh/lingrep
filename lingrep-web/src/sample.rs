@@ -1114,7 +1114,7 @@ pub fn analyze_stored_sentence(
         .bind_with_projection(schema, schema.keys().iter().cloned())
     {
         Ok(bound) => bound,
-        // `run.binding` carries the refusal.
+        // `run.binding` already contains the binding diagnostic.
         Err(_) => {
             return SampleReport {
                 analysis: match unbound(&tokens) {

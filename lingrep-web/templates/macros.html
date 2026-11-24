@@ -49,7 +49,7 @@
 <div class="why-not" data-why-not="{% match item.outcome %}{% when WhyNotOutcome::Stopped with (stop) %}stopped{% when WhyNotOutcome::NotPublished with { spans } %}not-published{% when WhyNotOutcome::WhereRejected with { spans } %}where-rejected{% when WhyNotOutcome::Unexplained with { reason } %}unexplained{% endmatch %}">
 {% match item.outcome %}
 {% when WhyNotOutcome::Stopped with (stop) %}
-  <p><span data-i18n="sample.why_furthest" data-i18n-args='{"start": {{ stop.start + 1 }}, "consumed": {{ stop.consumed }}}'>The furthest attempt started at token {{ stop.start + 1 }} and matched this many tokens: {{ stop.consumed }}.</span>
+  <p><span data-i18n="sample.why_furthest" data-i18n-args='{"start": {{ stop.start + 1 }}, "consumed": {{ stop.consumed }}}'>The attempt that matched the most tokens started at token {{ stop.start + 1 }}. Tokens matched ({{ stop.consumed }}).</span>
   {% match stop.kind %}
   {% when WhyNotStopKind::Token %}<span data-i18n="sample.why_token" data-i18n-args='{"position": {{ stop.position + 1 }}}'>Token {{ stop.position + 1 }}</span>{% match stop.token %}{% when Some with (token) %} <span lang="ja" data-why-not-token>「{{ token }}」</span>{% when None %}{% endmatch %} <span data-i18n="sample.why_fails">fails this element:</span>
   {% when WhyNotStopKind::SentenceEnded %}<span data-i18n="sample.why_sentence_ended">The sentence ended before this element:</span>
@@ -68,7 +68,7 @@
 {% when WhyNotOutcome::NotPublished with { spans } %}
   <p><span data-i18n="sample.why_not_published">The definition matched these token spans, and result policy published none of them:</span> <code>{{ spans }}</code></p>
 {% when WhyNotOutcome::WhereRejected with { spans } %}
-  <p><span data-i18n="sample.why_where_rejected">The body matched these token spans, and the where clause rejected each:</span> <code>{{ spans }}</code></p>
+  <p><span data-i18n="sample.why_where_rejected">The pattern body matched these spans. Each span failed a where clause or span constraint.</span> <code>{{ spans }}</code></p>
 {% when WhyNotOutcome::Unexplained with { reason } %}
   <p><span data-i18n="sample.why_unexplained">No explanation is available:</span> <span lang="en">{{ reason }}</span></p>
 {% endmatch %}

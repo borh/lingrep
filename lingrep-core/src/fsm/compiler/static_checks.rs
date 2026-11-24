@@ -44,21 +44,18 @@ pub enum UnsatisfiableKind {
 
 /// Whether every span one definition publishes is also published by another.
 ///
-/// A compared definition publishes its longest match from each start and
-/// drops, of those, a match that its own match from an earlier start extends
-/// past. The second definition must therefore match each span the first
-/// publishes, nothing longer from the same start, and nothing from an earlier
-/// start that ends later. A definition that keeps such a match (one with a
-/// `where` clause, a span annotation or an any-order group) is not compared.
+/// The comparison uses the longest match from each start and excludes spans
+/// that start strictly later and end strictly earlier than another selected
+/// span of the same definition. Definitions with `where`, span annotations,
+/// or any-order groups are outside the comparison.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Containment {
     Contained,
-    /// A sentence on which the first definition publishes the tokens `span`
-    /// and the second does not: it matches no such span, a longer one from the
-    /// same start, or one from the first token that ends later. A sentence of
-    /// the last kind is reported only when there is none of the others. The
-    /// sentence is a shortest one of its kind unless a test of either
-    /// definition uses a regex or more operands than are enumerated.
+    /// The first definition publishes `span` on this sentence and the second
+    /// does not. The check reports a witness with an earlier-starting,
+    /// later-ending match only when it finds neither an absent span nor a
+    /// longer match from the same start. A regex or an enumeration limit
+    /// can prevent the check from finding a shortest witness.
     Distinguished {
         tokens: Vec<WitnessToken>,
         span: Range<usize>,

@@ -129,10 +129,7 @@ using that Soranoha corpus.
 
 The check uses Vibrato unless analyzer options follow `--`. The script passes
 them unchanged to the direct `ling matches` run and to `ling corpus build`, so
-both paths use the same analyzer. To allow more than 600 seconds for the
-build, pass `--build-timeout SECONDS` before `--`.
-
-For Sudachi:
+both paths use the same analyzer. For Sudachi:
 
 ```bash
 python3 scripts/check-soranoha.py target/debug/ling \
@@ -141,9 +138,9 @@ python3 scripts/check-soranoha.py target/debug/ling \
 ```
 
 For an external analyzer, pass `-- --analyzer-config /path/to/analyzer.toml`.
-Commands that the script runs directly, including the initial `ling matches`
-and `ling corpus build`, time out after 600 seconds by default.
-`--build-timeout` changes only the build timeout. The validation pattern
+The direct match run and corpus build each have a 600-second timeout by
+default. To change the build timeout, pass `--build-timeout SECONDS` before
+`--`. The validation pattern
 uses `text`, which every supported analyzer supplies.
 Analyzer options are rejected with `--corpus`, because a prepared corpus
 records the analyzer that built it.

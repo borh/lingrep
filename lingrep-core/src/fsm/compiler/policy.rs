@@ -1279,31 +1279,8 @@ impl PolicyReader<'_> {
     }
 }
 
-/// Mints an emitting definition for every fragment a declared policy must
-/// observe, and records it in [`CatalogPolicy::hidden`].
-///
-/// A policy statement's operand names a shape whose *matches* the engine needs
-/// at publication time — where a trailing region ends, whether an exclusion
-/// overlaps. A fragment never emits, so those matches do not exist. Synthesis
-/// mints `__policy__<fragment>`, whose body is a reference to the fragment:
-/// exactly what a researcher would write by hand, minus the obligation to
-/// publish it.
-///
-/// A referenced *pattern* synthesizes nothing; it already emits. Duplicate
-/// references synthesize once. Nothing is minted unless a statement names a
-/// fragment.
-///
-/// This runs before `bind`, so the minted definitions are bound, materialized,
-/// and lowered with the rest of the program in one pass.
-/// Builds the catalog's [`GroupIndex`] over the **complete** definition list.
-///
-/// Called after [`synthesize_hidden_emitters`], which appends. A synthesized
-/// emitter joins no group, which is what the `Vec::new()` padding says.
-///
-/// Building after synthesis keeps the index and definition table on the same
-/// domain and makes the size assertion below meaningful.
-///
-/// [`DefId`]: crate::fsm::policy_program::DefId
+/// Call after [`synthesize_hidden_emitters`] so group slots align with the
+/// complete definition list.
 pub(crate) fn build_group_index(
     program: &ParsedProgram,
     mut authored_groups: Vec<Vec<CompactString>>,
@@ -1320,22 +1297,9 @@ pub(crate) fn build_group_index(
     index
 }
 
-/// Builds the catalog's [`DefinitionDomain`] over the **complete** definition
-/// list.
-///
-/// A sibling of [`build_group_index`] rather than part of it: both index the
-/// post-synthesis list and neither can run before it, but one answers what a
-/// `%group` selects and the other what a record's name resolves to, and a
-/// single call named for one of them would hide the other.
-///
-/// Eligibility is the **subject domain** — an emitting definition that is not a
-/// synthesized evidence emitter. A fragment never emits, so no record can carry
-/// its name; an emitter's records are stripped before publication, so no record
-/// of one can be a subject either. Both are still operands, which is why this
-/// filter is not the domain's only view of a definition: [`DefinitionDomain`]
-/// holds every name, eligible or not.
-///
-/// [`DefinitionDomain`]: crate::fsm::policy_program::DefinitionDomain
+/// Call after [`synthesize_hidden_emitters`]. The domain includes all
+/// definition names and selects only visible emitting definitions as policy
+/// subjects.
 pub(crate) fn build_definition_domain(program: &ParsedProgram) -> DefinitionDomain {
     DefinitionDomain::new(program.definitions.iter().map(|definition| {
         let eligible = definition.is_emitting() && !crate::fsm::policy::is_hidden(&definition.name);
@@ -1608,6 +1572,8 @@ fn bind_diagnostic(
     )
 }
 
+/// Run before binding so policy references to fragments can use the
+/// synthesized evidence emitters during publication.
 pub(crate) fn synthesize_hidden_emitters(
     program: &mut ParsedProgram,
     authored_groups: &[Vec<CompactString>],

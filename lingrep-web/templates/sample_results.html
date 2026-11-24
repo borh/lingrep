@@ -46,7 +46,7 @@
     </div>
     {% endif %}
     {% if report.unrelaxed > 0 %}
-    <p class="sample-run-warning" data-sample-claims-unrelaxed data-i18n="sample.claims_unrelaxed" data-i18n-args='{"count": {{ report.unrelaxed }}}'>Counterexamples not examined for the constraint they test ({{ report.unrelaxed }}). The sample debugger ran out of time for this catalog.</p>
+    <p class="sample-run-warning" data-sample-claims-unrelaxed data-i18n="sample.claims_unrelaxed" data-i18n-args='{"count": {{ report.unrelaxed }}}'>Time limit reached while checking which constraints the counterexamples test. Unchecked counterexamples ({{ report.unrelaxed }}).</p>
     {% endif %}
     <p class="sample-claims-note" data-i18n="sample.claims_note">These checks compare the catalog's expectations with match results from the sample tokenizer.</p>
   </section>

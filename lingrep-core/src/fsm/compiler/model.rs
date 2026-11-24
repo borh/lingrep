@@ -1465,16 +1465,11 @@ pub(crate) struct ExecutionDefinition {
 }
 
 impl ExecutionDefinition {
-    /// Whether the definition publishes a match that lies strictly inside its
-    /// own longer match from an earlier start.
+    /// Whether to keep a selected span when another span from the same
+    /// definition starts strictly earlier and ends strictly later.
     ///
-    /// It does when it carries a constraint that selects among its candidates
-    /// (a `where` clause of any kind, or a `within_span` or `span_dependency`
-    /// annotation, which is another spelling of a `where span(…)` clause) or
-    /// when its body contains an `any_order` group. The body is the
-    /// materialized one, so a group reached through a reference counts and a
-    /// referenced definition's own `where` clause, which materialization does
-    /// not carry over, does not. Every other definition drops such a match.
+    /// References expand the token expression, so an `any_order` group in a
+    /// reference counts toward this rule and the target's constraints do not.
     pub(crate) fn publishes_nested_matches(&self) -> bool {
         !self.relations.is_empty()
             || !self.enhanced_relations.is_empty()

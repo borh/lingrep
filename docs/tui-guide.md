@@ -31,9 +31,9 @@ ling explore \
   --corpus corpus.lingcorpus
 ```
 
-A CoNLL-U root, selected by a `.conllu` file name or `--input-format conllu`,
-is read as pretokenized input: it needs no dictionary, and patterns bind to the
-CoNLL-U token schema, including `dep.head` and `dep.rel`.
+Pass a `.conllu` file or set `--input-format conllu` to read pretokenized
+input without a dictionary. Patterns can use the CoNLL-U token schema,
+including `dep.head` and `dep.rel`.
 
 ```bash
 ling explore --patterns patterns/psycholinguistics.lx \

@@ -4,7 +4,7 @@
 {% when Outcome::Compared with (comparison) %}
 <div class="pattern-compare-result" data-compare-result data-compare-level="{{ comparison.level }}">
   <p class="pattern-compare-basis">
-    {% if comparison.level == "span" %}<span data-i18n="diff.by_span">Occurrences compared by token span.</span>{% else if comparison.level == "roles" %}<span data-i18n="diff.by_roles">Occurrences compared by the tokens each shared capture occupies.</span>{% else %}<span data-i18n="diff.by_record">Occurrences compared by published record: span, captures, graph bindings and key.</span>{% endif %}
+    {% if comparison.level == "span" %}<span data-i18n="diff.by_span">Occurrences compared by token span.</span>{% else if comparison.level == "roles" %}<span data-i18n="diff.by_roles">Compared token positions for shared captures, graph nodes, and edge endpoints.</span>{% else %}<span data-i18n="diff.by_record">Compared published spans, captures, graph bindings, interpretations, lexical identities, units, and keys.</span>{% endif %}
     {% match comparison.sentences_scanned %}{% when Some with (count) %}<span data-compare-coverage="full" data-i18n="diff.coverage_full" data-i18n-args='{"count": {{ count }}}'>{{ count }} sentences scanned.</span>{% when None %}{% endmatch %}
     {% match comparison.before_corpus_sentence %}{% when Some with (bound) %}<span data-compare-coverage="prefix" data-i18n="diff.coverage_prefix" data-i18n-args='{"bound": {{ bound }}}'>A run reached the record limit, so only the sentences before corpus sentence {{ bound }} were compared.</span>{% when None %}{% endmatch %}
     {% if comparison.scoped %}<span data-i18n="diff.scoped">Within the current search scope.</span>{% endif %}

@@ -407,12 +407,8 @@ pub(super) enum Prepared {
     Failed(AttemptFailure),
 }
 
-/// Compiles the catalog, reads the corpus's section vocabulary, decides whether
-/// an exact projection fits, and — only if it does — starts the span producer.
-///
-/// The order is load-bearing. Availability is decided *before* the producer
-/// exists, because a producer whose consumer was never built parks on a full
-/// channel with nothing to drain it.
+/// Starts the span producer only after admitting the vocabulary, since
+/// a producer without a consumer blocks when its channel fills.
 pub(super) async fn prepare_scan(
     registry: &CoordinatorRegistry,
     permit: Arc<tokio::sync::OwnedSemaphorePermit>,
@@ -532,10 +528,8 @@ pub(super) fn run_scan_blocking(
 
 /// Runs the scan on a blocking thread.
 ///
-/// Takes the already-compiled catalog: the caller needs its pattern count to
-/// decide section availability before the span producer is started, and
-/// compiling in both places would either double the work or admit sections
-/// against a zero-pattern catalog.
+/// Pass the compiled catalog used to admit the section vocabulary so the
+/// scan uses the same pattern count.
 pub(super) fn run_scan_blocking_with_options(
     ready: &ReadyCorpus,
     mut output: CompileOutput,

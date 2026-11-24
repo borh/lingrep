@@ -9,127 +9,125 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
-- `ling check` warns about a token test that no token satisfies
-  (`unsatisfiable_test`) and a definition whose body requires one
-  (`unsatisfiable_definition`). `ling check --containment` lists the pairs of
-  definitions in which one publishes only spans the other also publishes, on
-  every token sequence and without a corpus.
-- The Sample debugger and the Workbench "Test on sample" drawer verify a
-  catalog's `examples` and `counterexamples` when the sample token schema
-  supports the catalog. They report invalid entries, unexpected match results,
-  and unexpected publication decisions. Select a listed text to add it to
-  the sample.
-- Sample results name the analyzer and dictionary that tokenized the sample,
-  list each referenced attribute that tokenizer does not supply, and report a
-  pattern that cannot bind to its token schema. The Workbench drawer also
-  reports when the selected corpus was analyzed with a different token schema.
-- `ling check --verify-examples` and the Sample debugger explain why a
-  definition published no match for an example: the attempt that matched the
-  most tokens, the token and pattern element it stopped at, and each attribute
-  test of that element with the token's value. A lookaround failure, a `where`
-  clause rejection and a match that result policy did not publish are separate
-  outcomes. The Sample debugger shows the same explanation, per definition, for
-  each sample line without a published match.
-  `CompileOutput::explain_definition` is the library entry point.
-- The Sample debugger adds a sample sentence to a definition's claims: a
-  match offers its sentence for the definition's `examples`, and a sentence the
-  definition does not match offers itself for `counterexamples`. The action
-  edits the pattern text, creating the key above the definition when it is
-  absent, and the sample is checked again. It is not offered for a sentence the
-  list already holds, or for a list inherited from `defaults` or a bundle.
-- The Sample debugger links a match to the pattern text. Selecting a token of
-  a match marks, in the editor, the element that consumed it and each
-  reference the element was reached through. Placing the cursor in an element
-  or a reference underlines the tokens it consumed in every match.
-  `CompileOutput::consumed_tokens` is the library entry point. It reports one
-  derivation of the body and nothing for a body with an any-order group,
-  `same_as`, a `within=` lookaround or `skip:`.
-- The Workbench editor and the Sample debugger show the recognition diagram
-  of the pattern or fragment at the cursor, from the text being edited and
-  before any corpus run. It is the drawing `ling check --diagram` produces,
-  with the same option to expand references. When the text stops compiling,
-  the last diagram stays and is marked as out of date.
-- `ling check --verify-examples` and the Sample debugger list counterexamples
-  that do not test a constraint: the definition does not match them with any
-  one attribute test, token element or lookaround removed. They are reported
-  separately from failures and do not change the exit status.
-  `--propose-counterexamples FILE` reads one sentence per line and lists, per
-  definition and constraint, sentences the definition does not match and
-  would match without that constraint, with the number of sentences scanned.
-- `ling diff A.jsonl B.jsonl` compares two `ling --json matches` runs over
-  one corpus and reports, per definition, the occurrences both runs have and
-  those only one has, with the first differing sentences. It compares two
-  catalog revisions by definition name, or two named definitions.
-  `--level span|roles|record` states what identifies an occurrence and is
-  repeated in the report. A run stopped at `--limit` is compared over the
-  sentences it completed, and the report states the sentences compared; with
-  no difference it reports `no difference in N sentences scanned`.
-  `ling --json diff` writes `lingrep.diff/v1`.
-- The Workbench pattern editor has "Compare with the last search": it runs
-  the last searched pattern and the editor's pattern over the selected corpus
-  and scope, lists the occurrences only one of them has at the chosen level,
-  states whether every sentence or a prefix was compared, and links each
-  listed occurrence to the reader.
-- A Workbench hit opens its sentence in the Sample debugger with the analysis
-  stored in the corpus, so a pattern that reads attributes the sample
-  tokenizer does not supply, such as a dependency `where` clause over a
-  CoNLL-U corpus, is explained on the tokens it searched. The results state
-  that the tokens come from the corpus artifact and name its analyzer. Editing
-  the text switches to the sample tokenizer, and the page says so. Enhanced
-  dependency relations are not evaluated there.
+- Export direct or prepared input as CoNLL-U with
+  `ling tokenize --output-format conllu`. The export preserves token
+  spelling, available dependencies and empty nodes, and supported span
+  annotations. Check the final sentence's coverage marker and row count for
+  a nonempty export. [CoNLL-U export guide](docs/cli-usage-guide.md#export-an-analyzed-corpus-as-conll-u)
+- Count published occurrences in prepared corpora with
+  `ling --json summarize --by-window N`. Each sentence contributes to the
+  document-local window containing its first token. The output uses
+  `lingrep.window-counts/v1`. [Window counts guide](docs/cli-usage-guide.md#counting-per-sentence-aligned-token-window)
+- Compare saved match runs over the same corpus with `ling diff`. Compare
+  spans, named roles, or complete records and inspect the first differences
+  per definition. When a prepared-corpus run stops at a record limit, the
+  comparison covers the common prefix of completed sentences. JSONL output
+  uses `lingrep.diff/v1`. The Workbench can also compare the edited pattern
+  with the last search and open differing occurrences in the reader. Each
+  Workbench run is limited to 20,000 records.
+  [Match comparison guide](docs/cli-usage-guide.md#comparing-two-patterns-occurrences)
+- Match basic dependency paths with `-[+ LABELS]->` and test the first or
+  last edge separately. Match SUD deep features such as `comp:aux@pass` on
+  basic or enhanced edges and project them with `deep(…)`.
+  [Basic paths](docs/pattern-language-reference.md#basic-dependency-paths),
+  [SUD deep features](docs/pattern-language-reference.md#sud-deep-features-on-dependency-edges)
+- Measure dependency trees in named span layers with `tree(LAYER)`. Custom
+  layers use recorded governor links between spans that partition the sentence.
+  [Occurrence measurements](docs/pattern-language-reference.md#occurrence-measurements)
+- `ling check` reports unsatisfiable token tests and definitions. Use
+  `--containment` to compare which spans eligible definitions can publish
+  on any token sequence, without running a corpus. Use
+  `--verify-examples` to explain failed examples and identify counterexamples
+  that still fail to match when each supported constraint is removed in
+  turn. Those counterexamples are reported separately from failures.
+  `--propose-counterexamples FILE` finds sentences that match after a single
+  constraint is removed. [Catalog checks](docs/cli-usage-guide.md#catalogs-and-matching)
+- The Sample debugger and the Workbench’s **Test on sample** drawer verify
+  catalog examples and counterexamples when the sample schema supports
+  them. Sample results identify the analyzer, dictionary, and missing
+  attributes. Select a match token to inspect its pattern element and
+  attribute tests. Select a pattern element to highlight the tokens it
+  consumed. You can also add a sample sentence to a definition’s examples
+  or counterexamples. Both editors show the diagram for the definition
+  or fragment at the cursor.
+- Open a Workbench hit in the Sample debugger with the sentence’s stored
+  analysis, including basic dependencies when available. Editing the sentence
+  switches to the sample tokenizer. The debugger skips enhanced dependency
+  relations. [Sample and catalog checks](docs/cli-usage-guide.md#catalogs-and-matching)
+- The Question page groups hits by work with work totals, expandable excerpts,
+  and source positions for available chapters, paragraphs, and sentences.
+  Navigate through all indexed hits in either By work or KWIC view.
+- Switch between light and dark themes from the shared web navigation.
+  The selected theme is saved in the browser.
 
 ### Changed
 
-- A definition using `&`, `measure` or `same_as` drops a match that lies
-  strictly inside its own longer match from an earlier start, as a definition
-  without them always has, so adding one of them to a body no longer changes
-  which spans it publishes. On `猫の手`,
-  `[text=の] | [text=猫] [text=の] [text=手]` publishes the three-token match;
-  the same body with `& []+` or `measure count(match.words[]) as $n` also
-  published `の` and now publishes the three-token match only. A definition
-  with a `where` clause, a `within_span` or `span_dependency` annotation, or an
-  `any_order` group publishes what it did in 0.9.1: its longest match from
-  every start, including a relation instance inside a longer match of the same
-  definition. A match that ends where an earlier-starting match ends is kept,
-  lexicons publish what they did, and different definitions still never drop
-  each other's matches before policy. The rule is specified by definition form
-  in the
-  [pattern reference](docs/pattern-language-reference.md#which-matches-a-definition-publishes).
-  The matcher semantics identity is `lingrep-core-matcher/v3`: a count table
-  built by an earlier release is not read as current and must be rebuilt.
-- `ling check --containment` applies that rule to the definitions it compares,
-  so a pair involving a definition with `&` or `measure` can change. A
-  definition with a `within_span` or `span_dependency` annotation is listed as
-  not compared, as one with a `where` clause is.
-- `patterns/sf-experimental.lx` no longer declares `resolve`, so overlapping
-  definitions are all counted: a specific form and the general form that
-  contains it (`であろう` and `だろう`, `ことも` and `こと`) each keep their
-  records, and counts are higher than before. `--overlaps longest` gives one
-  record per overlapping set. The unused `priority_order` keys and
-  `scripts/upstream_sf_differential.py` are removed. All of its examples now
-  pass `ling check --verify-examples`.
-- In the web pattern editor, Tab and Shift+Tab move focus to the next and
-  previous control instead of indenting, so the editor can be left from the
-  keyboard. Ctrl+] and Ctrl+[ indent and outdent.
-- A syntax error in the web pattern editor states its line and column, and an
-  unprefixed attribute outside `text`, `surface`, `lemma`, `norm`, `upos`,
-  `xpos` is named with the portable set.
-- The Workbench hides the status of the last search while the editor holds a
-  different pattern, and shows a failed search in the error color.
-- "Hits kept", "Derive compounds", "Count documents reached" and "Overlapping
-  matches" are in a "Run options" disclosure whose summary states the values in
-  effect; each option's explanation is visible when it is open.
-- Below 64rem the pattern list scrolls in place above the selected pattern's
-  results. The concordance toolbar is one row at desktop width, and the open
-  inspector leaves the concordance more width.
+- Definitions using `&`, `measure`, or `same_as` follow the same nested
+  match rule as other ordinary definitions. After selecting the longest
+  match from each start, the matcher drops a span if another span from
+  the same definition starts earlier and ends later. A shared end
+  preserves both spans. Definitions with `where`, `within_span`,
+  `span_dependency`, or `any_order` keep nested matches. Lexicons
+  publish every member occurrence. Rebuild count tables produced by
+  earlier releases for matcher revision `lingrep-core-matcher/v3`.
+  [Match publication rules](docs/pattern-language-reference.md#which-matches-a-definition-publishes)
+- `patterns/sf-experimental.lx` counts overlapping definitions, so a
+  specific form and a general form can both contribute to the totals.
+  Use `--overlaps longest` to select one record per overlapping set.
+- The Question page puts the Search button inside the question sentence
+  and keeps it visible during the run. The Workbench groups run options
+  in a disclosure that summarizes the active settings. The Sample debugger
+  keeps the pattern and sample visible alongside tokenized results and
+  opens details for the selected match or token.
+- Use Tab and Shift+Tab to move between the web editor and adjacent
+  controls. Ctrl+] and Ctrl+[ indent and outdent. The web pages share
+  skip links and clearer keyboard focus indicators.
+- `ling corpus build` removes a lockless staging directory for the same
+  artifact on Unix when it can confirm that the PID in the directory name
+  is absent locally. `ling corpus disk` reports that directory as abandoned.
+  Keep concurrent builds from a current release and a pre-0.8.0 release in
+  separate directories when they use different hosts or PID namespaces.
+  [Interrupted builds](docs/deployment-guide.md#interrupted-corpus-builds)
+- The Rust corpus API separates random access through `PreparedTokenReader`
+  from sequential reads through `PreparedSentenceSource`. Corpus building
+  is synchronous. Parallel corpus reads, ranking, rendering, and vector
+  scans can run on caller-supplied Rayon pools. `MatchSink` implementations
+  declare their error type through an associated type.
+- Prepared token exports reuse decoded blocks across small batches. The CLI
+  buffers bulk output and writes JSONL matches without cloning each record.
+  The server batches occurrence reads and caches corpus metadata summaries.
 
 ### Fixed
 
-- The `orth` column in `ling tokenize --tsv` preserves source spelling, including
-  fullwidth characters, when the token carries a `surface` attribute.
-- The Workbench has higher-contrast placeholder text in both themes, larger
-  provenance labels, and the same focus ring on buttons, links, selects,
-  checkboxes, and disclosure summaries.
+- The Question page sorts across all indexed hits, keeps sorted pages
+  navigable from the inspector, and offers a retry if loading a sorted
+  page fails. Hitting the preview size limit still leaves results pageable
+  and downloadable.
+- On narrow screens, the Question page keeps filters and **Save question**
+  accessible. Accessible control labels follow the selected language.
+  Sample and Compare have improved contrast, and editor errors include
+  line and column.
+- The token inspector labels `norm` and UniDic fields in English and
+  Japanese, displays `text` as テキスト in Japanese, and gives original
+  values stronger contrast than labels and translations.
+- `ling explore` uses the stored token schema for prepared corpora and
+  recognizes annotations from direct TEI and CoNLL-U input. CoNLL-U needs
+  no dictionary. The explorer keeps KWIC context beside the match and
+  accepts `q` on the error screen. Quitting waits for explorer workers to
+  remove their temporary files.
+- `ling tokenize --tsv` uses the original source spelling for `orth` when
+  `surface` is available, including fullwidth characters. Pattern diagrams
+  preserve line breaks in annotations.
+- BCCWJ imports restore leading zeros in genre codes before lookup. Rebuild
+  BCCWJ artifacts to use the corrected metadata.
+- `ling` rejects `--md-recover-conversion-artifacts` with `--corpus`. Set
+  recovery options when you build the corpus.
+- Canonical corpus builds report the apparent sizes of retained sibling
+  artifacts and give a command to preview cleanup. `ling corpus variants`,
+  `disk`, and `prune` classify closed stdout pipes as output errors. Those
+  commands and `ling dictionary install` escape untrusted terminal text.
+- Prepared-corpus recording uses fewer file descriptors on macOS.
+  The web server localizes export errors for damaged corpora.
 
 ## [0.9.1] - 2026-11-20
 

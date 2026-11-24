@@ -118,9 +118,8 @@ python3 scripts/check-adapter-wheels.py --update-exports
 Write `docs/release-notes/v<VERSION>.md` before creating the tag. Check that the
 Apple silicon CI job passes the workspace unit and integration suites for the
 release candidate. Pushing a `v<VERSION>` tag starts the Release workflow.
-Publication requires the packaged binaries to pass the student scenario on
-each target and the output checks on the Linux, macOS, and WSL filesystem
-matrix.
+Publication requires the packaged CLI to pass the end-to-end corpus workflow
+on each target and the output checks on Linux, macOS, and WSL filesystems.
 
 ### Python binding releases
 

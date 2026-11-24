@@ -6,13 +6,12 @@ Surface-Syntactic UD (SUD) patterns use different dependency paths because
 the two schemes assign different heads. The comparison script requires
 Python 3. [`examples/compare_paired_treebanks.py`](../examples/compare_paired_treebanks.py)
 
-SUD_Japanese-GSD is generated from UD_Japanese-GSD by rule, so the comparison
-tests the rewritten query against the conversion. It does not test either
-annotation: no second annotator has judged these objects. UD_Japanese-GSD's
-own `obj` label is assigned by rule to nominals marked with を
-([Asahara et al. 2018](https://aclanthology.org/L18-1287.pdf), section 3.4),
-and its word-level dependencies are converted from manually annotated bunsetsu
-dependencies (treebank README).
+The comparison measures agreement between two queries on paired data.
+SUD_Japanese-GSD is generated from UD_Japanese-GSD by rule, so both queries
+can return the same occurrences because their inputs share a source.
+UD_Japanese-GSD also derives word dependencies from manually annotated
+bunsetsu dependencies. It assigns `obj` by rule to nominals marked with を.
+[Asahara et al. 2018, section 3.4](https://aclanthology.org/L18-1287.pdf)
 
 ## Inputs
 
@@ -79,14 +78,14 @@ python3 examples/compare_paired_treebanks.py \
   --roles n,w,v > compare.tsv
 ```
 
-For these patterns, the occurrence key consists of `sent_id` and the word ID
-of each role in `--roles`. The script pools records from the `--b` runs. `compare.tsv` has one row per occurrence: `shared`,
-`a_only` or `b_only`; the number of records on each side; the `sent_id`; the
-role positions; each side's rows for the role words as
-`role=FORM(ID,DEPREL→HEAD)`; and the sentence. A side without a record shows its
-rows for the compared roles, so a one-sided row shows what the other annotation
-has in those positions. Each side's record counts, `source_identity` and
-`analysis_identity`, and the totals, go to stderr.
+For these patterns, each occurrence is identified by `sent_id` and the word
+ID of each role in `--roles`. The script pools the `--b` runs. Each row of
+`compare.tsv` gives the status (`shared`, `a_only`, or `b_only`), both record
+counts, the sentence ID, role positions, both dependency analyses in
+`role=FORM(ID,DEPREL→HEAD)` format, and the sentence. For a one-sided result,
+the row includes the compared roles from both annotations so you can inspect
+the edges on the side without a match. The record counts, `source_identity`,
+`analysis_identity`, and totals are reported on stderr.
 
 The script exits with status 2 before writing TSV rows if any of these checks
 fails.
@@ -100,7 +99,7 @@ fails.
   the file's basename and a known `sent_id`. Where the file supplies `# text`,
   the evidence contains that sentence text.
 
-Run each query over one file, not over a treebank directory.
+Run each query over a single treebank file.
 
 ## Results
 
@@ -166,8 +165,10 @@ The verb path starts with `comp:obj`. The nominal path ends with either
 `comp` or `comp:pred`. All other steps on both paths use `comp`.
 The final `comp:pred` admits the copular cases in `train-s890`, `train-s1369`
 and `train-s2068`. The query was developed using the train discrepancies.
-On the pinned files it yields 4,154 shared role triples on train, 293 on dev
-and 314 on test, with zero one-sided triples on each split.
+On the pinned files, the UD query and the single SUD path query select
+the same role triples on each split. They share 4,154 triples on train, 293
+on dev, and 314 on test, with zero one-sided triples under the comparison
+key.
 
 ## Controls
 

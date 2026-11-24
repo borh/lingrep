@@ -431,10 +431,8 @@ pub(crate) fn ensure_artifact(
         || !terminal.cancellation().is_cancelled(),
         || match role {
             PublicationRole::RunCompletion => terminal.try_claim_completion(),
-            // Still the last cooperative cancellation checkpoint — the
-            // no-replace rename must not begin on a cancelled run — but it
-            // does not latch the terminal, because the answer has not been
-            // delivered yet.
+            // Check cancellation before the rename. Keep completion
+            // available to the command that will return the result.
             PublicationRole::IntermediateCommit => !terminal.cancellation().is_cancelled(),
         },
     )?;

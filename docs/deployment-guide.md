@@ -121,13 +121,15 @@ includes `vectors_blake3` in the run record of its JSON Lines export.
 
 Complete question results use a temporary index capped at 128 MiB per search.
 If a search exceeds that limit, narrow its pattern or document conditions and
-run it again. The initial preview holds up to 4 MiB of examples. Each pattern's
-results remain available through concordance pages. A row whose text exceeds
-the display budget keeps its place in the results and points to the JSONL
-download. Question exports stream all indexed matches
-as JSON Lines using `lingrep.question-results/v1`, including examples above the
-1 MiB memory limit for loading a sentence preview. Export memory grows with the
-largest matched sentence; the preview limits do not apply to exports.
+run it again. The initial preview holds up to 4 MiB of examples. Use the
+concordance pages to browse all indexed hits. Sorting uses a separate 128 MiB
+index. If sorting exceeds that limit, narrow the query or sort within one
+document.
+
+If a row exceeds the display budget, it keeps its place and links to the JSONL
+export. The export streams all indexed matches using
+`lingrep.question-results/v1`, including sentences above the 1 MiB limit for
+loading a preview. Export memory grows with the largest matched sentence.
 
 ## Frequencies view
 
@@ -362,20 +364,20 @@ A server stopped by SIGTERM or SIGINT stops its builds and waits up to 10
 seconds for them to remove their staging directories and lock files before it
 exits. A build that is killed, or that has not stopped when that wait ends or
 a second signal arrives, leaves its staging directory and lock file behind.
-The next build of the same artifact on the same host removes them. It removes
-a staging directory that has a lock file only when the lock file records the
-current host name and the build can acquire its exclusive lock. It removes a
-staging directory without a lock file, which a build by a release before 0.8.0
-or a failed removal can leave, only when no process on the current host has the
-`PID` in its name.
+A later build of the same artifact can remove the staging directory in either
+of these cases.
 
-A later build leaves a staging directory in place in three cases: its lock
-file records another host name; it has no lock file and the `PID` in its name
-is in use on the current host; or the artifact name has since changed with the
-dictionary or analyzer. Remove those directories by hand.
-A release before 0.8.0 must not build into a directory shared with another host
-or PID namespace while a current release builds there, because its staging
-directories have no lock file.
+- The lock file records the current hostname and the new build can acquire
+  the exclusive lock.
+- On Unix, the lock file is absent and the new build confirms that the process
+  ID in the directory name is absent locally. Releases before 0.8.0 did not
+  create lock files. A failed cleanup can also leave a lockless directory.
+
+Use the manual cleanup procedure below for other leftovers, including those
+for an artifact whose name changed with the dictionary or analyzer. Run
+concurrent builds from a pre-0.8.0 release and a current release in separate
+directories if they use different hosts or PID namespaces. A local process ID
+check cannot identify a pre-0.8.0 build running in another namespace.
 Two hosts that report the same host name must not build into one shared
 directory on a filesystem that does not propagate `flock` locks between hosts.
 

@@ -36,38 +36,31 @@ across sentences, use an
 
 ### Which matches a definition publishes
 
-A definition's body can match many spans of one sentence. Two steps decide
-which of them the definition publishes, and the form of the definition decides
-whether the second step applies:
+The matcher selects spans independently for each definition and sentence.
 
-1. From each start token, the longest match. An
-   [`any_order`](#operators-and-precedence) group keeps the longest match of
-   each surface permutation, so it can keep several spans from one start. A
-   `where` clause and a span annotation remove a match before this step, so a
-   shorter match that passes survives a longer one that fails.
-2. Of the spans step 1 keeps, a span is dropped when another of them starts at
-   an earlier token and ends at a later token. A span that ends where an
-   earlier-starting span ends is kept, and two spans from one start never drop
-   each other.
+1. Keep the longest passing span at each start. An
+   [`any_order`](#operators-and-precedence) group has a longest span for each
+   matching permutation and can keep several spans at the same start. Apply a
+   `where` clause or span annotation before choosing the longest span. A
+   shorter passing span can therefore survive a longer span that fails the
+   constraint.
+2. Drop a selected span if another span from the same definition starts
+   strictly earlier and ends strictly later. Spans that share a start or an
+   end survive this comparison.
 
-Step 2 does not apply to a definition of either of these forms, which
-publishes every span step 1 keeps:
+Skip step 2 for any of these definition forms.
 
-- A definition with a [`where` clause](#dependency-constraints) of any kind: a
-  token dependency relation, an enhanced-graph relation, an order or attribute
-  comparison between its nodes, or a
-  [`span(…)` path](#paths-between-annotated-spans). A
-  `within_span` or `span_dependency` annotation is another spelling of a span
-  path and counts as one.
-- A definition whose body contains an `any_order` group, written in the body
-  or reached through a reference to a fragment or to another definition.
+- A definition with a [`where` clause](#dependency-constraints), including basic
+  or enhanced relations, comparisons between bound nodes, or a
+  [`span(…)` path](#paths-between-annotated-spans).
+- A definition with a `within_span` or `span_dependency` annotation.
+- A definition that uses `any_order` in its body or in the token expression
+  expanded from a reference.
 
-Step 2 applies to every other definition, whatever else it uses: captures,
-`&`, `measure`, `same_as` and interpretations do not change the published
-spans. A definition with both a `measure` and a `where` clause has a `where`
-clause, so step 2 does not apply to it. A reference expands the referenced
-definition's token expression only, so a referenced definition's `where`
-clause or annotation does not exempt the definition that refers to it.
+Captures, `&`, `measure`, `same_as`, and interpretations do not affect whether
+step 2 applies. A reference expands only the target's token expression. The
+target's own `where` clause and span annotations do not transfer to the
+definition that uses the reference.
 
 ```pattern
 paw := [text=の] | [text=猫] [text=の] [text=手].
@@ -86,23 +79,16 @@ token.
 the object of `V2` and `N1` the object of `V1`, it publishes `V1 V2 N2 N1` and
 `V2 N2`, with one observation for each relation instance.
 
-Step 2 selects spans, not records. Every record of a kept span is published,
-such as [readings with different measures](#occurrence-measurements), and every
-record of a dropped span is dropped. A match that consumes no token is never
-published.
+All records for a selected span proceed to the
+[policy block](#policy-block), including
+[readings with different measures](#occurrence-measurements). A span must
+consume at least one token. `ling matches --raw-matches` returns the records
+after span selection and before result policy. To publish a span excluded
+by step 2, write a separate definition for it. [Lexicons](#lexicons) publish
+every member occurrence.
 
-Both steps apply within one definition. Matches of different definitions never
-drop each other at this stage; the [policy block](#policy-block) decides
-between definitions afterwards and receives only the spans these steps keep.
-`ling matches --raw-matches` bypasses policy and not these steps. To publish a
-span that step 2 drops, write it as a separate definition.
-[Lexicons](#lexicons) are exempt from both steps and publish every member
-occurrence.
-
-Releases through 0.9.1 also skipped step 2 for a definition with `&`,
-`measure` or `same_as`. Applying it to those definitions advances the matcher
-semantics identity to `lingrep-core-matcher/v3`, so a count stored before it is
-stale. A `where` or `any_order` definition publishes what it did in 0.9.1.
+Rebuild count tables for matcher revision `lingrep-core-matcher/v3`. Through
+0.9.1, a definition with `&`, `measure`, or `same_as` skipped step 2.
 
 ## Reserved names
 
@@ -728,13 +714,10 @@ The clause filters candidate matches before
 a shorter passing candidate survives a longer failing one. An assignment that
 fails the clause does not hide a passing assignment reaching the same position.
 
-Every passing match selected this way is published, including a relation
-instance whose span lies inside a longer passing match of the same definition.
-With `(?<h> [upos=VERB]) []* (?<d> [upos=NOUN]) where $h -[obj]-> $d`, a
-sentence `V1 V2 N2 N1` in which `N2` is the object of `V2` and `N1` the object
-of `V1` publishes `V1 … N1` and `V2 N2`. Selection keeps one match per start
-token, so of two instances that begin at the same token the longer one is
-published.
+A relation instance can be published inside a longer instance from the same
+definition. See [match publication rules](#which-matches-a-definition-publishes)
+for a nested object example and the longest-match rule for candidates that share
+a start.
 
 A catalog with a basic token dependency constraint requires `dep.head` and `dep.rel` at binding, so a
 morphology-only corpus is rejected by name before matching. Only basic edges are
@@ -768,8 +751,8 @@ pattern wo_object := (?<w> [text=を & upos=ADP])
 
 A positive path may bind a named word at an endpoint. Intermediate words
 are traversed without testing their token attributes or publishing bindings.
-Each qualifying endpoint assignment emits once. The connected component
-requires a one-word surface anchor. `not $h -[+ *]-> $d` accepts two bound
+Each qualifying endpoint assignment is considered once. At least one word
+in the connected component must be bound by a one-token surface capture. `not $h -[+ *]-> $d` accepts two bound
 words when the first is absent from the second's proper ancestors.
 Both polarities require the dependent's chain to reach a root through usable
 HEAD and DEPREL values. A missing value, out-of-range head or cycle on that

@@ -128,18 +128,13 @@ one, including `!` over a single atom, stays one `BoundExpr::Token`. An
 intersection-free, capture-free definition using `|` and `!` is therefore still
 recognized by the dense NFA.
 
-Publication follows
-[one rule stated by definition form](pattern-language-reference.md#which-matches-a-definition-publishes),
-not by executor: the longest match from each start, less a span that the
-definition's own span from an earlier start extends past, except that a
-definition with a `where` clause, a span annotation or an any-order group
-keeps such a span. `EarlierStarts` in `matcher/emit.rs` is the sweep both
-recognizers use. The dense sink applies it in `filter_and_collect_matches`;
-every definition it recognizes drops. The tree evaluator applies it in
-`Program::matches_with`, before captures and records are built, to a
-definition for which `ExecutionDefinition::publishes_nested_matches` is false;
-`Program::new` asks once per definition. The lexical recognizer does not apply
-it.
+Use the [match publication rules](pattern-language-reference.md#which-matches-a-definition-publishes)
+when changing either executor. The dense matcher applies the nested-match
+filter in `filter_and_collect_matches`. The tree evaluator applies the filter
+in `Program::matches_with` before building captures and records, when
+`ExecutionDefinition::publishes_nested_matches` is false. Both paths use
+`EarlierStarts` in `matcher/emit.rs`. The lexical recognizer publishes every
+member occurrence.
 
 `E1 & E2` is evaluated inside `evaluate` by intersecting its operands' candidate
 end positions from a shared start position. `oracle.rs` states the same operator
