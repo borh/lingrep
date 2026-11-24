@@ -213,3 +213,12 @@ main{position:relative}
 .result-reading>.pattern-picker[open]{display:block}
 .result-reading>.pattern-picker summary{padding-block:0}
 @media(max-width:480px){.site .routes{display:contents}}
+.run-action[data-running]{opacity:.55;pointer-events:none}
+.work-controls label{font-size:14px}
+.work-controls [data-work-context].number-span{border:0;border-bottom:1.5px solid var(--green);padding:0 1px 2px;min-height:0;min-width:0}
+/* By work reads as one run of text: each work's title leads into its excerpts on the same line. */
+.work-sample-list .document-heading,.work-sample-list .document-heading:not(:first-child){display:inline;border:0;margin:0;padding:0;font-size:13px}
+.work-sample-list .document-heading>*{margin-inline-end:6px}
+.work-sample-list .work-excerpts{display:inline;padding:0;margin-inline-end:1.4em}
+.question-sentence .run-action{margin-inline:0 6px}
+.question-sentence .sentence-period+.run-action{margin-inline:6px 0}
