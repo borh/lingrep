@@ -72,14 +72,13 @@ ling summarize --dict-path "$LINGREP_DICTIONARY_PATH" \
 ```
 
 `check` compiles without analysis by default. `--verify-examples` runs
-`examples` and `counterexamples` through the selected native Vibrato or Sudachi
-configuration, with one sentence per claim (`--segmentation input`). The report
-identifies the catalog, analyzer and resource, distinguishes zero checked claims,
-and includes malformed, expected/unexpected-match and post-policy failures.
-Violated claims exit 1; unavailable attributes and analysis failures cannot pass
-counterexamples. Successful example verification confirms consistency with authored
-claims, not linguistic correctness or recall. External adapters are rejected by this
-verification path.
+`examples` and `counterexamples` through the selected Vibrato, Sudachi, or
+external analyzer, with one sentence per claim (`--segmentation input`).
+The report identifies the catalog, analyzer, and resource. It gives the
+number of checked claims and lists malformed claims, match failures, and
+publication failures. A violated claim exits 1. An unavailable attribute or
+analysis error stops verification. Passing claims establish consistency
+with the catalog's authored examples and counterexamples.
 
 `ling check` reports `warning[unsatisfiable_test]` when no token can satisfy
 a test such as `[upos=VERB & upos=NOUN]`. If a definition requires such a test,
@@ -2269,9 +2268,6 @@ ling analyzer prepare stanza --output ./analyzers/stanza-fr \
   --language fr --package tokenize=gsd --package mwt=gsd \
   --package pos=gsd_nocharlm --package lemma=gsd_nocharlm \
   --probe-text 'Je mange du pain.'
-
-ling matches --analyzer-config ./analyzers/ginza/analyzer.toml \
-  --patterns constructions.lx transcripts/
 ```
 
 Preparation downloads the release's adapter wheels, checks their SHA-256
@@ -2280,6 +2276,38 @@ checksums, and installs Python 3.14.9, dependencies and the selected model under
 checked during installation. Keep that directory at its original path. Deleting
 download caches does not break the analyzer. Use an absolute `--analyzer-config` path when
 querying from another directory.
+
+For repeated searches, analyze the corpus once. Set `CFG` to the bundle for
+your input language and put one sentence per line in `transcripts.txt`.
+Inspect one sentence's attributes and verify the catalog's claims before
+preparing the corpus.
+
+```bash
+CFG="$PWD/analyzers/ginza/analyzer.toml"
+ART=transcripts.lingcorpus
+
+ling tokenize --json --limit 1 --analyzer-config "$CFG" transcripts.txt
+ling check --verify-examples --analyzer-config "$CFG" --patterns constructions.lx
+ling corpus build --analyzer-config "$CFG" --output "$ART" transcripts.txt
+ling matches --corpus "$ART" --patterns constructions.lx
+ling summarize --corpus "$ART" --patterns constructions.lx
+```
+
+Use input segmentation for `corpus build` and `--cache` with external
+adapters. The build path expects one analyzer sentence per input unit.
+Use `ling explore --corpus "$ART" --patterns constructions.lx` to browse
+matches in the terminal. To edit sample text with the same analyzer, open
+the query in Workbench.
+
+```bash
+LINGREP_WEB_SAMPLE_ANALYZER_CONFIG="$CFG" \
+  ling matches --corpus "$ART" --patterns constructions.lx --serve=127.0.0.1:3000
+```
+
+Open a hit in the Sample debugger. Edit the pattern to test the stored
+tokens, then edit the text to run the configured analyzer. For a corpus
+built with NFC, also set `LINGREP_WEB_SAMPLE_NFC=true`.
+See [live sample configuration](deployment-guide.md#configure-live-analysis-for-the-sample-debugger).
 
 A tokenizer-only Stanza bundle uses `--package tokenize=gsd --package mwt=gsd`
 for French GSD. Add `pos` and `lemma` together to enable morphology.

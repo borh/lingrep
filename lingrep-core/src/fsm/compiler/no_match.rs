@@ -1136,9 +1136,9 @@ impl super::CompileOutput {
     /// [`Self::relax_definition`] for every string in every pattern's
     /// `counterexamples`, as `(definition, counterexample, outcome)` in
     /// catalog order.
-    pub fn relax_counterexamples(
+    pub fn relax_counterexamples<S: TokenSequence>(
         &self,
-        tokenize: &dyn Fn(&str) -> Vec<crate::token_match::TokenInfo>,
+        analyze: &dyn Fn(&str) -> S,
     ) -> Vec<(String, String, RelaxationOutcome)> {
         let mut outcomes = Vec::new();
         for (name, pattern) in self.matcher.patterns() {
@@ -1150,7 +1150,7 @@ impl super::CompileOutput {
                 continue;
             };
             for example in entries.iter().filter_map(|entry| entry.as_str()) {
-                let outcome = self.relax_definition(name, tokenize(example).as_slice());
+                let outcome = self.relax_definition(name, &analyze(example));
                 outcomes.push((name.to_string(), example.to_owned(), outcome));
             }
         }

@@ -740,8 +740,10 @@ fn verify_examples(
     terminal: &TerminalArbiter,
 ) -> Result<crate::protocol::check::ExampleVerification, CliError> {
     let matcher = &output.matcher;
-    use lingrep_core::analysis::{AnalyzerSession, InputUnitId, SegmentationMode, TextUnit};
-    use lingrep_core::token_match::TokenInfo;
+    use lingrep_core::analysis::{
+        AnalyzedSentence, AnalyzerSession, InputUnitId, SegmentationMode, TextUnit,
+    };
+    use lingrep_core::token_match::{BoundTokenSentence, display_surface};
     use std::cell::RefCell;
     if config.segmentation != SegmentationMode::Input {
         return Err(CliError::InvalidArgs(
@@ -771,14 +773,16 @@ fn verify_examples(
         .schema()
         .bind_projection(plan.schema().keys().iter().cloned())
         .map_err(|error| CliError::InvalidArgs(error.to_string()))?;
+    let empty = BoundTokenSentence::from_projected_attribute_values(&projection, 0, Vec::new())
+        .map_err(|error| CliError::InvalidArgs(error.to_string()))?;
     let session = RefCell::new(plan.create_session());
     let failure = RefCell::new(None);
     let input_id = std::cell::Cell::new(0u64);
-    let tokenize = |text: &str| -> Vec<TokenInfo> {
+    let analyze = |text: &str| -> BoundTokenSentence {
         if failure.borrow().is_some() {
-            return Vec::new();
+            return empty.clone();
         }
-        let analyze = || -> Result<Vec<TokenInfo>, String> {
+        let try_analyze = || -> Result<BoundTokenSentence, String> {
             if text.len() > config.limits.max_sentence_bytes {
                 return Err("example exceeds --max-sentence-bytes".into());
             }
@@ -792,25 +796,22 @@ fn verify_examples(
                 .borrow_mut()
                 .analyze_bounded_batch(vec![unit], &projection)
                 .map_err(|e| e.to_string())?;
-            let sentences = batch
-                .inputs()
-                .first()
-                .map_or(&[][..], lingrep_core::analysis::AnalyzedInput::sentences);
+            let Some(input) = batch.into_inputs().into_vec().pop() else {
+                return Ok(empty.clone());
+            };
+            let mut sentences = input.into_parts().1.into_vec();
             if sentences.len() > 1 {
                 return Err("example analysis produced multiple sentences".into());
             }
             Ok(sentences
-                .iter()
-                .flat_map(|s| {
-                    (0..s.words().len()).filter_map(|i| TokenInfo::from_sequence(s.words(), i))
-                })
-                .collect())
+                .pop()
+                .map_or_else(|| empty.clone(), AnalyzedSentence::into_words))
         };
-        match analyze() {
+        match try_analyze() {
             Ok(tokens) => tokens,
             Err(error) => {
                 *failure.borrow_mut() = Some(error);
-                Vec::new()
+                empty.clone()
             }
         }
     };
@@ -825,21 +826,17 @@ fn verify_examples(
         }
     };
     let report =
-        lingrep_core::fsm::try_verify_examples(matcher, &tokenize).map_err(publication_error)?;
+        lingrep_core::fsm::try_verify_analyzed_examples_within(matcher, &analyze, usize::MAX)
+            .map_err(publication_error)?;
     let convert = |f: lingrep_core::fsm::ExampleFailure| {
         let explanation = if f.kind == lingrep_core::fsm::ExampleFailureKind::ExpectedMatch {
-            let tokens = tokenize(&f.example);
+            let tokens = analyze(&f.example);
             let explanation = output
-                .explain_definition(&f.definition, tokens.as_slice())
+                .explain_definition(&f.definition, &tokens)
                 .map_err(publication_error)?;
             Some(crate::protocol::check::NoMatchExplanation::new(
                 explanation,
-                |index| {
-                    tokens
-                        .get(index)
-                        .and_then(|token| token.surface())
-                        .map(str::to_owned)
-                },
+                |index| display_surface(&tokens, index).map(str::to_owned),
             ))
         } else {
             None
@@ -868,7 +865,7 @@ fn verify_examples(
         .collect::<Result<Vec<_>, _>>()?;
     let mut vacuous_counterexamples = Vec::new();
     let mut unchecked_counterexamples = Vec::new();
-    for (definition, example, outcome) in output.relax_counterexamples(&tokenize) {
+    for (definition, example, outcome) in output.relax_counterexamples(&analyze) {
         if failures
             .iter()
             .any(|failure| failure.definition == definition && failure.example == example)
@@ -897,7 +894,7 @@ fn verify_examples(
     let counterexample_candidates = args
         .propose_counterexamples
         .as_deref()
-        .map(|path| propose_counterexamples(path, output, &tokenize))
+        .map(|path| propose_counterexamples(path, output, &analyze))
         .transpose()?;
     if let Some(error) = failure.into_inner() {
         return Err(CliError::Corpus(format!(
@@ -928,7 +925,7 @@ const CANDIDATES_PER_RELAXATION: usize = 3;
 fn propose_counterexamples(
     path: &std::path::Path,
     output: &lingrep_core::fsm::CompileOutput,
-    tokenize: &dyn Fn(&str) -> Vec<lingrep_core::token_match::TokenInfo>,
+    analyze: &dyn Fn(&str) -> lingrep_core::token_match::BoundTokenSentence,
 ) -> Result<crate::protocol::check::CandidateScan, CliError> {
     use lingrep_core::fsm::RelaxationOutcome;
     let text = std::fs::read_to_string(path)
@@ -940,12 +937,12 @@ fn propose_counterexamples(
     let mut sentences_scanned = 0u64;
     for sentence in text.lines().map(str::trim).filter(|line| !line.is_empty()) {
         sentences_scanned += 1;
-        let tokens = tokenize(sentence);
+        let tokens = analyze(sentence);
         for definition in &definitions {
             if skipped.contains(definition.as_str()) {
                 continue;
             }
-            match output.relax_definition(definition, tokens.as_slice()) {
+            match output.relax_definition(definition, &tokens) {
                 RelaxationOutcome::Distinguished { by, span } => {
                     let relaxation = crate::protocol::check::Relaxation::from(by);
                     let count = kept

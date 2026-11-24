@@ -582,7 +582,7 @@ pub struct CheckArgs {
         help_heading = "Diagrams"
     )]
     pub output_dir: Option<PathBuf>,
-    /// Execute examples and counterexamples with the selected native analyzer.
+    /// Execute examples and counterexamples with the selected analyzer.
     #[arg(long, conflicts_with = "schema")]
     pub verify_examples: bool,
     /// List pairs of definitions of which one publishes only spans the other also publishes, on every token sequence.

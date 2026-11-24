@@ -612,7 +612,7 @@ fn graph_norm_keys_group_orthographic_variants_in_direct_and_prepared_summaries(
     let adapter = include_str!("../../../lingrep-core/tests/fixtures/external_echo_adapter.py")
         .replace(
             "            for attribute in header[\"projection\"]:\n                values.append(text if attribute[\"key\"] == \"text\" else None)",
-            "            for index, surface in enumerate([text[:1], text[1:]]):\n                row = {'text': surface, 'norm': '声' if index == 0 else '言う', 'upos': 'NOUN' if index == 0 else 'VERB', 'dep.head': '2' if index == 0 else '0', 'dep.rel': 'obj' if index == 0 else 'root'}\n                values.extend(row[attribute['key']] for attribute in header['projection'])",
+            "            for index, surface in enumerate([text[:1], text[1:]]):\n                row = {'text': surface, 'norm': '声' if index == 0 else '言う', 'upos': 'NOUN' if index == 0 else 'VERB', 'dep.head': '2' if index == 0 else '0', 'dep.rel': 'obj' if index == 0 else 'root', 'protocol.flags': ['first'] if index == 0 else []}\n                values.extend(row[attribute['key']] for attribute in header['projection'])",
         )
         .replace("\"word_count\": 1", "\"word_count\": 2")
         .replace("\"surface_ranges\": [[0, len(text.encode(\"utf-8\"))]]", "\"surface_ranges\": [[0, 3], [3, len(text.encode(\"utf-8\"))]]");
@@ -625,11 +625,12 @@ fn graph_norm_keys_group_orthographic_variants_in_direct_and_prepared_summaries(
     let schema = ["text", "norm", "upos", "dep.head", "dep.rel"]
         .map(|key| format!("{{key = '{key}', kind = 'scalar'}}"))
         .join(",");
+    let schema = format!("{schema},{{key = 'protocol.flags', kind = 'string_set'}}");
     std::fs::write(root.join("analyzer.toml"), format!("version = 1\nkind = 'protocol'\npython = '{}'\nentrypoint = 'adapter.py'\nlanguage = 'ja'\nschema = [{schema}]\n", python.trim())).unwrap();
     std::fs::write(root.join("input.txt"), "声云う\n声いう\n声言う\n").unwrap();
     std::fs::write(
         root.join("query.lx"),
-        "key: [$v.norm]\npattern p := (?<n> [upos=NOUN]) where (?<v> [upos=VERB]) -[obj]-> $n.\n",
+        "key: [$v.norm]\npattern p := (?<n> [upos=NOUN & protocol.flags has first]) where (?<v> [upos=VERB]) -[obj]-> $n.\n",
     )
     .unwrap();
     let run = |args: &[&str]| {
@@ -667,6 +668,41 @@ fn graph_norm_keys_group_orthographic_variants_in_direct_and_prepared_summaries(
         serde_json::json!([{"kind":"scalar", "name":"$v.norm", "value":"言う"}])
     );
     assert_eq!(direct[0]["count"], 3);
+    let check = |claim: &str, body: &str| {
+        let output = lingrep_std()
+            .current_dir(root)
+            .args([
+                "check",
+                "--json",
+                "--verify-examples",
+                "--analyzer-config",
+                "analyzer.toml",
+                "--pattern",
+            ])
+            .arg(format!("{claim}: [\"声云う\"] pattern p := {body}."))
+            .output()
+            .unwrap();
+        let report: serde_json::Value = serde_json::from_slice(&output.stdout)
+            .unwrap_or_else(|error| panic!("{error}: {}", String::from_utf8_lossy(&output.stderr)));
+        (output.status.code(), report["data"]["examples"].clone())
+    };
+    let dependency =
+        "(?<n> [upos=NOUN & protocol.flags has first]) where (?<v> [upos=VERB]) -[obj]-> $n";
+    let (status, report) = check("examples", dependency);
+    assert_eq!(status, Some(0), "{report}");
+    assert_eq!(report["checked"], 1);
+    assert_eq!(report["failures"], serde_json::json!([]));
+
+    let (status, report) = check("counterexamples", dependency);
+    assert_eq!(status, Some(1), "{report}");
+    assert_eq!(report["failures"][0]["kind"], "unexpected_match");
+
+    let (status, report) = check("examples", "[upos=ADJ]");
+    assert_eq!(status, Some(1), "{report}");
+    let attempt = &report["failures"][0]["explanation"]["attempt"];
+    assert_eq!(attempt["token"], "声");
+    assert_eq!(attempt["tests"][0]["actual"], "NOUN");
+
     run(&[
         "corpus",
         "build",

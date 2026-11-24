@@ -105,6 +105,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- `ling check --verify-examples` preserves typed analyzer attributes through
+  matching and explanations. Checks with external analyzers can use portable
+  and namespaced fields, including string sets, and basic dependencies.
 - The Question page sorts across all indexed hits, keeps sorted pages
   navigable from the inspector, and offers a retry if loading a sorted
   page fails. Hitting the preview size limit still leaves results pageable
