@@ -386,8 +386,8 @@ fn canonicalize_json(value: &mut serde_json::Value) {
 
 /// The digest of a run's output as it streams past, never materialized.
 ///
-/// `matches --limit all --json` on `distributions.lx` over `science-corpus-v7`
-/// writes ~42 GB that nothing reads except this function, against 43 GB of free
+/// `matches --limit all --json` on `distributions.lx` over a large corpus can
+/// write ~42 GB that nothing reads except this function, against 43 GB of free
 /// disk — which is why a campaign whose bound was profiled on that corpus was
 /// measured on one 2.4x smaller instead.
 ///

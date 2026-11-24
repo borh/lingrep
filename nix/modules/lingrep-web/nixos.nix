@@ -87,7 +87,7 @@ let
   # The link carries the *source's extension*, not the bare key. lingrep-web infers
   # a source's reader from its path extension
   # (`lingrep_core::corpus::resolve_input_format`), so linking under the key alone
-  # made `science.path = ".../science-corpus.jsonl"` arrive as
+  # made `science.path = ".../papers-corpus.jsonl"` arrive as
   # `--corpus science=/var/lib/lingrep-web/corpora/science` — an extensionless path,
   # which resolves to the Markdown dialect. The JSONL file was then read as
   # prose: one file became one document and one JSONL line became one sentence,

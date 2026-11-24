@@ -470,7 +470,7 @@ mod tests {
     /// measure the **surface**.
     ///
     /// Not reachable through a claim fixture: `Orth` and `Text` agree in char
-    /// count on every one of the 1,996,911 tokens of `data-archive/corpus.jsonl`
+    /// count on every one of the 1,996,911 tokens of a UniDic-analyzed corpus
     /// — UniDic's `orth` is the entry's own written form, which is what matched
     /// the surface — so a verifier reading `Orth` gives identical answers on
     /// real material and only diverges on data this dictionary does not

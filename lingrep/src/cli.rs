@@ -96,7 +96,7 @@ fn positive_usize(raw: &str) -> Result<usize, String> {
 /// `num_cpus::get_physical` does not — a container limited to four CPUs on a
 /// large host must not be handed the host's core count. But on an SMT machine
 /// it reports *logical* CPUs, and this workload does not want them. Measured on
-/// a 16-core/32-thread 7950X3D over `data-archive/corpus-2000.jsonl`, 32
+/// a 16-core/32-thread 7950X3D over a 2,000-document corpus, 32
 /// workers was the worst or near-worst point on every path — 3.91 s against
 /// 3.59 s at 16 direct, 2.21 s against 2.12 s prepared, 2.47 s against 2.39 s
 /// prepared record-emitting — while burning 30–35% more CPU and ~12% more

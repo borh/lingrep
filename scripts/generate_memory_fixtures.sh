@@ -1,13 +1,13 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# Generate memory profiling fixtures from science-corpus.jsonl
+# Generate memory profiling fixtures by sampling a JSONL corpus.
 #
-# Usage: ./scripts/generate_memory_fixtures.sh
+# Usage: ./scripts/generate_memory_fixtures.sh CORPUS.jsonl
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_ROOT="$(dirname "$SCRIPT_DIR")"
-CORPUS_FILE="$PROJECT_ROOT/science-corpus.jsonl"
+CORPUS_FILE="${1:?usage: generate_memory_fixtures.sh CORPUS.jsonl}"
 OUTPUT_DIR="$PROJECT_ROOT/test-caches"
 
 # Check corpus exists
