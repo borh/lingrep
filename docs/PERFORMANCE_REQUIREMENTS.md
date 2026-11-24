@@ -344,8 +344,9 @@ GiNZA's `ja_ginza_bert_large`:
 `ud-nonprojectivity.lx` and `ud-subtree-profile.lx` relate several captured
 positions within a sentence and take tens of seconds per run on the smaller
 archive, where the other catalogs take under two seconds on the larger one.
-`ling corpus build` reads one Soranoha archive per artifact, so a longer run of
-the fast catalogs requires the full-corpus archive instead of several authors.
+`ling corpus build` reads one Soranoha archive per artifact, so an artifact
+cannot combine several authors. The full-corpus archive is too large for a
+transformer analyzer; analyze it with Vibrato only.
 
 Set up the analyzer with `lingrep-spacy-setup --model ja_ginza_bert_large`
 ([external analyzer setup](cli-usage-guide.md#use-an-external-protocol-adapter)),

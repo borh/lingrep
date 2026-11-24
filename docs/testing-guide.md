@@ -120,6 +120,8 @@ Markdown and constructed fixtures do not cover.
 
 Each URL serves the current release under a fixed name, so record the SHA-256
 of a downloaded archive when a result must be reproducible.
+Analyze the full corpus with Vibrato. An external analyzer such as GiNZA
+processes it far more slowly; use an author archive for those.
 
 Inside the development shell:
 
