@@ -27,6 +27,7 @@ mod detail_revision_test;
 mod editor_api_test;
 mod editor_asset_test;
 mod export_endpoint_test;
+mod frequency_entry_offsets_test;
 mod handlers_test;
 mod hit_provenance_render_test;
 mod inspect_corruption_teardown_test;
