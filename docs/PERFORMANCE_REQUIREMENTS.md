@@ -241,8 +241,9 @@ move wall by more than any linear projection — but read it before choosing
 
 `--corpus` is the prepared-artifact fallback for the suite. Repeat
 `--catalog-corpus CATALOG=ARTIFACT` for a catalog that requires a different stored
-schema; the two dependency-relation catalogs use a dependency-bearing
-artifact while the remaining catalogs use the morphology fallback. `new`
+schema; the catalogs that reference `dep.*` attributes use the
+[dependency workloads](#dependency-workloads) while the remaining catalogs use
+the morphology fallback. `new`
 fully verifies each distinct artifact once, records every identity, and seals
 the resolved catalog-to-artifact map. Each run then re-observes every declared
 artifact manifest and reconstructs both `{catalog}` and the selected `{corpus}`
@@ -324,6 +325,53 @@ speed never lowers that bar. Their measurement defaults to Tier 3 unless a
 stricter change-specific plan applies. A documented harness limitation may
 justify different evidence, but the claim must be narrowed to what was
 actually measured rather than treating weak evidence as a win.
+
+### Dependency workloads
+
+A catalog that references `dep.head`, `dep.rel` or `dep.enhanced` has no
+meaningful run on a Vibrato/UniDic artifact: a dependency `where` clause is
+rejected there, and any other reference binds as absent. `ling check --patterns
+CATALOG --schema unidic-morphology` reports those references. Campaigns measure
+the basic-dependency catalogs on two artifacts built from
+[Soranoha author archives](testing-guide.md#soranoha-corpus-validation) with
+GiNZA's `ja_ginza_bert_large`:
+
+| Archive | Size | Catalogs |
+|---|---|---|
+| `soranoha-Natsume_Soseki-000148-plaintext.zip` | 112 documents, about 2.6M tokens | `comment-register.lx`, `double-wo-dep.lx`, `npv-collocation.lx`, `passive-agent-dep.lx`, `passive-oblique-realization.lx`, `ud-dependency.lx`, `ud-object-realization.lx`, `ud-valency.lx`, `wo-predicate-dep.lx` |
+| `soranoha-Akutagawa_Ryunosuke-000879-plaintext.zip` | 378 documents, about 1.5M tokens | `ud-nonprojectivity.lx`, `ud-subtree-profile.lx` |
+
+`ud-nonprojectivity.lx` and `ud-subtree-profile.lx` relate several captured
+positions within a sentence and take tens of seconds per run on the smaller
+archive, where the other catalogs take under two seconds on the larger one.
+`ling corpus build` reads one Soranoha archive per artifact, so a longer run of
+the fast catalogs requires the full-corpus archive instead of several authors.
+
+Set up the analyzer with `lingrep-spacy-setup --model ja_ginza_bert_large`
+([external analyzer setup](cli-usage-guide.md#use-an-external-protocol-adapter)),
+on a GPU backend where one is available, then build each artifact:
+
+```bash
+ling corpus build --input-format soranoha \
+    --analyzer-config /path/to/analyzer/analyzer.toml \
+    --output soseki-ginza.lingcorpus soranoha-Natsume_Soseki-000148-plaintext.zip
+ling corpus build --input-format soranoha \
+    --analyzer-config /path/to/analyzer/analyzer.toml \
+    --output akutagawa-ginza.lingcorpus soranoha-Akutagawa_Ryunosuke-000879-plaintext.zip
+```
+
+Soranoha serves the current release under each archive name, so check a
+download before building. `scripts/student-scenario-texts.sha256` pins the
+Natsume Soseki archive; the Akutagawa archive these sizes were measured on has
+SHA-256
+`4e6f77be2699236bdf205cdfa5e0be25c853a52bb3e3da5c894be6e19c934f0a`.
+
+`ud-enhanced-argument.lx`, `ud-enhanced-consistency.lx`,
+`ud-enhanced-propagation.lx` and `psycholinguistics.lx` have no campaign
+workload. The three `ud-enhanced-*` catalogs require an enhanced graph, which
+GiNZA output does not carry, and `psycholinguistics.lx` is written for Japanese
+UD CoNLL-U input. A campaign report states which artifact it used for these four
+and does not present their results as measured on a documented workload.
 
 ## Performance Regression Testing
 
